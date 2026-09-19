@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
+  ProjectGitSummary,
   SessionChangedFile,
   SessionChangedFileKind,
   SessionChanges,
@@ -26,6 +27,25 @@ export type CheckoutSessionBranchInput = ReadSessionChangesInput & {
 export type SessionChangesReader = {
   read(input: ReadSessionChangesInput): Promise<SessionChanges>;
   checkoutBranch(input: CheckoutSessionBranchInput): Promise<SessionChanges>;
+};
+
+export type ReadProjectGitInput = {
+  projectRoot: string;
+};
+
+export type CheckoutProjectBranchInput = ReadProjectGitInput & {
+  branch: string;
+};
+
+/**
+ * Branch state of a Project folder, read before any Session exists. Separate
+ * from SessionChangesReader on purpose: that one answers about a Session's
+ * checkout and may only run once there is one (#268), while the Session Draft
+ * asks about a Project the user has merely selected.
+ */
+export type ProjectGitReader = {
+  read(input: ReadProjectGitInput): Promise<ProjectGitSummary>;
+  checkoutBranch(input: CheckoutProjectBranchInput): Promise<ProjectGitSummary>;
 };
 
 type GitResult = {
@@ -583,59 +603,100 @@ async function readPatch(input: {
   }
 }
 
+async function readHeadBranch(repositoryRoot: string) {
+  const result = await runGit({
+    cwd: repositoryRoot,
+    args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    allowExitCodes: [0, 1],
+  });
+
+  return result.exitCode === 0 ? result.stdout.toString("utf8").trim() : null;
+}
+
+async function readBranchNames(repositoryRoot: string) {
+  const headBranch = await readHeadBranch(repositoryRoot);
+
+  return mergeBranchNames(
+    headBranch,
+    await listLocalBranches(repositoryRoot),
+    await listRemoteTrackingBranches(repositoryRoot),
+  );
+}
+
+/**
+ * Move a repository onto `branch`, creating a local tracking branch when the
+ * name only exists on a remote. Shared by the Session composer's branch picker
+ * and the Session Draft's, which run the same switch against different roots.
+ */
+async function switchBranch(repositoryRoot: string, branch: string) {
+  assertLocalBranchName(branch);
+
+  const localBranches = await listLocalBranches(repositoryRoot);
+  const remoteTracking = await listRemoteTrackingBranches(repositoryRoot);
+  const startPoint = remoteTracking.get(branch);
+
+  if (!localBranches.includes(branch) && !startPoint) {
+    throw new Error(`Unknown local branch "${branch}".`);
+  }
+
+  const occupied = (await listOccupiedBranches(repositoryRoot)).find(
+    (item) => item.branch === branch,
+  );
+
+  if (occupied) {
+    throw new Error(
+      `Branch "${branch}" is already checked out in ${occupied.path}.`,
+    );
+  }
+
+  if ((await readHeadBranch(repositoryRoot)) === branch) {
+    return;
+  }
+
+  if (localBranches.includes(branch)) {
+    await runGit({
+      cwd: repositoryRoot,
+      args: ["switch", "--no-guess", "--", branch],
+    });
+    return;
+  }
+
+  await runGit({
+    cwd: repositoryRoot,
+    args: ["switch", "-c", branch, "--track", "--", startPoint as string],
+  });
+}
+
+/**
+ * Git top level of a Project folder, or null when it is not in a repository.
+ * Unlike a Session checkout there is no containment rule to enforce: the
+ * Project root is what the user registered.
+ */
+async function projectRepositoryRoot(projectRoot: string) {
+  const root = await realpath(projectRoot);
+  const result = await runGit({
+    cwd: root,
+    args: ["rev-parse", "--show-toplevel"],
+    allowExitCodes: [0, 128],
+  });
+
+  if (result.exitCode === 128) {
+    return null;
+  }
+
+  return realpath(result.stdout.toString("utf8").trim());
+}
+
 export function createNodeSessionChangesReader(): SessionChangesReader {
   const reader: SessionChangesReader = {
     async checkoutBranch(input) {
-      assertLocalBranchName(input.branch);
       const inspected = await inspectCheckout(input);
 
       if (inspected.kind === "non-git") {
         throw new Error("Session checkout is not a Git repository.");
       }
 
-      const localBranches = await listLocalBranches(inspected.repositoryRoot);
-      const remoteTracking = await listRemoteTrackingBranches(
-        inspected.repositoryRoot,
-      );
-      const startPoint = remoteTracking.get(input.branch);
-
-      if (!localBranches.includes(input.branch) && !startPoint) {
-        throw new Error(`Unknown local branch "${input.branch}".`);
-      }
-
-      const occupied = (await listOccupiedBranches(inspected.repositoryRoot)).find(
-        (item) => item.branch === input.branch,
-      );
-
-      if (occupied) {
-        throw new Error(
-          `Branch "${input.branch}" is already checked out in ${occupied.path}.`,
-        );
-      }
-
-      const branchResult = await runGit({
-        cwd: inspected.repositoryRoot,
-        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
-        allowExitCodes: [0, 1],
-      });
-      const current =
-        branchResult.exitCode === 0
-          ? branchResult.stdout.toString("utf8").trim()
-          : null;
-
-      if (current !== input.branch) {
-        if (localBranches.includes(input.branch)) {
-          await runGit({
-            cwd: inspected.repositoryRoot,
-            args: ["switch", "--no-guess", "--", input.branch],
-          });
-        } else if (startPoint) {
-          await runGit({
-            cwd: inspected.repositoryRoot,
-            args: ["switch", "-c", input.branch, "--track", "--", startPoint],
-          });
-        }
-      }
+      await switchBranch(inspected.repositoryRoot, input.branch);
 
       return reader.read(input);
     },
@@ -777,6 +838,39 @@ export function createNodeSessionChangesReader(): SessionChangesReader {
           files.some((file) => file.patchTruncated),
         omittedFileCount: allEntries.length - files.length,
       };
+    },
+  };
+
+  return reader;
+}
+
+export function createNodeProjectGitReader(): ProjectGitReader {
+  const reader: ProjectGitReader = {
+    async read(input) {
+      const projectRoot = await realpath(input.projectRoot);
+      const repositoryRoot = await projectRepositoryRoot(projectRoot);
+
+      if (!repositoryRoot) {
+        return { projectRoot, branch: null, branches: [] };
+      }
+
+      return {
+        projectRoot,
+        branch: await readHeadBranch(repositoryRoot),
+        branches: await readBranchNames(repositoryRoot),
+      };
+    },
+
+    async checkoutBranch(input) {
+      const repositoryRoot = await projectRepositoryRoot(input.projectRoot);
+
+      if (!repositoryRoot) {
+        throw new Error("Project folder is not a Git repository.");
+      }
+
+      await switchBranch(repositoryRoot, input.branch);
+
+      return reader.read(input);
     },
   };
 

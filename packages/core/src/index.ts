@@ -47,6 +47,7 @@ export {
 export type { ExecutionCheckoutGitClient } from "./checkout";
 
 export type {
+  ProjectGitSummary,
   SessionChanges,
   SessionChangesState,
   SessionChangedFile,

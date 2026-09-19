@@ -135,6 +135,11 @@ type ChatPromptInputOwnProps = {
   startActions?: ReactNode;
   endActions?: ReactNode;
   drawer?: ReactNode;
+  /**
+   * One row of chrome under the composer — where the Session runs, its branch,
+   * the context ring. It keeps its height whatever it holds, so a Session
+   * Draft and a Live Session composer are the same size (docs/design/chat.md).
+   */
   footer?: ReactNode;
   error?: string | null;
   hasAttachments?: boolean;
@@ -145,6 +150,12 @@ type ChatPromptInputOwnProps = {
    * session-draft empty state keeps its plain border.
    */
   accent?: "brand";
+  /**
+   * Show the static ring on focus as well. Reserved for the session-draft
+   * empty state, where the composer is the page; inside a Session the ring
+   * only marks a run in flight, so focus leaves it transparent.
+   */
+  accentFocusRing?: boolean;
   onSubmit?: () => void;
   onStop?: () => void;
   onValueChange?: (value: string) => void;
@@ -172,6 +183,7 @@ export function ChatPromptInput({
   error,
   hasAttachments = false,
   accent,
+  accentFocusRing = false,
   onSubmit,
   onStop,
   onValueChange,
@@ -242,6 +254,7 @@ export function ChatPromptInput({
     <div
       className={`prompt-input ${className}`.trim()}
       data-accent={accent}
+      data-accent-focus={accent && accentFocusRing ? "" : undefined}
       data-drop={dragging ? "" : undefined}
       data-slot="prompt-input"
       data-status={status}

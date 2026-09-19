@@ -33,7 +33,9 @@ import {
 import { listAvailableModelControls } from "./workspace/available-model-controls";
 import { createNodeExecutionCheckoutGitClient } from "./workspace/execution-checkout";
 import {
+  createNodeProjectGitReader,
   createNodeSessionChangesReader,
+  type ProjectGitReader,
   type SessionChangesReader,
 } from "./workspace/session-changes";
 import {
@@ -113,6 +115,7 @@ export type BackendServiceOptions = {
   runtimeJournal?: SessionEventJournal;
   sessionProjectionStore?: SessionProjectionStore;
   sessionChangesReader?: SessionChangesReader;
+  projectGitReader?: ProjectGitReader;
   sessionFilesReader?: SessionFilesReader;
   piSessionListAll?: () => Promise<PiSessionListItem[]>;
   environmentPreflight?: EnvironmentPreflightReader;
@@ -185,6 +188,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   };
   const sessionChangesReader =
     options.sessionChangesReader ?? createNodeSessionChangesReader();
+  const projectGitReader = options.projectGitReader ?? createNodeProjectGitReader();
   const sessionFilesReader =
     options.sessionFilesReader ?? createNodeSessionFilesReader();
   const environmentPreflight =
@@ -303,6 +307,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             gitClient,
             sessionProjectionStore,
             sessionChangesReader,
+            projectGitReader,
             sessionFilesReader,
             environmentPreflight,
             providerAuth,
@@ -339,6 +344,7 @@ async function dispatchRequest(input: {
   gitClient: ExecutionCheckoutGitClient;
   sessionProjectionStore: SessionProjectionStore;
   sessionChangesReader: SessionChangesReader;
+  projectGitReader: ProjectGitReader;
   sessionFilesReader: SessionFilesReader;
   environmentPreflight: EnvironmentPreflightReader;
   providerAuth: ProviderAuthService;
@@ -406,6 +412,15 @@ async function dispatchRequest(input: {
       input.invalidation.flush(sessionId);
       return result;
     }
+    case "get_project_git_summary":
+      return input.projectGitReader.read({
+        projectRoot: requiredString(params.projectRoot, "projectRoot"),
+      });
+    case "checkout_project_branch":
+      return input.projectGitReader.checkoutBranch({
+        projectRoot: requiredString(params.projectRoot, "projectRoot"),
+        branch: requiredString(params.branch, "branch"),
+      });
     case "list_session_directory":
       return listSessionDirectory({
         sessionId: requiredString(params.sessionId, "sessionId"),

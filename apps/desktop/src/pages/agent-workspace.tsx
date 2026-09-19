@@ -82,6 +82,7 @@ import {
   Computer,
   FileDiff,
   FolderClosed,
+  FolderLibrary,
   GitBranch,
   ListTree,
   RefreshCw,
@@ -98,6 +99,11 @@ import {
   type ExecutionCheckoutManager,
 } from "@/entities/checkout/execution-checkout";
 import { createInvokeExecutionCheckoutGitClient } from "@/entities/checkout/execution-checkout-client";
+import {
+  getProjectGitSummary,
+  useProjectGit,
+  type ProjectGitView,
+} from "@/entities/project/project-git";
 import {
   CHAT_PICKER_LABEL,
   CHAT_PROJECT_ID,
@@ -733,11 +739,27 @@ function QueuedMessageList({
   );
 }
 
+/**
+ * Last model catalog read in this renderer. The Session Draft reads it before
+ * any Session exists, so the Live composer can paint the same model chip on
+ * its first frame of the Draft → Live handoff instead of blanking the control
+ * until its own read returns.
+ */
+let cachedModelCatalog: RuntimeModelControls["models"] = [];
+
+function rememberModelCatalog(models: RuntimeModelControls["models"]) {
+  if (models.length) {
+    cachedModelCatalog = models;
+  }
+}
+
 function FullChatComposer({
   queueMode = false,
   isCreating = false,
   isStoppingRun = false,
   projection,
+  draftBranchLabel,
+  draftCheckoutMode,
   sessionChanges: providedSessionChanges,
   onPromptSubmit,
   onQueueSubmit,
@@ -753,6 +775,10 @@ function FullChatComposer({
   isCreating?: boolean;
   isStoppingRun?: boolean;
   projection?: SessionProjection | null;
+  /** Branch the Session Draft showed, kept until Git answers for the checkout. */
+  draftBranchLabel?: string | null;
+  /** Where the Draft said to run, kept until the Session has its checkout. */
+  draftCheckoutMode?: SessionDraftCheckoutMode | null;
   sessionChanges?: SessionChangesView;
   onPromptSubmit?: (message: string, images?: RuntimePromptImage[]) => Promise<void> | void;
   onQueueSubmit?: (message: string, images?: RuntimePromptImage[]) => Promise<void> | void;
@@ -767,18 +793,29 @@ function FullChatComposer({
   // Read once per mount: Settings owns this set and the composer only remounts
   // after leaving that page (issue #102).
   const [visibleModels] = useState(getVisibleModels);
-  const [availableModels, setAvailableModels] = useState<RuntimeModelControls["models"]>([]);
-  const needsModelCatalog = Boolean(projection?.piSessionId && !projection.modelControls?.models.length);
+  const [availableModels, setAvailableModels] =
+    useState<RuntimeModelControls["models"]>(() => cachedModelCatalog);
+  const needsModelCatalog =
+    !projection?.modelControls?.models.length &&
+    Boolean(projection?.piSessionId || isCreating);
+  // Session Creation has no controls of its own yet, so the chip keeps showing
+  // what the Draft was set to — the same selection this Session starts with.
   const composerModelControls = projection?.modelControls?.models.length
     ? projection.modelControls
     : availableModels.length
-      ? { models: availableModels, selected: projection?.modelControls?.selected ?? null }
+      ? {
+          models: availableModels,
+          selected:
+            projection?.modelControls?.selected ??
+            (isCreating ? getLastModelSelection() : null),
+        }
       : projection?.modelControls;
 
   useEffect(() => {
     if (!needsModelCatalog) return;
     let cancelled = false;
     void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
+      rememberModelCatalog(controls.models);
       if (!cancelled) setAvailableModels(controls.models);
     }).catch(() => {
       // An unavailable catalog must not prevent reading history or sending a prompt.
@@ -948,28 +985,66 @@ function FullChatComposer({
   // rather than any composer control. Only a bound runtime has a context
   // window to be a share of. Git branch status sits on the same row, left of
   // the ring, in the same ghost-Selector chrome as the draft Project picker.
-  const composerFooter = projection?.piSessionId ? (
-    <span className="flex w-full min-w-0 items-center gap-2">
-      {gitBranchLabel ? (
-        <GitBranchPicker
-          branch={gitBranchLabel}
-          branches={sessionGitChanges?.branches ?? []}
-          occupiedBranches={sessionGitChanges?.occupiedBranches ?? []}
-          onBranchChange={(next) => void switchSessionBranch(next)}
-        />
-      ) : isChatProjectId(projection.projectId) ? (
-        <span className="text-xs text-muted" data-testid="live-session-chat-label">
-          {CHAT_WORKSPACE_DISPLAY_NAME}
-        </span>
-      ) : null}
-      <span className="ml-auto inline-flex shrink-0">
+  //
+  // The row itself is unconditional and carries the same three slots the
+  // Session Draft showed, so the handoff never adds or removes a line. Where
+  // the Session runs is settled once it exists: the Location reads as a label.
+  const chatProject = isChatProjectId(projection?.projectId ?? "");
+  // Until Session Creation has picked the checkout there is nothing to read it
+  // from, so the Draft's own choice stands in — the two say the same thing.
+  const locationMode: SessionDraftCheckoutMode = projection?.checkout
+    ? projection.checkout.mode === "managed-worktree"
+      ? "worktree"
+      : "local"
+    : draftCheckoutMode ?? "local";
+  const composerFooter = (
+    <ComposerLocationRow
+      location={
+        chatProject ? (
+          <ComposerStaticChip
+            chrome="selector"
+            icon={ChatAdd}
+            label={CHAT_WORKSPACE_DISPLAY_NAME}
+            testId="composer-location-label"
+          />
+        ) : (
+          <ComposerStaticChip
+            chrome="selector"
+            icon={locationMode === "worktree" ? FolderLibrary : Computer}
+            label={checkoutModeLabels[locationMode]}
+            testId="composer-location-label"
+          />
+        )
+      }
+      branch={
+        chatProject ? undefined : gitBranchLabel ? (
+          <GitBranchPicker
+            branch={gitBranchLabel}
+            branches={sessionGitChanges?.branches ?? []}
+            occupiedBranches={sessionGitChanges?.occupiedBranches ?? []}
+            onBranchChange={(next) => void switchSessionBranch(next)}
+          />
+        ) : draftBranchLabel ? (
+          // Git has not answered for this checkout yet. The branch the draft
+          // showed is still the truth about where the work starts.
+          <ComposerStaticChip
+            chrome="button"
+            icon={GitBranch}
+            label={draftBranchLabel}
+            testId="composer-branch-label"
+          />
+        ) : undefined
+      }
+      meter={
         <ContextUsageMeter
-          isCompacting={isContextCompacting(projection.runtimeModel)}
-          usage={projection.contextUsage}
+          isCompacting={
+            projection ? isContextCompacting(projection.runtimeModel) : false
+          }
+          usage={projection?.piSessionId ? projection.contextUsage : null}
         />
-      </span>
-    </span>
-  ) : undefined;
+      }
+    />
+  );
 
   return (
     <div
@@ -989,6 +1064,7 @@ function FullChatComposer({
         />
       ) : null}
       <PromptInput
+        accent="brand"
         allowSubmitWhileRunning={queueMode && !isSubmitting}
         className="mx-auto w-full max-w-[44rem]"
         drawer={
@@ -1013,7 +1089,7 @@ function FullChatComposer({
             {composerModelControls && onModelConfigChange ? (
               <ModelSelectorControl
                 controls={composerModelControls}
-                isDisabled={queueMode || isSubmitting}
+                isDisabled={queueMode || isSubmitting || isCreating}
                 visibleModels={visibleModels}
                 onChange={onModelConfigChange}
                 onManageModels={onManageModels}
@@ -1740,6 +1816,72 @@ function ProjectPicker({
   );
 }
 
+/**
+ * A Location or Branch that can no longer be chosen — a bound Session's
+ * checkout, a worktree's base branch — wearing the chrome of the picker it
+ * stands in for, so the row does not change type size or metrics when a
+ * control becomes a label. `chrome` names that picker: ghost Selector
+ * (ProjectPicker, CheckoutStrategyPicker) or ghost Button (GitBranchPicker);
+ * the measurements below are theirs.
+ *
+ * The Selector chrome keeps the chevron's box, hidden: the Draft's Location
+ * picker becomes this label at the handoff, and dropping 16px + a gap would
+ * pull the Branch chip beside it leftwards. Nothing in the row may move.
+ */
+function ComposerStaticChip({
+  chrome,
+  icon: Icon,
+  label,
+  testId,
+}: {
+  chrome: "selector" | "button";
+  icon: typeof FolderClosed;
+  label: string;
+  testId: string;
+}) {
+  const selectorChrome = chrome === "selector";
+
+  return (
+    <span
+      className={`inline-flex h-7 min-w-0 max-w-[16rem] items-center text-sm font-medium ${
+        selectorChrome ? "gap-2 px-3 text-foreground" : "gap-1.5 px-2 text-muted"
+      }`}
+      data-testid={testId}
+    >
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-muted" />
+      <span className="truncate">{label}</span>
+      {selectorChrome ? (
+        <ChevronDown aria-hidden="true" className="invisible size-4 shrink-0" />
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * The composer's Location row, identical in the Session Draft and the Live
+ * Session: where the Session runs, which branch it is on, and how much of the
+ * context window it holds. Nothing here is swapped out at the handoff — the
+ * draft-only Project picker lives above the composer instead.
+ */
+function ComposerLocationRow({
+  location,
+  branch,
+  meter,
+}: {
+  /** Absent only in a draft with no target Project: nowhere to run yet. */
+  location?: ReactNode;
+  branch?: ReactNode;
+  meter: ReactNode;
+}) {
+  return (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      {location}
+      {branch}
+      <span className="ml-auto inline-flex shrink-0">{meter}</span>
+    </span>
+  );
+}
+
 function gitBranchPickerLabel(input: {
   branch: string | null;
   detached: boolean;
@@ -1964,7 +2106,7 @@ function CheckoutStrategyPicker({
             value: "worktree",
             label: checkoutModeLabels.worktree,
             icon: (
-              <GitBranch
+              <FolderLibrary
                 aria-hidden="true"
                 className="pigui-compact-menu-item-icon text-muted"
               />
@@ -1974,7 +2116,10 @@ function CheckoutStrategyPicker({
         size="sm"
         startIcon={
           selectedCheckoutMode === "worktree" ? (
-            <GitBranch aria-hidden="true" className="size-4 shrink-0 text-muted" />
+            <FolderLibrary
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted"
+            />
           ) : (
             <Computer
               aria-hidden="true"
@@ -2025,11 +2170,99 @@ function SessionCreationFailureDetail({
   );
 }
 
+/**
+ * Title and suggestion grid of the Session Draft. Both are shared with the
+ * handoff echo below, which replays them on their way out, so the copy and
+ * spacing can only ever be stated once.
+ */
+function SessionDraftHero() {
+  return (
+    <div className="pigui-draft-handoff__hero flex flex-col items-center gap-2 text-center">
+      <h2 className="text-center text-3xl font-normal tracking-tight text-foreground">
+        Build something useful with{" "}
+        <TextShimmer tone="brand">Pace</TextShimmer>
+      </h2>
+    </div>
+  );
+}
+
+function SessionDraftSuggestions({
+  onSelect,
+}: {
+  onSelect?: (prompt: string) => void;
+}) {
+  return (
+    <PromptSuggestion className="pigui-draft-handoff__suggestions w-full max-w-[35rem]">
+      <PromptSuggestion.Items className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {SESSION_DRAFT_SUGGESTED_PROMPTS.map(({ Icon, id, label, prompt }) => (
+          <PromptSuggestion.Item
+            key={id}
+            className="items-center justify-start"
+            showEndIcon={false}
+            onPress={() => onSelect?.(prompt)}
+          >
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <Icon
+                aria-hidden="true"
+                className="size-4 shrink-0"
+                data-testid="session-draft-suggestion-icon"
+              />
+              <span className="truncate">{label}</span>
+            </span>
+          </PromptSuggestion.Item>
+        ))}
+      </PromptSuggestion.Items>
+    </PromptSuggestion>
+  );
+}
+
+/**
+ * What the Session Draft leaves behind for the length of the handoff: the
+ * title and the suggestion grid drift up and fade while the Live composer
+ * settles into the space the draft composer held (the spacer keeps that
+ * space, so nothing below the title moves). Inert and hidden from assistive
+ * tech — the interactive Draft is already gone.
+ */
+function SessionDraftExitEcho({
+  composerHeight,
+  projectLabel,
+  isChatTarget,
+}: {
+  composerHeight: number;
+  projectLabel: string | null;
+  isChatTarget: boolean;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className="pigui-draft-handoff__exit flex h-full min-h-0 flex-col items-center justify-center px-6 py-8"
+      inert
+    >
+      <div className="flex w-full max-w-[44rem] flex-col items-center justify-center gap-6">
+        <SessionDraftHero />
+        <div className="pigui-draft-handoff__target flex w-full justify-center">
+          {projectLabel ? (
+            <ComposerStaticChip
+              chrome="selector"
+              icon={isChatTarget ? ChatAdd : FolderClosed}
+              label={projectLabel}
+              testId="session-draft-echo-target"
+            />
+          ) : null}
+        </div>
+        <div className="w-full" style={{ height: `${composerHeight}px` }} />
+        <SessionDraftSuggestions />
+      </div>
+    </div>
+  );
+}
+
 function SessionDraftComposer({
   draft,
   projects,
   creationProjection,
   recommendedCheckoutMode,
+  projectGit,
   onDraftChange,
   onDraftCheckoutModeChange,
   onDraftTargetChange,
@@ -2040,6 +2273,8 @@ function SessionDraftComposer({
   projects: ProjectRegistryEntry[];
   creationProjection: SessionProjection | null;
   recommendedCheckoutMode: SessionDraftCheckoutMode;
+  /** Branch state of the target Project; empty for the Chat workspace. */
+  projectGit: ProjectGitView;
   onDraftChange: (prompt: string) => void;
   onDraftCheckoutModeChange: (checkoutMode: SessionDraftCheckoutMode) => void;
   onDraftTargetChange: (projectId: string | null) => void;
@@ -2076,6 +2311,9 @@ function SessionDraftComposer({
 
     void invoke<RuntimeModelControls>("list_available_model_controls")
       .then((controls) => {
+        // Shared with the Live composer so the handoff keeps the same chip.
+        rememberModelCatalog(controls.models);
+
         if (!cancelled) {
           setDraftModelControls(
             overlayPreferredModel(controls, [
@@ -2096,6 +2334,16 @@ function SessionDraftComposer({
     };
   }, [providerAuthLoading, providersConfigured, recentSessionModelKey]);
 
+  const switchProjectBranch = async (branch: string) => {
+    try {
+      await projectGit.checkoutBranch(branch);
+      attachments.setError(null);
+    } catch (error) {
+      attachments.setError(
+        error instanceof Error ? error.message : "Git could not switch branch.",
+      );
+    }
+  };
   const applySuggestedPrompt = (prompt: string) => {
     onDraftChange(prompt);
     draftInputRef.current?.focus();
@@ -2121,6 +2369,12 @@ function SessionDraftComposer({
       return;
     }
 
+    // The Live composer reads this back while the Session is being created,
+    // so the model chip does not blank out during the handoff.
+    if (draftModelControls?.selected) {
+      saveLastModelSelection(draftModelControls.selected);
+    }
+
     onDraftSubmit({
       projectId: draft.projectId,
       prompt: built.prompt,
@@ -2132,6 +2386,50 @@ function SessionDraftComposer({
     });
     attachments.clear();
   };
+
+  const chatTarget = isChatProjectId(draft.projectId);
+  const projectBranch = projectGit.summary?.branch ?? null;
+  // The Location row the Live composer will keep: where this Session runs,
+  // which branch it starts from, and the context ring waiting to be filled.
+  const draftLocationRow = (
+    <ComposerLocationRow
+      location={
+        !draft.projectId ? undefined : chatTarget ? (
+          <ComposerStaticChip
+            chrome="selector"
+            icon={ChatAdd}
+            label={CHAT_WORKSPACE_DISPLAY_NAME}
+            testId="composer-location-label"
+          />
+        ) : (
+          <CheckoutStrategyPicker
+            selectedCheckoutMode={selectedCheckoutMode}
+            onCheckoutModeChange={onDraftCheckoutModeChange}
+          />
+        )
+      }
+      branch={
+        chatTarget || !projectBranch ? undefined : selectedCheckoutMode ===
+          "worktree" ? (
+          // A worktree is cut from this branch rather than moving onto it.
+          <ComposerStaticChip
+            chrome="button"
+            icon={GitBranch}
+            label={`from ${projectBranch}`}
+            testId="composer-branch-label"
+          />
+        ) : (
+          <GitBranchPicker
+            branch={projectBranch}
+            branches={projectGit.summary?.branches ?? []}
+            occupiedBranches={[]}
+            onBranchChange={(next) => void switchProjectBranch(next)}
+          />
+        )
+      }
+      meter={<ContextUsageMeter usage={null} />}
+    />
+  );
 
   if (!providerAuthLoading && !providersConfigured) {
     return (
@@ -2150,18 +2448,30 @@ function SessionDraftComposer({
       data-testid="session-draft-composer"
     >
       <div
-        className="flex w-full max-w-[46rem] flex-col items-center justify-center gap-6"
+        className="flex w-full max-w-[44rem] flex-col items-center justify-center gap-6"
         data-testid="session-draft-empty-state"
       >
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h2 className="text-center text-3xl font-normal tracking-tight text-foreground">
-            Build something useful with{" "}
-            <TextShimmer tone="brand">Pace</TextShimmer>
-          </h2>
+        <SessionDraftHero />
+        {/* Draft-only, so it sits above the composer and leaves with the
+            title; everything that outlives the draft is in the composer or
+            its Location row. */}
+        <div
+          className="pigui-draft-handoff__target flex w-full flex-wrap justify-center gap-2"
+          data-testid="session-draft-project-picker"
+        >
+          <ProjectPicker
+            error={targetError}
+            projects={projects}
+            selectedProjectId={draft.projectId}
+            onProjectChange={(projectId) => {
+              onDraftTargetChange(projectId);
+            }}
+          />
         </div>
         <div className="flex w-full flex-col gap-3">
           <PromptInput
             accent="brand"
+            accentFocusRing
             className="w-full"
             drawer={
               <ComposerAttachmentDrawer
@@ -2170,6 +2480,7 @@ function SessionDraftComposer({
               />
             }
             error={attachments.error}
+            footer={draftLocationRow}
             hasAttachments={attachments.items.length > 0}
             inputRef={draftInputRef}
             placeholder="Do anything with Pi"
@@ -2210,25 +2521,6 @@ function SessionDraftComposer({
             onSubmit={submitDraft}
             onValueChange={onDraftChange}
           />
-          <div
-            className="flex w-full flex-wrap justify-start gap-2"
-            data-testid="session-draft-project-picker"
-          >
-            <ProjectPicker
-              error={targetError}
-              projects={projects}
-              selectedProjectId={draft.projectId}
-              onProjectChange={(projectId) => {
-                onDraftTargetChange(projectId);
-              }}
-            />
-            {!draft.projectId || isChatProjectId(draft.projectId) ? null : (
-              <CheckoutStrategyPicker
-                selectedCheckoutMode={selectedCheckoutMode}
-                onCheckoutModeChange={onDraftCheckoutModeChange}
-              />
-            )}
-          </div>
           {creationProjection ? (
             <div
               aria-live="polite"
@@ -2245,27 +2537,7 @@ function SessionDraftComposer({
             </div>
           ) : null}
         </div>
-        <PromptSuggestion className="w-full max-w-[35rem]">
-          <PromptSuggestion.Items className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SESSION_DRAFT_SUGGESTED_PROMPTS.map(({ Icon, id, label, prompt }) => (
-              <PromptSuggestion.Item
-                key={id}
-                className="items-center justify-start"
-                showEndIcon={false}
-                onPress={() => applySuggestedPrompt(prompt)}
-              >
-                <span className="inline-flex min-w-0 items-center gap-2">
-                  <Icon
-                    aria-hidden="true"
-                    className="size-4 shrink-0"
-                    data-testid="session-draft-suggestion-icon"
-                  />
-                  <span className="truncate">{label}</span>
-                </span>
-              </PromptSuggestion.Item>
-            ))}
-          </PromptSuggestion.Items>
-        </PromptSuggestion>
+        <SessionDraftSuggestions onSelect={applySuggestedPrompt} />
       </div>
     </section>
   );
@@ -2842,6 +3114,7 @@ function LiveSessionColumn({
   sessionProjection,
   sessionChanges,
   clockNowMs,
+  loadProjectGitSummary,
   onProjectionChange,
   onLatestMessageRendered,
   onManageModels,
@@ -2864,6 +3137,7 @@ function LiveSessionColumn({
   sessionProjection?: SessionProjection | null;
   sessionChanges?: SessionChangesView;
   clockNowMs?: number;
+  loadProjectGitSummary?: typeof getProjectGitSummary;
   onProjectionChange?: (projection: SessionProjection) => void;
   onLatestMessageRendered?: (sessionId: string) => void;
   onManageModels?: () => void;
@@ -2895,6 +3169,20 @@ function LiveSessionColumn({
   const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(() =>
     getVisibleSessionDraft(),
   );
+  // Only the Session Draft asks Git about the Project folder, and never for
+  // the Chat workspace. A Session's own branch keeps coming from
+  // useSessionChanges, which may not run before its checkout exists (#268).
+  const draftProjectRoot =
+    showDraft &&
+    sessionDraft?.projectId &&
+    !isChatProjectId(sessionDraft.projectId)
+      ? projects.find((project) => project.id === sessionDraft.projectId)?.path ??
+        null
+      : null;
+  const projectGit = useProjectGit({
+    projectRoot: draftProjectRoot,
+    ...(loadProjectGitSummary ? { loadSummary: loadProjectGitSummary } : {}),
+  });
   const [creationProjection, setCreationProjection] =
     useState<SessionProjection | null>(null);
   const [interactionProjection, setInteractionProjection] =
@@ -2903,6 +3191,17 @@ function LiveSessionColumn({
   // draft so only that handoff plays the composer settle, not a sidebar click.
   const draftHandoffPendingRef = useRef(false);
   const [draftHandoff, setDraftHandoff] = useState<"measure" | "run" | null>(null);
+  // Where the draft composer sat when it was submitted, in viewport
+  // coordinates: the Live composer starts there instead of at a guessed
+  // centre, so the two never appear at different heights.
+  const draftComposerRectRef = useRef<{ top: number; height: number } | null>(null);
+  // The branch the draft's Location row showed, kept for the Session it
+  // started so the row never blanks while Git looks at the new checkout.
+  const [draftLocationHandoff, setDraftLocationHandoff] = useState<{
+    sessionId: string;
+    branchLabel: string | null;
+    checkoutMode: SessionDraftCheckoutMode;
+  } | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
@@ -2941,8 +3240,8 @@ function LiveSessionColumn({
     setDraftHandoff("measure");
   }, [showDraft]);
 
-  // First frame: park the composer where the draft composer sat (vertically
-  // centred). Next frame: release it so the transition carries it down.
+  // First frame: park the composer where the draft composer sat. Next frame:
+  // release it so the transition carries it down.
   useLayoutEffect(() => {
     if (draftHandoff !== "measure") {
       return;
@@ -2950,12 +3249,13 @@ function LiveSessionColumn({
 
     const column = columnRef.current;
     const composer = column?.querySelector<HTMLElement>(
-      '[data-testid="full-chat-composer"]',
+      '[data-testid="full-chat-composer"] [data-slot="prompt-input"]',
     );
+    const draftRect = draftComposerRectRef.current;
 
-    if (column && composer) {
-      const offset = Math.max(0, (column.clientHeight - composer.offsetHeight) / 2);
-      column.style.setProperty("--pigui-draft-handoff-offset", `${-offset}px`);
+    if (column && composer && draftRect) {
+      const offset = draftRect.top - composer.getBoundingClientRect().top;
+      column.style.setProperty("--pigui-draft-handoff-offset", `${offset}px`);
     }
 
     const frame = requestAnimationFrame(() => setDraftHandoff("run"));
@@ -2970,6 +3270,7 @@ function LiveSessionColumn({
 
     const timer = setTimeout(() => {
       columnRef.current?.style.removeProperty("--pigui-draft-handoff-offset");
+      draftComposerRectRef.current = null;
       setDraftHandoff(null);
     }, draftHandoffMs);
 
@@ -3155,11 +3456,27 @@ function LiveSessionColumn({
     setSessionDraft(setSessionDraftTarget(targetProjectId));
   };
   const handleDraftSubmit = async (event: SessionDraftSubmitEvent) => {
+    const draftComposer = columnRef.current?.querySelector<HTMLElement>(
+      '[data-testid="session-draft-composer"] [data-slot="prompt-input"]',
+    );
+
+    if (draftComposer) {
+      const rect = draftComposer.getBoundingClientRect();
+      draftComposerRectRef.current = { top: rect.top, height: rect.height };
+    }
+
     const draft = getSessionDraft({ projectIds });
 
     if (!draft?.projectId) {
       return;
     }
+
+    const draftBranch = projectGit.summary?.branch ?? null;
+    const draftBranchLabel = draftBranch
+      ? event.checkoutMode === "worktree"
+        ? `from ${draftBranch}`
+        : draftBranch
+      : null;
 
     const targetProject = isChatProjectId(draft.projectId)
       ? chatWorkspaceListEntry()
@@ -3211,6 +3528,13 @@ function LiveSessionColumn({
         if (isStarting) {
           creationStarted = true;
           draftHandoffPendingRef.current = true;
+
+          setDraftLocationHandoff({
+            sessionId: projection.id,
+            branchLabel: draftBranchLabel,
+            checkoutMode: event.checkoutMode,
+          });
+
           onSessionCreationStarted?.(projection);
         }
       },
@@ -3841,6 +4165,13 @@ function LiveSessionColumn({
     onSessionCreated?.(forkProjection);
   };
 
+  // Only the Session this column just created inherits the draft's Location;
+  // a Session picked from the sidebar reads its own checkout.
+  const draftLocationOfThisSession =
+    draftLocationHandoff && draftLocationHandoff.sessionId === liveProjection?.id
+      ? draftLocationHandoff
+      : null;
+
   return (
     <main
       ref={columnRef}
@@ -3854,6 +4185,7 @@ function LiveSessionColumn({
           projects={projects}
           creationProjection={creationProjection}
           recommendedCheckoutMode={recommendedCheckoutMode}
+          projectGit={projectGit}
           onDraftChange={handleDraftChange}
           onDraftCheckoutModeChange={handleDraftCheckoutModeChange}
           onDraftTargetChange={handleDraftTargetChange}
@@ -3862,6 +4194,19 @@ function LiveSessionColumn({
         />
       ) : (
         <>
+          {draftHandoff && draftComposerRectRef.current ? (
+            <SessionDraftExitEcho
+              composerHeight={draftComposerRectRef.current.height}
+              isChatTarget={isChatProjectId(sessionDraft?.projectId ?? "")}
+              projectLabel={
+                isChatProjectId(sessionDraft?.projectId ?? "")
+                  ? CHAT_PICKER_LABEL
+                  : projects.find(
+                      (project) => project.id === sessionDraft?.projectId,
+                    )?.displayName ?? null
+              }
+            />
+          ) : null}
           {runtimeUnavailableProjection ? (
             <div
               className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-muted"
@@ -3975,6 +4320,8 @@ function LiveSessionColumn({
               isStoppingRun={stoppingRun}
               queueMode={queueMode}
               projection={liveProjection}
+              draftBranchLabel={draftLocationOfThisSession?.branchLabel ?? null}
+              draftCheckoutMode={draftLocationOfThisSession?.checkoutMode ?? null}
               sessionChanges={sessionChanges}
               onPromptSubmit={handlePromptSubmit}
               onQueueSubmit={handleQueueSubmit}
@@ -4031,6 +4378,7 @@ export function AgentWorkspaceSessionsView({
   sessionProjection,
   sessionChanges,
   clockNowMs,
+  loadProjectGitSummary,
   onProjectionChange,
   onLatestMessageRendered,
   onManageModels,
@@ -4053,6 +4401,8 @@ export function AgentWorkspaceSessionsView({
   sessionProjection?: SessionProjection | null;
   sessionChanges?: SessionChangesView;
   clockNowMs?: number;
+  /** Test seam for the Session Draft's Project-level Git read. */
+  loadProjectGitSummary?: typeof getProjectGitSummary;
   onProjectionChange?: (projection: SessionProjection) => void;
   onLatestMessageRendered?: (sessionId: string) => void;
   onManageModels?: () => void;
@@ -4104,6 +4454,7 @@ export function AgentWorkspaceSessionsView({
       sessionProjection={sessionProjection}
       sessionChanges={sessionChanges}
       clockNowMs={clockNowMs}
+      loadProjectGitSummary={loadProjectGitSummary}
       onProjectionChange={onProjectionChange}
       onLatestMessageRendered={onLatestMessageRendered}
       onManageModels={onManageModels}

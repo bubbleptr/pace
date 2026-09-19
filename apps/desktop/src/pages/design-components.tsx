@@ -1507,6 +1507,7 @@ function PromptInputDemo({
   lockInputOnRun?: boolean;
   error?: string;
   accent?: "brand";
+  accentFocusRing?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
 
@@ -1563,6 +1564,34 @@ function ChatRunFailureGallery() {
   </GallerySection>;
 }
 
+/**
+ * The footer slot as the composer's Location row uses it: one row of chrome
+ * that keeps its height in both the Session Draft and the Live Session.
+ */
+function PromptInputFooterSlotDemo({
+  caption,
+  footer,
+}: {
+  caption: string;
+  footer: ReactNode;
+}) {
+  const [value, setValue] = useState("");
+
+  return (
+    <Variant caption={caption}>
+      <div className="w-[32rem]">
+        <ChatPromptInput
+          footer={footer}
+          placeholder="Ask anything"
+          value={value}
+          onSubmit={() => setValue("")}
+          onValueChange={setValue}
+        />
+      </div>
+    </Variant>
+  );
+}
+
 function ChatPromptInputGallery() {
   return (
     <GallerySection title="ChatPromptInput">
@@ -1581,14 +1610,53 @@ function ChatPromptInputGallery() {
           status="error"
         />
         <PromptInputDemo
-          caption="accent=brand, status=ready (focus the field to see the ring)"
+          caption="accent=brand + accentFocusRing, status=ready (focus the field to see the ring; session-draft empty state only)"
+          accent="brand"
+          accentFocusRing
+        />
+        <PromptInputDemo
+          caption="accent=brand, status=ready (in-Session: focus leaves the ring off)"
           accent="brand"
         />
         <PromptInputDemo
-          caption="accent=brand, status=submitted (flowing ring, opt-in only on the session-draft empty state)"
+          caption="accent=brand, status=submitted (flowing ring, Session Creation included)"
           accent="brand"
           lockInputOnRun
           status="submitted"
+        />
+        <PromptInputFooterSlotDemo
+          caption="footer slot — Session Draft Location row"
+          footer={
+            <span className="flex w-full items-center gap-2">
+              <span className="inline-flex h-7 items-center gap-2 px-3 text-sm font-medium text-foreground">
+                Git worktree
+              </span>
+              <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
+                from main
+              </span>
+              <span className="ml-auto inline-flex shrink-0">
+                <ContextUsageMeter usage={null} />
+              </span>
+            </span>
+          }
+        />
+        <PromptInputFooterSlotDemo
+          caption="footer slot — the same row inside a Session"
+          footer={
+            <span className="flex w-full items-center gap-2">
+              <span className="inline-flex h-7 items-center gap-2 px-3 text-sm font-medium text-foreground">
+                Git worktree
+              </span>
+              <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
+                feat/draft-live-handoff
+              </span>
+              <span className="ml-auto inline-flex shrink-0">
+                <ContextUsageMeter
+                  usage={{ tokens: 90_000, contextWindow: 200_000, percent: 45 }}
+                />
+              </span>
+            </span>
+          }
         />
       </VariantRow>
     </GallerySection>
@@ -2479,7 +2547,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "ChatMarkdown", category: "Conversation", description: "Rich message content, heading hierarchy, and streaming Markdown.", Preview: ChatMarkdownGallery },
   { name: "ChatCodeBlock", category: "Conversation", description: "Syntax-highlighted code with copy controls.", Preview: ChatCodeBlockGallery },
   { name: "ChatThoughtMarkdown", category: "Conversation", description: "Lightweight inline Markdown for reasoning text.", Preview: ChatThoughtMarkdownGallery },
-  { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states.", Preview: ChatPromptInputGallery },
+  { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states, with the stable footer slot.", Preview: ChatPromptInputGallery },
   { name: "ChatPromptSuggestion", category: "Composer", description: "Suggested prompts that help start a conversation.", Preview: ChatPromptSuggestionGallery },
   { name: "ChatQueuedMessage", category: "Composer", description: "Pending messages waiting to be sent to the runtime.", Preview: ChatQueuedMessageGallery },
   { name: "ModelSelectorControl", category: "Composer", description: "Choose a model, reasoning level, and fast mode.", Preview: ModelSelectorControlGallery },
