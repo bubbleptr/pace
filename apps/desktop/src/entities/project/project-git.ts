@@ -42,11 +42,18 @@ export function useProjectGit({
     branch: string,
   ) => Promise<ProjectGitSummary>;
 }): ProjectGitView {
-  const [summary, setSummary] = useState<ProjectGitSummary | null>(null);
+  // Keyed by the root that was *asked for*, not the one the backend echoes:
+  // the backend realpath()s its input, so a registered path with a trailing
+  // slash or a symlink in it would never compare equal and the row would
+  // silently stay branchless.
+  const [state, setState] = useState<{
+    root: string;
+    summary: ProjectGitSummary;
+  } | null>(null);
 
   useEffect(() => {
     if (!projectRoot) {
-      setSummary(null);
+      setState(null);
       return;
     }
 
@@ -56,10 +63,10 @@ export function useProjectGit({
     // branch; the draft must stay usable either way.
     void loadSummary(projectRoot)
       .then((next) => {
-        if (!cancelled) setSummary(next);
+        if (!cancelled) setState({ root: projectRoot, summary: next });
       })
       .catch(() => {
-        if (!cancelled) setSummary(null);
+        if (!cancelled) setState(null);
       });
 
     return () => {
@@ -68,13 +75,13 @@ export function useProjectGit({
   }, [projectRoot, loadSummary]);
 
   return {
-    summary: summary?.projectRoot === projectRoot ? summary : null,
+    summary: state && state.root === projectRoot ? state.summary : null,
     checkoutBranch: async (branch) => {
       if (!projectRoot) {
         throw new Error("No Project folder to check out a branch in.");
       }
 
-      setSummary(await checkout(projectRoot, branch));
+      setState({ root: projectRoot, summary: await checkout(projectRoot, branch) });
     },
   };
 }
