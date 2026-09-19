@@ -306,6 +306,14 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
     case "send_subagent":
     case "stop_subagent":
       return Promise.reject(new Error("Subagent control requires the desktop app"));
+    case "get_project_git_summary":
+      // Outside Electron there is no Git to ask; the draft's Location row
+      // simply shows no branch.
+      return Promise.resolve({
+        projectRoot: typeof args?.projectRoot === "string" ? args.projectRoot : "",
+        branch: null,
+        branches: [],
+      } as T);
     case "list_available_model_controls":
       return Promise.resolve({
         models: [

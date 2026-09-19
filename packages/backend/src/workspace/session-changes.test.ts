@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { createNodeSessionChangesReader } from "./session-changes";
+import {
+  createNodeProjectGitReader,
+  createNodeSessionChangesReader,
+} from "./session-changes";
 
 const execFileAsync = promisify(execFile);
 const tempDirs: string[] = [];
@@ -424,5 +427,50 @@ describe("session changes reader", () => {
         diffRoot: outsideRoot,
       }),
     ).rejects.toThrow("inside its execution checkout");
+  });
+});
+
+describe("project git summary", () => {
+  it("reads the current branch and the switchable names for a Project", async () => {
+    const { root, current } = await repositoryWithOrigin();
+    await git(root, "branch", "feat/location-row");
+
+    const summary = await createNodeProjectGitReader().read({
+      projectRoot: root,
+    });
+
+    expect(summary).toEqual({
+      projectRoot: await realpath(root),
+      branch: current,
+      branches: [current, "feat/location-row"],
+    });
+  });
+
+  it("says a Project outside Git has no branch rather than failing the draft", async () => {
+    const root = await tempDirectory();
+
+    await expect(
+      createNodeProjectGitReader().read({ projectRoot: root }),
+    ).resolves.toEqual({
+      projectRoot: await realpath(root),
+      branch: null,
+      branches: [],
+    });
+  });
+
+  it("switches the Project folder onto another branch", async () => {
+    const root = await repository();
+    await git(root, "branch", "feat/location-row");
+    const reader = createNodeProjectGitReader();
+
+    const summary = await reader.checkoutBranch({
+      projectRoot: root,
+      branch: "feat/location-row",
+    });
+
+    expect(summary.branch).toBe("feat/location-row");
+    expect(await gitStdout(root, "symbolic-ref", "--short", "HEAD")).toBe(
+      "feat/location-row",
+    );
   });
 });

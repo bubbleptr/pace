@@ -3,7 +3,7 @@ import { act, fireEvent, render as renderWithoutQuery, screen, waitFor, within }
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import {
   Outlet,
   RouterProvider,
@@ -1627,7 +1627,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
   });
 
-  it("keeps the composer footer and model chip through the Draft → Live handoff", async () => {
+  it("keeps the composer's Location row and model chip through the Draft → Live handoff", async () => {
     const user = userEvent.setup();
     addProjectToRegistry(pigProjectPath);
     saveSessionDraft(pigProjectPath, "Keep the composer in place");
@@ -1668,13 +1668,15 @@ describe("AgentWorkspaceSessionsPage", () => {
         );
 
         if (!row) {
-          throw new Error("the Live composer dropped its footer line");
+          throw new Error("the Live composer dropped its Location row");
         }
 
         return row;
       });
 
-      expect(footer).toHaveTextContent("Pig");
+      expect(
+        within(footer).getByTestId("composer-location-label"),
+      ).toHaveTextContent("Project folder");
       expect(
         within(liveComposer).getByTestId("model-thinking-trigger"),
       ).toHaveTextContent(draftModelChip ?? "");
@@ -1760,6 +1762,191 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     expect(composerShell).toHaveAttribute("data-accent", "brand");
     expect(composerShell).toHaveAttribute("data-status", "ready");
+  });
+
+  describe("composer Location row", () => {
+    const docsWorkspace: ComponentProps<
+      typeof AgentWorkspaceSessionsView
+    >["workspace"] = {
+      id: "pig-docs",
+      name: "Pig Docs",
+      projectRoot: "/Users/void/code/opensource/Pig/docs",
+      repoRoot: "/Users/void/code/opensource/Pig",
+      selectedSessionId: "session-docs-review",
+      liveMessages: [],
+      runTimeline: [],
+      checkout: {
+        mode: "Foreground local checkout",
+        root: "/Users/void/code/opensource/Pig",
+        runtimeCwd: "/Users/void/code/opensource/Pig/docs",
+      },
+      summary: {
+        model: "gpt-5-codex",
+        totalCostUsd: 0,
+        totalTokens: 0,
+      },
+    };
+
+    function projectGitLoader(branch: string | null, branches: string[] = []) {
+      return vi.fn(async (projectRoot: string) => ({
+        projectRoot,
+        branch,
+        branches,
+      }));
+    }
+
+    function footerOf(composerTestId: string) {
+      const footer = screen
+        .getByTestId(composerTestId)
+        .querySelector<HTMLElement>('[data-slot="prompt-input-footer"]');
+
+      if (!footer) {
+        throw new Error(`${composerTestId} has no Location row`);
+      }
+
+      return footer;
+    }
+
+    it("names where a Session Draft would run and which branch it would start on", async () => {
+      const user = userEvent.setup();
+      const loadProjectGitSummary = projectGitLoader("main", ["main", "feat/location-row"]);
+      saveSessionDraft("pig-docs", "Draft the Location row");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId="pig-docs"
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={docsWorkspace}
+        />,
+      );
+
+      await screen.findByTestId("session-draft-composer");
+      const footer = footerOf("session-draft-composer");
+
+      expect(within(footer).getByTestId("checkout-strategy-trigger")).toHaveTextContent(
+        "Project folder",
+      );
+      expect(
+        await within(footer).findByTestId("git-branch-status-trigger"),
+      ).toHaveTextContent("main");
+      expect(loadProjectGitSummary).toHaveBeenCalledWith(
+        "/Users/void/code/opensource/Pig/docs",
+      );
+
+      // A worktree is cut from a base branch instead of moving the folder onto one.
+      await user.click(within(footer).getByTestId("checkout-strategy-trigger"));
+      await user.click(await screen.findByRole("option", { name: /Git worktree/ }));
+
+      expect(within(footer).getByTestId("composer-branch-label")).toHaveTextContent(
+        "from main",
+      );
+    });
+
+    it("shows the Chat workspace as a Location without asking Git for a branch", async () => {
+      const loadProjectGitSummary = projectGitLoader("main", ["main"]);
+      saveSessionDraft("chat", "Draft a chat");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId="chat"
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={docsWorkspace}
+        />,
+      );
+
+      await screen.findByTestId("session-draft-composer");
+      const footer = footerOf("session-draft-composer");
+
+      expect(within(footer).getByTestId("composer-location-label")).toHaveTextContent(
+        "Chat",
+      );
+      expect(
+        within(footer).queryByTestId("git-branch-status-trigger"),
+      ).not.toBeInTheDocument();
+      expect(
+        within(footer).queryByTestId("composer-branch-label"),
+      ).not.toBeInTheDocument();
+      expect(loadProjectGitSummary).not.toHaveBeenCalled();
+    });
+
+    it("keeps the draft Location and branch while the Session is being created", async () => {
+      const user = userEvent.setup();
+      const projections = createInMemorySessionProjectionStore();
+      const loadProjectGitSummary = projectGitLoader("main", ["main"]);
+      saveSessionDraft("pig-docs", "Carry the Location row over");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId="pig-docs"
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={docsWorkspace}
+          sessionCreator={(input) =>
+            createSessionFromDraft({
+              ...input,
+              bridge: createInMemoryPiRuntimeBridge({
+                now: () => "2026-06-26T08:00:03.000Z",
+              }),
+              projections,
+              idFactory: () => "session-location-row",
+              now: () => "2026-06-26T08:00:00.000Z",
+            })
+          }
+        />,
+      );
+
+      await within(footerOf("session-draft-composer")).findByTestId(
+        "git-branch-status-trigger",
+      );
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      const liveFooter = await waitFor(() => footerOf("full-chat-composer"));
+      const location = within(liveFooter).getByTestId("composer-location-label");
+
+      // Frozen once the Session exists: same words, no longer a control.
+      expect(location).toHaveTextContent("Project folder");
+      expect(location.closest("button")).toBeNull();
+      // Git has not answered for the new checkout yet; the row keeps the
+      // branch the draft showed instead of blanking.
+      expect(
+        within(liveFooter).getByTestId("composer-branch-label"),
+      ).toHaveTextContent("main");
+    });
+
+    it("re-reads the branch when the Session Draft changes Project", async () => {
+      const user = userEvent.setup();
+      addProjectToRegistry(pigProjectPath, { now: () => "2026-06-30T08:00:00.000Z" });
+      addProjectToRegistry(studyProjectPath, { now: () => "2026-06-30T09:00:00.000Z" });
+      const loadProjectGitSummary = vi.fn(async (projectRoot: string) => ({
+        projectRoot,
+        branch: projectRoot === studyProjectPath ? "study/main" : "main",
+        branches: [projectRoot === studyProjectPath ? "study/main" : "main"],
+      }));
+      saveSessionDraft(pigProjectPath, "Retarget the Location row");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId={pigProjectPath}
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={{ ...docsWorkspace, id: pigProjectPath, projectRoot: pigProjectPath }}
+        />,
+      );
+
+      const footer = footerOf("session-draft-composer");
+
+      expect(
+        await within(footer).findByTestId("git-branch-status-trigger"),
+      ).toHaveTextContent("main");
+
+      await chooseProjectFromPicker(user, "study");
+
+      expect(
+        await within(footer).findByTestId("git-branch-status-trigger"),
+      ).toHaveTextContent("study/main");
+    });
   });
 
   it("keeps background events from a created Session out of an unsent Session Draft", async () => {
@@ -4841,10 +5028,12 @@ describe("AgentWorkspaceSessionsPage", () => {
           Node.DOCUMENT_POSITION_FOLLOWING,
       ),
     ).toBe(true);
+    // Project is a draft-only input, so it sits above the composer and leaves
+    // with the title; the composer's own Location row outlives the handoff.
     expect(
       Boolean(
         promptInput.compareDocumentPosition(projectPickerTrigger) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+          Node.DOCUMENT_POSITION_PRECEDING,
       ),
     ).toBe(true);
     expect(
@@ -4853,7 +5042,7 @@ describe("AgentWorkspaceSessionsPage", () => {
           Node.DOCUMENT_POSITION_FOLLOWING,
       ),
     ).toBe(true);
-    expect(projectPicker).toHaveClass("w-full", "justify-start");
+    expect(projectPicker).toHaveClass("w-full", "justify-center");
     expect(projectPickerControl).not.toHaveClass("w-[9rem]");
     expect(projectPickerControl).not.toHaveClass(
       "w-[clamp(7rem,calc(var(--project-picker-label-ch)*1ch+4.75rem),16rem)]",
@@ -8427,15 +8616,16 @@ describe("Context usage placement", () => {
     ).toBeInTheDocument();
   });
 
-  it("meters nothing until a runtime is bound, and keeps the footer line", () => {
+  it("meters nothing until a runtime is bound, and keeps the Location row", () => {
     const footer = renderSessionsView(boundProjection({ piSessionId: null }));
 
-    // The line survives Session Creation so the composer keeps its height
-    // through the Draft → Live handoff; only the ring waits for a runtime.
+    // The row survives Session Creation so the composer keeps its height
+    // through the Draft → Live handoff; only the share is unknown until a
+    // runtime has a context window to be a share of.
     expect(footer).toBeInTheDocument();
     expect(
       footer?.querySelector('[data-slot="context-usage-meter"]'),
-    ).not.toBeInTheDocument();
+    ).toHaveAttribute("aria-label", "Context usage not reported yet");
   });
 
   function idleSessionChanges(

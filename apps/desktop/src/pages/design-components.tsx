@@ -1565,47 +1565,29 @@ function ChatRunFailureGallery() {
 }
 
 /**
- * The footer slot as the Draft → Live handoff uses it: one row of chrome that
- * keeps its height while its content is swapped, so the composer never
- * re-flows when a Session binds.
+ * The footer slot as the composer's Location row uses it: one row of chrome
+ * that keeps its height in both the Session Draft and the Live Session.
  */
-function PromptInputFooterSlotDemo() {
-  const [bound, setBound] = useState(false);
+function PromptInputFooterSlotDemo({
+  caption,
+  footer,
+}: {
+  caption: string;
+  footer: ReactNode;
+}) {
   const [value, setValue] = useState("");
 
   return (
-    <Variant caption="footer slot (click to swap draft → live content)">
-      <VStack gap={2}>
-        <div className="w-[32rem]">
-          <ChatPromptInput
-            footer={
-              bound ? (
-                <span className="flex w-full items-center gap-2">
-                  <span className="text-xs text-muted">feat/draft-live-handoff</span>
-                  <span className="ml-auto inline-flex shrink-0">
-                    <ContextUsageMeter
-                      usage={{ tokens: 90_000, contextWindow: 200_000, percent: 45 }}
-                    />
-                  </span>
-                </span>
-              ) : (
-                <span className="text-xs text-muted">Pace · Git worktree</span>
-              )
-            }
-            footerKey={bound ? "branch" : "draft-target"}
-            placeholder="Ask anything"
-            value={value}
-            onSubmit={() => setValue("")}
-            onValueChange={setValue}
-          />
-        </div>
-        <Button
-          label={bound ? "Back to the draft footer" : "Bind the Session"}
-          size="sm"
-          variant="secondary"
-          onClick={() => setBound((current) => !current)}
+    <Variant caption={caption}>
+      <div className="w-[32rem]">
+        <ChatPromptInput
+          footer={footer}
+          placeholder="Ask anything"
+          value={value}
+          onSubmit={() => setValue("")}
+          onValueChange={setValue}
         />
-      </VStack>
+      </div>
     </Variant>
   );
 }
@@ -1642,7 +1624,40 @@ function ChatPromptInputGallery() {
           lockInputOnRun
           status="submitted"
         />
-        <PromptInputFooterSlotDemo />
+        <PromptInputFooterSlotDemo
+          caption="footer slot — Session Draft Location row"
+          footer={
+            <span className="flex w-full items-center gap-2">
+              <span className="inline-flex h-7 items-center gap-2 px-3 text-sm font-medium text-foreground">
+                Git worktree
+              </span>
+              <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
+                from main
+              </span>
+              <span className="ml-auto inline-flex shrink-0">
+                <ContextUsageMeter usage={null} />
+              </span>
+            </span>
+          }
+        />
+        <PromptInputFooterSlotDemo
+          caption="footer slot — the same row inside a Session"
+          footer={
+            <span className="flex w-full items-center gap-2">
+              <span className="inline-flex h-7 items-center gap-2 px-3 text-sm font-medium text-foreground">
+                Git worktree
+              </span>
+              <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
+                feat/draft-live-handoff
+              </span>
+              <span className="ml-auto inline-flex shrink-0">
+                <ContextUsageMeter
+                  usage={{ tokens: 90_000, contextWindow: 200_000, percent: 45 }}
+                />
+              </span>
+            </span>
+          }
+        />
       </VariantRow>
     </GallerySection>
   );

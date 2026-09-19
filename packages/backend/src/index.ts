@@ -61,9 +61,11 @@ export {
 } from "./persistence/session-projection-store";
 
 export {
+  createNodeProjectGitReader,
   createNodeSessionChangesReader,
   type ReadSessionChangesInput,
   type CheckoutSessionBranchInput,
+  type ProjectGitReader,
   type SessionChangesReader,
 } from "./workspace/session-changes";
 

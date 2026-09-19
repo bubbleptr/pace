@@ -26,6 +26,7 @@ import {
   FlashIcon,
   Folder01Icon,
   Folder02Icon,
+  FolderLibraryIcon,
   FolderOpenIcon,
   GitBranchIcon,
   Globe02Icon,
@@ -96,6 +97,7 @@ export const FileDiff = iconComponent(FileDiffIcon);
 export const Files = iconComponent(Files01Icon);
 export const Flash = iconComponent(FlashIcon);
 export const FolderClosed = iconComponent(Folder01Icon);
+export const FolderLibrary = iconComponent(FolderLibraryIcon);
 export const FolderOpen = iconComponent(FolderOpenIcon);
 export const FolderOpenState = iconComponent(Folder02Icon);
 export const GitBranch = iconComponent(GitBranchIcon);

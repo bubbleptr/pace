@@ -23,6 +23,18 @@ export type SessionChangedFile = {
   patchTruncated: boolean;
 };
 
+/**
+ * Project-level Git state, read before any Session exists: what branch a new
+ * Session would start on and the names it can be pointed at. The Session Draft
+ * shows this in its Location row; `branch` is null for a Project outside Git
+ * or on a detached HEAD, and `branches` is then empty.
+ */
+export type ProjectGitSummary = {
+  projectRoot: string;
+  branch: string | null;
+  branches: string[];
+};
+
 export type SessionChanges = {
   sessionId: string;
   state: SessionChangesState;

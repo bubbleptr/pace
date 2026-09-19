@@ -437,6 +437,15 @@ export function createMockApi(): PaceRendererApi {
           }
           break;
         }
+        case "get_project_git_summary":
+          // Project-level read behind the Session Draft's Location row; the
+          // fixture mirrors the session-level branches above.
+          result = {
+            projectRoot: String(args.projectRoot ?? mockProject),
+            branch: "main",
+            branches: ["main", "feat/mock-review"],
+          };
+          break;
         case "search_package_catalog":
         case "check_package_updates":
         case "get_config_inventory":

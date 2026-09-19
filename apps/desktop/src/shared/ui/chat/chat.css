@@ -867,57 +867,14 @@
 }
 
 /* A stable slot, not a conditional line: the footer keeps one control row of
-   height from the Session Draft through the Live Session, so binding a Pi
-   session swaps what it holds without moving the composer. Only the outgoing
-   layer leaves the flow, so the current content can still grow (a picker's
-   error message) without being clipped. */
+   height whatever it holds, so the Session Draft and the Live Session composer
+   are the same size and the handoff never re-flows the column. */
 .prompt-input__footer {
-  position: relative;
   display: flex;
   align-items: center;
   min-height: var(--size-element-sm);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-}
-
-.prompt-input__footer-layer {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  width: 100%;
-  opacity: 1;
-  transition: opacity var(--duration-fast) var(--ease-standard);
-}
-
-/* Only a replacement fades in; the first footer of a composer is simply
-   there, so opening a Session does not animate a line that never changed. */
-@starting-style {
-  .prompt-input__footer-layer[data-state="in"] {
-    opacity: 0;
-  }
-}
-
-.prompt-input__footer-layer[data-state="out"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-@starting-style {
-  .prompt-input__footer-layer[data-state="out"] {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .prompt-input__footer-layer {
-    transition: none;
-  }
-
-  .prompt-input__footer-layer[data-state="out"] {
-    display: none;
-  }
 }
 
 /* —— Prompt input, brand accent ——

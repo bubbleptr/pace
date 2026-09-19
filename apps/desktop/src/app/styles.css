@@ -701,10 +701,11 @@ body {
   opacity: 0;
 }
 
-/* The draft's title and suggestions, replayed over the Live Session for the
-   length of the handoff: they lift and fade while the composer they framed
-   stays put and slides to the bottom. The echo is out of flow and inert, so
-   it neither moves the Live Session nor takes a click on its way out. */
+/* The draft-only chrome — title, Project chip, suggestions — replayed over the
+   Live Session for the length of the handoff: it lifts and fades while the
+   composer it framed stays put and slides to the bottom, keeping its Location
+   row. The echo is out of flow and inert, so it neither moves the Live Session
+   nor takes a click on its way out. */
 [data-draft-handoff] .pigui-draft-handoff__exit {
   position: absolute;
   inset: 0;
@@ -712,6 +713,7 @@ body {
 }
 
 [data-draft-handoff="run"] .pigui-draft-handoff__hero,
+[data-draft-handoff="run"] .pigui-draft-handoff__target,
 [data-draft-handoff="run"] .pigui-draft-handoff__suggestions {
   opacity: 0;
   transform: translateY(calc(var(--spacing-2) * -1));
