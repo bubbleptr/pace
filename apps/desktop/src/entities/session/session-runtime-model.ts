@@ -101,11 +101,21 @@ export type SessionRuntimeError = {
   at: string;
 };
 
-export type SessionRuntimeOrderEntry = {
-  kind: "message" | "tool" | "status" | "error";
-  id: string;
-  seq: number;
-};
+export type SessionRuntimeOrderEntry =
+  | {
+      kind: "message" | "tool" | "status" | "error";
+      id: string;
+      seq: number;
+    }
+  | {
+      kind: "context_change";
+      id: string;
+      seq: number;
+      sectionsChanged: string[];
+      sectionsRemoved: string[];
+      toolsAdded: string[];
+      toolsRemoved: string[];
+    };
 
 export type SessionRuntimeModel = {
   runs: ReadonlyMap<string, SessionRuntimeRun>;
@@ -495,6 +505,22 @@ export function applyAgentRuntimeEvent(
         ...base,
         errors: [...model.errors, error],
         order: withOrderEntry(model.order, { kind: "error", id: `error-${seq}`, seq }),
+      };
+    }
+
+    case "context_change": {
+      return {
+        ...model,
+        ...base,
+        order: withOrderEntry(model.order, {
+          kind: "context_change",
+          id: event.messageId,
+          seq,
+          sectionsChanged: [...event.sectionsChanged],
+          sectionsRemoved: [...event.sectionsRemoved],
+          toolsAdded: [...event.toolsAdded],
+          toolsRemoved: [...event.toolsRemoved],
+        }),
       };
     }
 

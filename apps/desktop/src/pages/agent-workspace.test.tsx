@@ -6601,6 +6601,122 @@ describe("AgentWorkspaceSessionsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders a context_change as a centered notice instead of an assistant bubble", () => {
+    const workspace = {
+      id: "pig-docs",
+      name: "Pig Docs",
+      projectRoot: "/Users/void/code/opensource/Pig/docs",
+      repoRoot: "/Users/void/code/opensource/Pig",
+      selectedSessionId: "session-model",
+      liveMessages: [],
+      runTimeline: [],
+      checkout: {
+        mode: "Foreground local checkout",
+        root: "/Users/void/code/opensource/Pig",
+        runtimeCwd: "/Users/void/code/opensource/Pig/docs",
+      },
+      summary: {
+        model: "fixture-model",
+        totalCostUsd: 0,
+        totalTokens: 0,
+      },
+    };
+    const runId = "pi-session-model:run-1";
+    const turnId = `${runId}:turn-1`;
+    const changeId = `${turnId}:msg-1`;
+    const answerId = `${turnId}:msg-2`;
+    let projection: SessionProjection = {
+      ...createSessionProjection({
+        id: "session-model",
+        projectId: "pig-docs",
+        initialPrompt: "Ship it",
+        createdAt: "2026-07-02T10:00:00.000Z",
+      }),
+      creationStage: "accepted",
+      runtimeId: "pi-sdk:session-model",
+      piSessionId: "pi-session-model",
+    };
+
+    for (const entry of [
+      {
+        seq: 1,
+        timestamp: "2026-07-02T10:00:01.000Z",
+        event: {
+          type: "run",
+          runId,
+          phase: "start",
+          trigger: "prompt",
+          surface: "hidden",
+          origin: "sdk",
+        } as const,
+      },
+      {
+        seq: 2,
+        timestamp: "2026-07-02T10:00:02.000Z",
+        event: {
+          type: "context_change",
+          runId,
+          turnId,
+          messageId: changeId,
+          surface: "chat",
+          origin: "sdk",
+          sectionsChanged: ["skills"],
+          sectionsRemoved: [],
+          toolsAdded: ["write"],
+          toolsRemoved: ["bash"],
+        } as const,
+      },
+      {
+        seq: 3,
+        timestamp: "2026-07-02T10:00:03.000Z",
+        event: {
+          type: "message",
+          runId,
+          turnId,
+          messageId: answerId,
+          role: "assistant",
+          phase: "end",
+          parts: [{ partId: `${answerId}:part-0`, partType: "text", body: "Shipped." }],
+          surface: "chat",
+          origin: "sdk",
+        } as const,
+      },
+      {
+        seq: 4,
+        timestamp: "2026-07-02T10:00:04.000Z",
+        event: {
+          type: "run",
+          runId,
+          phase: "end",
+          trigger: "prompt",
+          outcome: "completed",
+          surface: "hidden",
+          origin: "sdk",
+        } as const,
+      },
+    ]) {
+      projection = applySessionProjectionEvent(projection, {
+        type: "agent-event-received",
+        entry,
+      });
+    }
+
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        workspace={workspace}
+        sessionProjection={projection}
+      />,
+    );
+
+    const liveChat = screen.getByLabelText("Live Chat messages");
+    expect(within(liveChat).getByRole("status")).toHaveTextContent(
+      "Tools changed: +write, −bash · Prompt updated: skills",
+    );
+    expect(within(liveChat).getByText("Shipped.")).toBeInTheDocument();
+    expect(liveChat.querySelectorAll('[data-slot="chat-message-assistant"]')).toHaveLength(1);
+  });
+
   it("discloses a measured model call on a plain answer that leaves no trace steps behind", () => {
     const workspace = {
       id: "pig-docs",

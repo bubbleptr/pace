@@ -50,6 +50,7 @@ import { ChatConversation } from "@/shared/ui/chat/chat-conversation";
 import { ChatMarkdown, ChatStreamMarkdown } from "@/shared/ui/chat/chat-markdown";
 import { ChatMessage, ChatMessageActions } from "@/shared/ui/chat/chat-message";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
+import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
 import { ChatPromptInput } from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { ChatQueuedMessage } from "@/shared/ui/chat/chat-queued-message";
@@ -1564,6 +1565,34 @@ function ChatRunFailureGallery() {
   </GallerySection>;
 }
 
+function ChatContextChangeGallery() {
+  return (
+    <GallerySection title="ChatContextChange">
+      <VStack gap={4}>
+        <Variant caption="tools only">
+          <ChatContextChange toolsAdded={["write", "edit"]} toolsRemoved={["bash"]} />
+        </Variant>
+        <Variant caption="sections only">
+          <ChatContextChange sectionsChanged={["skills", "cwd"]} />
+        </Variant>
+        <Variant caption="tools and sections">
+          <ChatContextChange
+            toolsAdded={["write"]}
+            sectionsChanged={["skills"]}
+            sectionsRemoved={["cwd"]}
+          />
+        </Variant>
+        <Variant caption="more than four tools on a side">
+          <ChatContextChange
+            toolsAdded={["read", "write", "edit", "bash", "grep", "find"]}
+            toolsRemoved={["old"]}
+          />
+        </Variant>
+      </VStack>
+    </GallerySection>
+  );
+}
+
 /**
  * The footer slot as the composer's Location row uses it: one row of chrome
  * that keeps its height in both the Session Draft and the Live Session.
@@ -2542,6 +2571,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "PiLineChart", category: "Data & metrics", description: "Single-series trend with crosshair hover, plus the decorative PiSparkline.", Preview: PiLineChartGallery },
   { name: "PiHeatmap", category: "Data & metrics", description: "Row × column grid on one sequential hue; levels come from the caller.", Preview: PiHeatmapGallery },
   { name: "ChatRunFailure", category: "Conversation", description: "Readable failures, provider settings, model changes, and request retries.", Preview: ChatRunFailureGallery },
+  { name: "ChatContextChange", category: "Conversation", description: "Centered notice for prompt-section and tool-loadout changes.", Preview: ChatContextChangeGallery },
   { name: "ChatMessage", category: "Conversation", description: "User and assistant messages with attachments and actions.", Preview: ChatMessageGallery },
   { name: "ChatConversation", category: "Conversation", description: "Scrollable conversation history with automatic bottom pinning.", Preview: ChatConversationGallery },
   { name: "ChatMarkdown", category: "Conversation", description: "Rich message content, heading hierarchy, and streaming Markdown.", Preview: ChatMarkdownGallery },

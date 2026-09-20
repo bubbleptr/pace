@@ -16,6 +16,7 @@ import { ChatPromptInput } from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { ChatQueuedMessage } from "@/shared/ui/chat/chat-queued-message";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
+import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
 import { ChatStatusLine } from "@/shared/ui/chat/chat-status-line";
 import { ChatThoughtMarkdown } from "@/shared/ui/chat/chat-thought-markdown";
 import { ChatThoughtStep } from "@/shared/ui/chat/chat-thought-step";
@@ -218,6 +219,7 @@ const cases: Array<{
   { name: "TerminalView", ui: <TerminalView /> },
   { name: "ChatQueuedMessage", ui: <ChatQueuedMessage body="queued" /> },
   { name: "ChatRunFailure", ui: <ChatRunFailure error="boom" /> },
+  { name: "ChatContextChange", ui: <ChatContextChange toolsAdded={["write"]} /> },
   { name: "ChatThoughtMarkdown", ui: <ChatThoughtMarkdown text="thought" /> },
   {
     name: "ChatToolDetail",

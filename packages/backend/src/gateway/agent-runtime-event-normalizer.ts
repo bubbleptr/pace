@@ -62,6 +62,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function namedEntries(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const names: string[] = [];
+
+  for (const entry of value) {
+    if (isRecord(entry) && typeof entry.name === "string" && entry.name) {
+      names.push(entry.name);
+    }
+  }
+
+  return names;
+}
+
+function contextChangeFromSystemMessage(rawMessage: Record<string, unknown>) {
+  const sectionsChanged: string[] = [];
+  const sectionsRemoved: string[] = [];
+
+  if (isRecord(rawMessage.sections)) {
+    for (const [name, value] of Object.entries(rawMessage.sections)) {
+      if (value === null) {
+        sectionsRemoved.push(name);
+      } else if (typeof value === "string") {
+        sectionsChanged.push(name);
+      }
+    }
+  }
+
+  return {
+    sectionsChanged,
+    sectionsRemoved,
+    toolsAdded: namedEntries(rawMessage.toolsAdded),
+    toolsRemoved: namedEntries(rawMessage.toolsRemoved),
+  };
+}
+
 /**
  * The tool's name out of the partial assistant message the SDK sends with
  * every stream event: `partial.content[contentIndex]` is the ToolCall block,
@@ -455,6 +493,25 @@ export function createAgentRuntimeEventNormalizer(
         }
 
         return streamPartEvents(assistantMessageEvent);
+      }
+
+      if (rawEvent.type === "message_end" && runId && turnId) {
+        const rawSystemMessage = isRecord(rawEvent.message) ? rawEvent.message : null;
+        if (rawSystemMessage?.role === "system") {
+          messageSeq += 1;
+
+          return [
+            {
+              type: "context_change",
+              runId,
+              turnId,
+              messageId: `${turnId}:msg-${messageSeq}`,
+              surface: "chat",
+              origin,
+              ...contextChangeFromSystemMessage(rawSystemMessage),
+            },
+          ];
+        }
       }
 
       if (rawEvent.type === "message_end" && runId && turnId && message) {

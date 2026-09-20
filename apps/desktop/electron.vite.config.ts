@@ -49,6 +49,37 @@ function copyMainRuntimeAssets(): Plugin {
   };
 }
 
+// electron-vite's `vite:esm-shim` finds "the last static import" of a chunk
+// with a regex that also matches import-like text inside string literals. Pi
+// 0.86 loads jiti lazily, so jiti + Babel become their own chunk whose last
+// such match is an error-message string ("Directory import '%s' ..."); the
+// shim gets spliced into the middle of that string and esbuild rejects the
+// chunk. Hoisting the identical shim to the top of every chunk that needs one
+// is always valid ESM and makes `vite:esm-shim` skip the chunk (it checks
+// `code.includes(shim)` first). Keep the text byte-identical to electron-vite's
+// `CJSShim_node_20_11`; a drift shows up as a duplicate-declaration build error.
+const cjsSyntaxPattern = /__filename|__dirname|require\(|require\.resolve\(/;
+const cjsShim = `
+// -- CommonJS Shims --
+import __cjs_mod__ from 'node:module';
+const __filename = import.meta.filename;
+const __dirname = import.meta.dirname;
+const require = __cjs_mod__.createRequire(import.meta.url);
+`;
+
+function hoistCommonJsShim(): Plugin {
+  return {
+    name: "pigui-hoist-cjs-shim",
+    apply: "build",
+    renderChunk(code, _chunk, { format }) {
+      if (format !== "es" || code.includes(cjsShim) || !cjsSyntaxPattern.test(code)) {
+        return null;
+      }
+      return { code: cjsShim + code, map: null };
+    },
+  };
+}
+
 const mainBuild = {
   rollupOptions: {
     input: {
@@ -117,6 +148,7 @@ export default defineConfig({
     plugins: [
       externalizeDepsPlugin({ exclude: [...internalPackages, "electron-updater"] }),
       copyMainRuntimeAssets(),
+      hoistCommonJsShim(),
     ],
     build: mainBuild as any,
     resolve: { alias: coreAlias },

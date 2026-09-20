@@ -45,6 +45,7 @@ describe("Design components layer", () => {
       "ChatTool",
       "ChatPromptInput",
       "ChatRunFailure",
+      "ChatContextChange",
       "ChatPromptSuggestion",
       "ChatChainOfThought",
       "ChatPixelLoader",

@@ -1130,4 +1130,42 @@ describe("session runtime model", () => {
     expect(model.subagentsByOwnerToolCallId.get("call-agent")?.state).toBe("completed");
     expect(model.subagentsByOwnerToolCallId.get("call-agent")?.childSessionId).toBe("child-1");
   });
+
+  it("lands a context_change in order with the prompt and tool diff", () => {
+    const model = applyAll(createSessionRuntimeModel(), [
+      {
+        seq: 1,
+        timestamp: "2026-09-20T10:00:01.000Z",
+        event: { type: "run", runId, phase: "start", trigger: "prompt", surface: "hidden", origin: "sdk" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-20T10:00:02.000Z",
+        event: {
+          type: "context_change",
+          runId,
+          turnId,
+          messageId,
+          surface: "chat",
+          origin: "sdk",
+          sectionsChanged: ["skills", "cwd"],
+          sectionsRemoved: ["stale"],
+          toolsAdded: ["write", "edit"],
+          toolsRemoved: ["bash"],
+        },
+      },
+    ]);
+
+    expect(model.order).toEqual([
+      {
+        kind: "context_change",
+        id: messageId,
+        seq: 2,
+        sectionsChanged: ["skills", "cwd"],
+        sectionsRemoved: ["stale"],
+        toolsAdded: ["write", "edit"],
+        toolsRemoved: ["bash"],
+      },
+    ]);
+  });
 });
