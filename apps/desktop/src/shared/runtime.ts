@@ -145,6 +145,12 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
       return Promise.resolve(undefined as T);
     case "get_chat_workspace_root":
       return Promise.resolve({ path: "/tmp/pigui-chats" } as T);
+    case "get_runtime_info":
+      return Promise.resolve({
+        appVersion: "development",
+        piVersion: "development",
+        mode: "SDK",
+      } as T);
     case "list_session_projections":
       return Promise.resolve([] as T);
     case "list_sessions":
