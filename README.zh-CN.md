@@ -17,7 +17,9 @@ Pi 是运行在终端里的编程智能体，拥有类似 VS Code 的扩展体�
 > [!NOTE]
 > Pace 处于 `0.y.z` 早期阶段，仅支持 GitHub Releases 上的最新版本。事件日志（journal）与查询投影（projection）的存储格式可能随次版本更新而变化，应用内更新器负责完成升级；Pi 的会话数据不受影响（见[本地数据与恢复](#本地数据与恢复)）。
 
-<!-- TODO(screenshot): 主界面截图，需同时看到 Live Chat、Trajectory 与费用统计。放到 docs/assets/readme/ 后替换本注释。 -->
+<p align="center">
+  <img src="docs/assets/readme/home.png" alt="Pace 主界面：New Chat、模型选择与提示建议" width="800">
+</p>
 
 ## 亮点
 
@@ -49,8 +51,6 @@ bun run dev
 2. 预检通过后，选择一个项目目录，新建会话。
 3. 在输入框中发送第一条消息，比如让它解释这个仓库的结构。
 4. 在 Live Chat 中查看对话，在 Trajectory 中查看思维链和工具调用，在状态栏中查看本轮的 Token 用量与费用。
-
-<!-- TODO(screenshot): 第一次成功后的画面，对应上面第 4 步。 -->
 
 ## 什么时候不需要 Pace
 

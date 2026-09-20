@@ -17,6 +17,10 @@ Pi is a coding agent that runs in the terminal, with a highly extensible system 
 > [!NOTE]
 > Pace is in early `0.y.z` development. Only the latest version on GitHub Releases is supported. Journal and projection formats may change between minor versions; the in-app updater handles upgrades. Pi's session data is unaffected (see [Local data and recovery](#local-data-and-recovery)).
 
+<p align="center">
+  <img src="docs/assets/readme/home.png" alt="Pace home screen: New Chat with model picker and prompt suggestions" width="800">
+</p>
+
 ## Highlights
 
 - **Session timeline**: follow the agent's chain of thought and tool calls in order, alongside token usage and cost for each turn. Watch execution live or replay recorded sessions to see what happened at each step and what it cost.
