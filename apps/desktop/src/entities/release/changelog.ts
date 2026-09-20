@@ -15,6 +15,45 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.14",
+    date: "2026-09-20",
+    title: "Pi 0.86 and one composer",
+    summary: "Pace now ships Pi 0.86.0, shows what changed in a session's prompt and tools, and the Draft to Live handoff reads as a single composer with a shared Location row.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.14",
+    changes: [
+      {
+        kind: "added",
+        title: "Context-change notices",
+        description: "When Pi adds or removes tools or updates a prompt section mid-session, the conversation shows a compact notice such as \"Tools changed: +write, \u2212bash\" instead of hiding it. The Trajectory view no longer shows these entries as assistant turns.",
+      },
+      {
+        kind: "added",
+        title: "Pi SDK version on the About page",
+        description: "Settings \u2192 About & Updates lists the bundled Pi SDK version next to the Pace version, so bug reports can name both.",
+      },
+      {
+        kind: "added",
+        title: "Pi colors on the home screen",
+        description: "The empty-state title carries a Pi three-color sweep, the draft composer gets a matching accent ring while focused or sending, and the model selector shows provider marks. Everything else stays black and white; reduced-motion users get a static gradient.",
+      },
+      {
+        kind: "improved",
+        title: "Draft to Live is one composer",
+        description: "Submitting a draft no longer swaps the composer: width stays at 44rem, the footer is a Location row (project folder or worktree, branch, usage ring) that exists in both states, the branch chip carries the draft value through session creation, and the Project selector moved under the hero title where it fades out with it.",
+      },
+      {
+        kind: "improved",
+        title: "Bundled Pi 0.86.0",
+        description: "Brings Pi's prompt-cache warming, per-model compaction budgets, an offline Radius model catalog and a long list of provider fixes (Copilot GPT models, DeepSeek, Gemini thinking levels, Bedrock cache pricing, OpenRouter session headers).",
+      },
+      {
+        kind: "fixed",
+        title: "Package actions from the installed app",
+        description: "Installing, updating or removing npm or git Pi packages failed with spawn npm ENOENT when Pace was launched from Finder. Pace now finds npm, pnpm or bun in the usual install locations and prepends its directory to PATH for that operation; an explicit npmCommand in Pi settings still wins.",
+      },
+    ],
+  },
+  {
     version: "0.0.13",
     date: "2026-09-19",
     title: "Every Pi provider",
