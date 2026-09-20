@@ -43,6 +43,7 @@ import {
   type SessionFilesReader,
 } from "./workspace/session-files";
 import { createPiSdkDriver } from "./drivers/pi-sdk-driver";
+import { inspectPiRuntime } from "./drivers/pi-runtime-info";
 import {
   createTerminalManager,
   type TerminalManager,
@@ -462,6 +463,8 @@ async function dispatchRequest(input: {
       return addResourceDiagnostics(await buildConfigInventory(input.agentDir), input.sessionProjectionStore, input.runtimeJournal);
     case "get_chat_workspace_root":
       return { path: resolveChatWorkspaceRoot(input.dataDir) };
+    case "get_runtime_info":
+      return inspectPiRuntime();
     case "run_environment_preflight":
       return input.environmentPreflight.run();
     case "get_environment_preflight_status":

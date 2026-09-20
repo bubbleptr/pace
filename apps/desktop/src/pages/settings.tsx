@@ -432,6 +432,10 @@ function updateStatusText(status: UpdateStatus) {
 
 function AboutUpdatesSection() {
   const status = useUpdateStatus();
+  const runtimeQuery = useQuery({
+    queryKey: ["runtime-info"],
+    queryFn: () => invoke<{ appVersion: string; piVersion: string; mode: "SDK" }>("get_runtime_info"),
+  });
   const checkMutation = useMutation({
     mutationFn: () => invoke("update:check"),
   });
@@ -457,6 +461,11 @@ function AboutUpdatesSection() {
             <Text as="p" type="supporting">
               {status ? `Version ${status.currentVersion}` : "Loading version…"}
             </Text>
+            {runtimeQuery.data?.piVersion ? (
+              <Text as="p" type="supporting">
+                Pi SDK {runtimeQuery.data.piVersion}
+              </Text>
+            ) : null}
           </VStack>
         </HStack>
         {status ? (

@@ -461,6 +461,7 @@ export function createMockApi(): PaceRendererApi {
         case "list_provider_auth_status":
         case "update:status":
         case "get_chat_workspace_root":
+        case "get_runtime_info":
           return invokeBrowserFallback<T>(command, args);
         default:
           throw new Error(

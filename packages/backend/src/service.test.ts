@@ -33,6 +33,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   SessionManager: {
     open: sessionManagerOpen,
     listAll: sessionManagerListAll,
+    create: vi.fn(),
   },
   AuthStorage: {
     create: () => ({
@@ -1663,6 +1664,32 @@ describe("backend service", () => {
       result: { path: join(dataDir, "chats") },
     });
     await expect(stat(join(dataDir, "chats"))).rejects.toThrow();
+  });
+
+  it("returns the inspected Pi runtime through get_runtime_info", async () => {
+    const { VERSION } = await import("@earendil-works/pi-coding-agent");
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      dataDir: await tempDataDir(),
+      runtimeDriver: {
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-runtime-info",
+        method: "get_runtime_info",
+      }),
+    ).resolves.toEqual({
+      id: "req-runtime-info",
+      result: {
+        appVersion: "development",
+        piVersion: VERSION,
+        mode: "SDK",
+      },
+    });
   });
 });
 

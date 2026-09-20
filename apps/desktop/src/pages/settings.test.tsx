@@ -115,6 +115,10 @@ function renderSettings(
       return { path: "/tmp/pigui-dev/chats" };
     }
 
+    if (command === "get_runtime_info") {
+      return { appVersion: "0.0.1", piVersion: "0.86.0", mode: "SDK" };
+    }
+
     if (command === "reveal_project_in_finder") {
       return undefined;
     }
@@ -417,6 +421,14 @@ describe("Settings — about and updates", () => {
     expect(within(about).getByText("Ready")).toBeVisible();
     expect(screen.getByRole("region", { name: "Providers" })).toBeVisible();
     expect(countCalls("update:status")).toBe(1);
+  });
+
+  it("shows the bundled Pi SDK version once runtime info resolves", async () => {
+    renderSettings();
+
+    const section = await findAboutSection();
+
+    expect(await within(section).findByText("Pi SDK 0.86.0")).toBeInTheDocument();
   });
 
   it("shows the current version and a disabled check button when updates are disabled", async () => {
