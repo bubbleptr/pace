@@ -1036,6 +1036,119 @@ describe("agent runtime event normalizer", () => {
     expect(events.some((event) => event.type === "context_usage")).toBe(false);
   });
 
+  it("projects a system message_end as one context_change and ignores message_start", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+    const systemMessage = {
+      role: "system",
+      content: "",
+      sections: { skills: "<skills/>", cwd: "/project", stale: null },
+      toolsAdded: [{ name: "write" }, { name: "edit" }],
+      toolsRemoved: [{ name: "bash" }],
+      timestamp: 1,
+    };
+
+    normalizer.normalize({ type: "agent_start" });
+    normalizer.normalize({ type: "turn_start" });
+
+    expect(normalizeAll(normalizer, [{ type: "message_start", message: systemMessage }])).toEqual([]);
+
+    const events = normalizeAll(normalizer, [{ type: "message_end", message: systemMessage }]);
+    const changes = events.filter((event) => event.type === "context_change");
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toEqual({
+      type: "context_change",
+      runId: "pi-session-1:run-1",
+      turnId: "pi-session-1:run-1:turn-1",
+      messageId: "pi-session-1:run-1:turn-1:msg-1",
+      surface: "chat",
+      origin: "sdk",
+      sectionsChanged: ["skills", "cwd"],
+      sectionsRemoved: ["stale"],
+      toolsAdded: ["write", "edit"],
+      toolsRemoved: ["bash"],
+    });
+  });
+
+  it("keeps assistant messageIds and agent_end stopReason when a system message sits between assistants", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+    const first = { role: "assistant", content: [{ type: "text", text: "one" }], stopReason: "stop" };
+    const systemMessage = {
+      role: "system",
+      content: "",
+      sections: { skills: "<skills/>" },
+      toolsAdded: [{ name: "write" }],
+      timestamp: 2,
+    };
+    const second = { role: "assistant", content: [{ type: "text", text: "two" }], stopReason: "aborted" };
+
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      { type: "message_start", message: first },
+      { type: "message_end", message: first },
+      { type: "message_start", message: systemMessage },
+      { type: "message_end", message: systemMessage },
+      { type: "message_start", message: second },
+      { type: "message_end", message: second },
+      { type: "agent_end", messages: [first, systemMessage, second] },
+    ]);
+
+    const messages = events.filter((event): event is Extract<AgentRuntimeEvent, { type: "message" }> =>
+      event.type === "message" && event.phase === "end",
+    );
+    const change = events.find((event) => event.type === "context_change");
+    const runEnd = events.find((event) => event.type === "run" && event.phase === "end");
+
+    expect(messages.map((event) => event.messageId)).toEqual([
+      "pi-session-1:run-1:turn-1:msg-1",
+      "pi-session-1:run-1:turn-1:msg-3",
+    ]);
+    expect(change).toMatchObject({ type: "context_change", messageId: "pi-session-1:run-1:turn-1:msg-2" });
+    expect(runEnd).toMatchObject({ outcome: "aborted" });
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
+  });
+
+  it("emits context_change without closing an in-flight assistant message", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+    const streaming = { role: "assistant", content: [] };
+    const systemMessage = {
+      role: "system",
+      content: "",
+      sections: { skills: "<skills/>" },
+      timestamp: 2,
+    };
+    const final = {
+      role: "assistant",
+      content: [{ type: "text", text: "done" }],
+      stopReason: "stop",
+    };
+
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      { type: "message_start", message: streaming },
+      { type: "message_start", message: systemMessage },
+      { type: "message_end", message: systemMessage },
+      { type: "message_end", message: final },
+      { type: "agent_end", messages: [final, systemMessage] },
+    ]);
+
+    const messages = events.filter((event): event is Extract<AgentRuntimeEvent, { type: "message" }> =>
+      event.type === "message",
+    );
+    expect(messages.map((event) => [event.phase, event.messageId])).toEqual([
+      ["start", "pi-session-1:run-1:turn-1:msg-1"],
+      ["end", "pi-session-1:run-1:turn-1:msg-1"],
+    ]);
+    expect(events.filter((event) => event.type === "context_change")).toMatchObject([
+      { messageId: "pi-session-1:run-1:turn-1:msg-2", sectionsChanged: ["skills"] },
+    ]);
+    expect(events.find((event) => event.type === "run" && event.phase === "end")).toMatchObject({
+      outcome: "completed",
+    });
+  });
+
   it("drops user message lifecycle events — the Gateway mints the user projection at command accept", () => {
     const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
     const userMessage = { role: "user", content: "do the thing", timestamp: 1 };

@@ -136,6 +136,20 @@ export type AgentRuntimeEvent =
       surface: "chat";
       origin: AgentEventOrigin;
     }
+  // Pi 0.86 persists prompt-section and tool-loadout patches as role=system
+  // messages. They are a chat notice, not a user/assistant bubble.
+  | {
+      type: "context_change";
+      runId: string;
+      turnId: string;
+      messageId: string;
+      surface: "chat";
+      origin: AgentEventOrigin;
+      sectionsChanged: readonly string[];
+      sectionsRemoved: readonly string[];
+      toolsAdded: readonly string[];
+      toolsRemoved: readonly string[];
+    }
   | {
       type: "usage";
       runId: string;

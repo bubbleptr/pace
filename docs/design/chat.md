@@ -34,6 +34,10 @@
 
 一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让 401 / 429 有出口。内部按 401 / 429 / 其他三分文案，调用方不用自己判断。
 
+### ChatContextChange
+
+prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsAdded` / `toolsRemoved` / `sectionsChanged` / `sectionsRemoved`（名字数组），文案由组件拼：工具 `Tools changed: +write, −bash`（一侧超过 4 个改成计数），段落 `Prompt updated: …` 与 `Prompt section removed: …`，有多段时用 ` · ` 连接。空补丁返回 `null`。内部固定 Astryx `ChatSystemMessage` 的 `variant="default"`，不要从页面再 import `@astryxdesign/core/Chat`。
+
 ## Composer
 
 ### ChatPromptInput

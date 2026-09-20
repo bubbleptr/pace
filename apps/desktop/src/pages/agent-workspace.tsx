@@ -22,6 +22,7 @@ import {
   ChatStreamMarkdown as StreamMarkdown,
 } from "@/shared/ui/chat/chat-markdown";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
+import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
 import { ChatMessage, ChatMessageActions } from "@/shared/ui/chat/chat-message";
 import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
 import { ChatQueuedMessage } from "@/shared/ui/chat/chat-queued-message";
@@ -205,6 +206,13 @@ type LiveMessage = {
   relatedMessageIds?: string[];
   /** The Run's Chain of Thought, derived once with the bubble it belongs to. */
   cotView?: CotView;
+  kind?: "context_change";
+  contextChange?: {
+    sectionsChanged: readonly string[];
+    sectionsRemoved: readonly string[];
+    toolsAdded: readonly string[];
+    toolsRemoved: readonly string[];
+  };
 };
 
 type RunTimelineItem = {
@@ -365,6 +373,17 @@ function LiveChatMessage({
   onForkMessage?: (message: LiveMessage) => void;
   recovery?: ReactNode;
 }) {
+  if (message.kind === "context_change") {
+    return (
+      <ChatContextChange
+        sectionsChanged={message.contextChange?.sectionsChanged}
+        sectionsRemoved={message.contextChange?.sectionsRemoved}
+        toolsAdded={message.contextChange?.toolsAdded}
+        toolsRemoved={message.contextChange?.toolsRemoved}
+      />
+    );
+  }
+
   if (message.role === "user") {
     const canFork = Boolean(message.piEntryId && onForkMessage);
 
@@ -1231,6 +1250,22 @@ function liveMessagesFromRuntimeModel(
       continue;
     }
 
+    if (entry.kind === "context_change") {
+      messages.push({
+        id: entry.id,
+        role: "assistant",
+        body: "",
+        kind: "context_change",
+        contextChange: {
+          sectionsChanged: entry.sectionsChanged,
+          sectionsRemoved: entry.sectionsRemoved,
+          toolsAdded: entry.toolsAdded,
+          toolsRemoved: entry.toolsRemoved,
+        },
+      });
+      continue;
+    }
+
     if (entry.kind !== "message") {
       continue;
     }
@@ -1476,7 +1511,7 @@ function liveMessagesFromProjection(
 }
 
 function isAssistantAnswerMessage(message: LiveMessage) {
-  return message.role === "assistant" && !message.controlLabel;
+  return message.kind !== "context_change" && message.role === "assistant" && !message.controlLabel;
 }
 
 function relatedMessageIdsFor(message: LiveMessage) {
@@ -3697,10 +3732,7 @@ function LiveSessionColumn({
   const fallbackTraceMessageId = runTimeline.some((item) => !item.messageId)
     ? [...liveMessages]
         .reverse()
-        .find(
-          (message) =>
-            message.role === "assistant" && !message.controlLabel,
-        )?.id
+        .find((message) => isAssistantAnswerMessage(message))?.id
     : undefined;
   // Legacy pipeline only: the runtime-model path derives its view alongside
   // the bubble, so there is nothing here to attach.

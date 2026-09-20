@@ -210,6 +210,20 @@ describe("backend session parser", () => {
     expectCost(detail.totalCostUsd, 0.03);
   });
 
+  it("skips system-role transcript entries so they do not become trajectory turns", () => {
+    const detail = parseSession(`{"type":"session","id":"system-entry-session","timestamp":"2026-09-20T10:00:00.000Z","cwd":"/Users/test/proj"}
+{"type":"message","id":"sys1","parentId":null,"timestamp":"2026-09-20T10:00:01.000Z","message":{"role":"system","content":"","sections":{"cwd":"/Users/test/proj"},"toolsAdded":[{"name":"read"}],"timestamp":1}}
+{"type":"message","id":"msg1","parentId":"sys1","timestamp":"2026-09-20T10:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"Hello"}]}}
+{"type":"message","id":"msg2","parentId":"msg1","timestamp":"2026-09-20T10:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}]}}`, unusedDataDir);
+
+    expect(detail.turns.map((turn) => [turn.kind, turn.role ?? null])).toEqual([
+      ["message", "user"],
+      ["message", "assistant"],
+    ]);
+    expect(detail.turns.some((turn) => turn.role === "unknown")).toBe(false);
+    expect(detail.turnCount).toBe(2);
+  });
+
   it("carries isError, duration, and raw payload through merged tool results", () => {
     const detail = parseSession(`{"type":"session","id":"tool-result-fields","timestamp":"2026-06-23T10:00:00.000Z","cwd":"/Users/test/proj"}
 {"type":"message","id":"m1","parentId":null,"timestamp":"2026-06-23T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"List files then fail."}]}}

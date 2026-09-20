@@ -5,6 +5,10 @@ import {
   createRuntimeGatewayClient,
   type RuntimeGatewayClientOptions,
 } from "@/entities/runtime/runtime-gateway-client";
+import {
+  applyAgentRuntimeEvent,
+  createSessionRuntimeModel,
+} from "@/entities/session/session-runtime-model";
 
 describe("Runtime Gateway client", () => {
   it("refreshes runtime controls after the first cold send without turning a refresh failure into a failed submission", async () => {
@@ -1531,6 +1535,85 @@ describe("Runtime Gateway client", () => {
         derivedFromAgentEvent: true,
       }),
       expect.objectContaining({ id: "evt-run-end", kind: "status", title: "Completed" }),
+    ]);
+  });
+
+  it("replays a journaled context_change through snapshot reopen into the runtime model", async () => {
+    const runId = "pi-session-1:run-1";
+    const turnId = `${runId}:turn-1`;
+    const messageId = `${turnId}:msg-1`;
+    const contextChangePayload = {
+      type: "context_change",
+      runId,
+      turnId,
+      messageId,
+      surface: "chat",
+      origin: "sdk",
+      sectionsChanged: ["skills"],
+      sectionsRemoved: [],
+      toolsAdded: ["write"],
+      toolsRemoved: ["bash"],
+    };
+    const snapshot: RuntimeGatewaySnapshot = {
+      sessionId: "session-1",
+      runtimeId: "pi-sdk:session-1",
+      piSessionId: "pi-session-1",
+      projectId: "pig",
+      cwd: "/Users/void/code/opensource/Pig",
+      status: "completed",
+      events: [
+        {
+          id: "evt-context-change",
+          seq: 1,
+          sessionId: "session-1",
+          piSessionId: "pi-session-1",
+          type: "context_change",
+          ts: "2026-09-20T10:00:01.000Z",
+          payload: contextChangePayload,
+        },
+      ],
+      updatedAt: "2026-09-20T10:00:01.000Z",
+    };
+    const client = createRuntimeGatewayClient({
+      invoke: async <T,>(command: string) => {
+        if (command === "get_runtime_snapshot") {
+          return snapshot as T;
+        }
+
+        throw new Error(`unexpected command ${command}`);
+      },
+      onBackendEvent: () => vi.fn(),
+    });
+
+    const state = await client.getSessionState("pi-session-1");
+
+    expect(state.replay).toEqual([
+      {
+        kind: "agent",
+        entry: {
+          seq: 1,
+          timestamp: "2026-09-20T10:00:01.000Z",
+          event: contextChangePayload,
+        },
+      },
+    ]);
+
+    const model = (state.replay ?? []).reduce(
+      (current, step) =>
+        step.kind === "agent" ? applyAgentRuntimeEvent(current, step.entry) : current,
+      createSessionRuntimeModel(),
+    );
+
+    expect(model.order).toEqual([
+      {
+        kind: "context_change",
+        id: messageId,
+        seq: 1,
+        sectionsChanged: ["skills"],
+        sectionsRemoved: [],
+        toolsAdded: ["write"],
+        toolsRemoved: ["bash"],
+      },
     ]);
   });
 

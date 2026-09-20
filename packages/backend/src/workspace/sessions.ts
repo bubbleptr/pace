@@ -220,6 +220,10 @@ export class SessionParser {
     }
 
     if (eventType === "message") {
+      if (recordedRole(record) === "system") {
+        return { kind: "ignored" };
+      }
+
       touchMetrics(this.metrics, timestampMs(record.timestamp));
 
       const model = messageModel(record, this.metrics);
@@ -505,6 +509,10 @@ async function readSessionSummary(
     }
 
     if (eventType === "message") {
+      if (recordedRole(record) === "system") {
+        continue;
+      }
+
       touchMetrics(metrics, timestampMs(record.timestamp));
       aggregateToolCalls(metrics, effectiveContent(record));
       aggregateSkillInvocations(metrics, effectiveContent(record));
@@ -642,8 +650,16 @@ function effectiveMessage(record: JsonRecord) {
   return isRecord(record.message) ? record.message : undefined;
 }
 
+function recordedRole(record: JsonRecord) {
+  return stringFromUnknown(effectiveMessage(record)?.role ?? record.role);
+}
+
 function effectiveRole(record: JsonRecord): SessionTurn["role"] {
-  const role = stringFromUnknown(effectiveMessage(record)?.role ?? record.role);
+  const role = recordedRole(record);
+
+  if (role === "system") {
+    return undefined;
+  }
 
   if (role === "user" || role === "assistant" || role === "toolResult") {
     return role;
