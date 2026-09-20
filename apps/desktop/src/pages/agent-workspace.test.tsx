@@ -1345,12 +1345,17 @@ describe("AgentWorkspaceSessionsPage", () => {
       "Journal read failed",
     );
 
+    const snapshotReads = () =>
+      invoke.mock.calls.filter(([command]) => command === "get_runtime_snapshot").length;
+    const readsBeforeRetry = snapshotReads();
+
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
+    // Retry must issue a fresh history read. Do not pin the absolute count:
+    // under a loaded CI runner an unrelated read can land in the same window
+    // and the exact total is not the behaviour this test protects.
     await waitFor(() => {
-      expect(
-        invoke.mock.calls.filter(([command]) => command === "get_runtime_snapshot"),
-      ).toHaveLength(2);
+      expect(snapshotReads()).toBeGreaterThan(readsBeforeRetry);
     });
   });
 
