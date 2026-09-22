@@ -27,3 +27,6 @@ yarn-error.log*
 *.swp
 test-results/
 e2e/screenshots/
+
+# Pi creates its model store in any agent dir a runtime opens, including the test fixture.
+fixtures/pi-agent/models-store.json
