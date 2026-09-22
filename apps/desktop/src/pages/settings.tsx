@@ -30,6 +30,7 @@ import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
 import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { formatTimestamp } from "@/entities/session/sessions";
 import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import {
   getVisibleModels,
@@ -40,6 +41,7 @@ import { isModelVisible } from "@/shared/ui/model-selector/model-selector-logic"
 import { invoke, revealProjectInFinder } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
 import type {
+  ModelCatalogRefreshResult,
   ProviderAuthId,
   ProviderAuthStatusItem,
   ProviderAuthStatusReport,
@@ -379,16 +381,34 @@ function groupModelsByProvider(models: RuntimeModelCapability[]) {
  * per install, read by the selector; an empty set means "not configured" and
  * lists everything, which is also what unchecking the last model falls back to.
  */
+function modelsJsonPath(agentDir: string) {
+  return `${agentDir.replace(/[\\/]+$/, "")}/models.json`;
+}
+
 function ModelVisibilitySection({
   models,
   isLoading,
   errorMessage,
   providerLabels,
+  agentDir,
+  catalogOffline,
+  refreshedAt,
+  catalogErrors,
+  refreshError,
+  isRefreshing,
+  onRefresh,
 }: {
   models: RuntimeModelCapability[];
   isLoading: boolean;
   errorMessage?: string;
   providerLabels: Record<string, string>;
+  agentDir?: string;
+  catalogOffline: boolean;
+  refreshedAt?: string;
+  catalogErrors: Record<string, string>;
+  refreshError?: string;
+  isRefreshing: boolean;
+  onRefresh: () => void;
 }) {
   const [visibleModels, setVisibleModels] = useState(getVisibleModels);
 
@@ -429,6 +449,45 @@ function ModelVisibilitySection({
           Choose which models the composer model selector offers. With none
           selected, every available model is shown.
         </Text>
+        <HStack gap={3} vAlign="center" wrap="wrap">
+          <Button
+            variant="secondary"
+            label="Refresh models"
+            isDisabled={catalogOffline || isRefreshing}
+            onClick={onRefresh}
+          />
+          {refreshedAt ? (
+            <Text as="p" type="supporting">
+              Last refreshed · <time dateTime={refreshedAt}>{formatTimestamp(refreshedAt)}</time>
+            </Text>
+          ) : null}
+        </HStack>
+        {catalogOffline ? (
+          <Text as="p" type="supporting">
+            Refresh is unavailable while PI_OFFLINE is set.
+          </Text>
+        ) : null}
+        {refreshError ? (
+          <Text
+            as="p"
+            type="supporting"
+            role="alert"
+            style={{ color: "var(--danger)" }}
+          >
+            {refreshError}
+          </Text>
+        ) : null}
+        {Object.entries(catalogErrors).map(([providerId, message]) => (
+          <Text
+            as="p"
+            key={providerId}
+            type="supporting"
+            role="alert"
+            style={{ color: "var(--danger)" }}
+          >
+            {providerLabels[providerId] ?? providerId}: {message}
+          </Text>
+        ))}
       </VStack>
 
       {isLoading ? (
@@ -492,6 +551,11 @@ function ModelVisibilitySection({
           </Card>
         );
       })}
+      {agentDir ? (
+        <Text as="p" type="supporting">
+          Custom models can be written to <code>{modelsJsonPath(agentDir)}</code>.
+        </Text>
+      ) : null}
     </VStack>
   );
 }
@@ -713,6 +777,33 @@ function SettingsContent({
     queryFn: () =>
       invoke<RuntimeModelControls>("list_available_model_controls"),
   });
+  const catalogRefresh = useMutation({
+    mutationFn: (force: boolean) =>
+      invoke<ModelCatalogRefreshResult>("refresh_model_catalog", { force }),
+    onSuccess: (result) => {
+      if ("offline" in result) return;
+      // Draft composers keep this catalog in module state. Drop it so the
+      // next new Session paints the models the network refresh just stored.
+      invalidateCachedModelCatalog();
+      void queryClient.invalidateQueries({
+        queryKey: availableModelControlsQueryKey,
+      });
+    },
+  });
+  const refreshedModelsSection = useRef(false);
+  useEffect(() => {
+    if (section !== "models") {
+      refreshedModelsSection.current = false;
+      return;
+    }
+    // One non-force refresh per visit. The ref survives StrictMode's
+    // double-invoked effect so opening Models does not fetch twice.
+    if (refreshedModelsSection.current) return;
+    refreshedModelsSection.current = true;
+    catalogRefresh.mutate(false);
+  }, [section, catalogRefresh.mutate]);
+  const catalogResult = catalogRefresh.data;
+  const catalogOffline = catalogResult !== undefined && "offline" in catalogResult;
   const modelCatalogError = !modelsQuery.isError
     ? undefined
     : modelsQuery.error instanceof Error
@@ -920,10 +1011,29 @@ function SettingsContent({
             style={{ display: section === "models" ? undefined : "none" }}
           >
             <ModelVisibilitySection
+              agentDir={statusQuery.data?.agentDir}
+              catalogErrors={
+                catalogResult && "errors" in catalogResult ? catalogResult.errors : {}
+              }
+              catalogOffline={catalogOffline}
               errorMessage={modelCatalogError}
               isLoading={modelsQuery.isPending}
+              isRefreshing={catalogRefresh.isPending}
               models={modelsQuery.data?.models ?? []}
+              onRefresh={() => catalogRefresh.mutate(true)}
               providerLabels={providerLabels}
+              refreshError={
+                catalogRefresh.isError
+                  ? catalogRefresh.error instanceof Error
+                    ? catalogRefresh.error.message
+                    : "Could not refresh models."
+                  : undefined
+              }
+              refreshedAt={
+                catalogResult && "refreshedAt" in catalogResult
+                  ? catalogResult.refreshedAt
+                  : undefined
+              }
             />
           </VStack>
           <VStack

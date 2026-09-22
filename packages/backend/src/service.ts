@@ -30,7 +30,10 @@ import {
   createProviderAuthService,
   type ProviderAuthService,
 } from "./workspace/provider-auth";
-import { listAvailableModelControls } from "./workspace/available-model-controls";
+import {
+  listAvailableModelControls,
+  refreshAvailableModelCatalog,
+} from "./workspace/available-model-controls";
 import { createNodeExecutionCheckoutGitClient } from "./workspace/execution-checkout";
 import {
   createNodeProjectGitReader,
@@ -536,6 +539,20 @@ async function dispatchRequest(input: {
       );
     case "list_available_model_controls":
       return listAvailableModelControls({ agentDir: input.agentDir });
+    case "refresh_model_catalog": {
+      if (params.force !== undefined && typeof params.force !== "boolean") {
+        throw new Error("force must be a boolean");
+      }
+      const result = await refreshAvailableModelCatalog({
+        agentDir: input.agentDir,
+        force: params.force === true,
+      });
+      // Offline skipped the network, so live sessions already have this catalog.
+      if (!("offline" in result)) {
+        await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      }
+      return result;
+    }
     case "is_git_repository":
       return input.gitClient.isGitRepository(requiredString(params.repoRoot, "repoRoot"));
     case "add_detached_worktree":
