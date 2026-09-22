@@ -76,6 +76,8 @@ export type PiSdkSessionRuntime = {
   }): Promise<void>;
   stopSubagent?(input: { childSessionId?: string; sourceAgentId?: string }): Promise<void>;
   configureModel?(selection: RuntimeModelSelection): Promise<RuntimeModelControls>;
+  /** Re-read local credentials into this session's model catalog. */
+  refreshModelCatalog?(): Promise<RuntimeModelControls | undefined>;
   resolveToolSchemas?(names: string[]): Promise<RuntimeToolSchemas>;
   getSnapshot?(): Promise<PiSdkSnapshotPatch>;
   getLeafId?(): string | null;
@@ -589,6 +591,47 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       snapshots.set(input.piSessionId, nextSnapshot);
 
       return cloneModelControls(modelControls);
+    },
+
+    async refreshModelCatalog(sessionId?: string) {
+      if (closing) throw new Error("Pi runtime driver is closing.");
+      const targets = [...runtimes.keys()].filter((piSessionId) => {
+        if (!sessionId) return true;
+        const snapshot = snapshots.get(piSessionId);
+        return snapshot?.sessionId === sessionId || piSessionId === sessionId;
+      });
+      const failures: unknown[] = [];
+      await Promise.all(targets.map(async (piSessionId) => {
+        const runtime = runtimes.get(piSessionId);
+        if (!runtime?.refreshModelCatalog || !snapshots.has(piSessionId)) return;
+        try {
+          const controls = (await runtime.refreshModelCatalog()) ?? { models: [], selected: null };
+          const snapshot = snapshots.get(piSessionId);
+          // The session may have closed while auth.json was re-read.
+          if (!snapshot) return;
+          const modelControls = cloneModelControls(controls);
+          snapshots.set(piSessionId, {
+            ...snapshot,
+            modelControls,
+            updatedAt: now(),
+          });
+          emit({
+            piSessionId,
+            type: "model_catalog_changed",
+            payload: {
+              type: "model_catalog_changed",
+              modelControls: cloneModelControls(modelControls),
+            },
+          });
+        } catch (error) {
+          failures.push(error);
+        }
+      }));
+      if (failures.length) {
+        throw new Error(
+          failures.map((error) => error instanceof Error ? error.message : String(error)).join("; "),
+        );
+      }
     },
 
     async resolveToolSchemas(input) {

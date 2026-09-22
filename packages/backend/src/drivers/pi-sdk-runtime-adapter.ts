@@ -74,6 +74,8 @@ export type PublicPiSdkModelRegistry = PublicPiSdkModelCompleter & {
 export type PublicPiSdkModelRuntime = PublicPiSdkModelCompleter & {
   getAvailableSnapshot?(): readonly PublicPiSdkModel[];
   getModel?(provider: string, modelId: string): PublicPiSdkModel | undefined;
+  /** Re-read local auth and the cached catalog. `allowNetwork` stays false here. */
+  refresh?(options?: { allowNetwork?: boolean }): Promise<unknown>;
 };
 
 export type PublicPiSdkAgentSession = {
@@ -1061,6 +1063,15 @@ async function createPublicPiSdkRuntime(context: {
       async configureModel(selection) {
         assertOpen();
         return configureSessionModel(session, selection);
+      },
+      async refreshModelCatalog() {
+        assertOpen();
+        // Credential writes land in auth.json. The session runtime still has
+        // the snapshot from process start until this offline re-read.
+        await session.modelRuntime?.refresh?.({ allowNetwork: false });
+        const controls = modelControlsFromSession(session);
+        runtime.modelControls = controls;
+        return controls;
       },
       async resolveToolSchemas(names) {
         return { schemas: schemasFromSession(session, names) };

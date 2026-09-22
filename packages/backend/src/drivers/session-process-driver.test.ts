@@ -22,6 +22,33 @@ describe("Session process isolation", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("asks every live root to refresh its model catalog, or one root when given a session id", async () => {
+    const events: RuntimeGatewayDriverEvent[] = [];
+    driver.onEvent((event) => events.push(event));
+    await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
+    await driver.createSession({ sessionId: "b", projectId: "b", cwd: join(root, "b") });
+    await driver.refreshModelCatalog?.();
+    expect(await readFile(join(root, "a", "refreshed-a"), "utf8")).toBe("all");
+    expect(await readFile(join(root, "b", "refreshed-b"), "utf8")).toBe("all");
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        piSessionId: "pi-a",
+        type: "model_catalog_changed",
+        payload: expect.objectContaining({ type: "model_catalog_changed" }),
+      }),
+      expect.objectContaining({
+        piSessionId: "pi-b",
+        type: "model_catalog_changed",
+        payload: expect.objectContaining({ type: "model_catalog_changed" }),
+      }),
+    ]));
+    await driver.refreshModelCatalog?.("b");
+    expect(await readFile(join(root, "b", "refreshed-b"), "utf8")).toBe("b");
+    expect(await readFile(join(root, "a", "refreshed-a"), "utf8")).toBe("all");
+    expect(events.filter((event) => event.type === "model_catalog_changed" && event.piSessionId === "pi-b")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "model_catalog_changed" && event.piSessionId === "pi-a")).toHaveLength(1);
+  });
+
   it("gives each root Session its own cwd and module state, including roots in the same project", async () => {
     const create = (sessionId: string, project: string) => driver.createSession({
       sessionId, projectId: project, cwd: join(root, project),

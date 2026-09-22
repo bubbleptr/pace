@@ -198,6 +198,22 @@ export function createSessionProcessDriver(options: SessionProcessDriverOptions)
     sendSubagent: async input => processFor(input.piSessionId).call("sendSubagent", [input]),
     stopSubagent: async input => processFor(input.piSessionId).call("stopSubagent", [input]),
     configureModel: async input => processFor(input.piSessionId).call("configureModel", [input]),
+    async refreshModelCatalog(sessionId?: string) {
+      if (closing) throw new Error("Pi runtime driver is closing.");
+      const selected = [...roots.entries()].filter(([id, root]) =>
+        !sessionId || id === sessionId || root.piSessionId === sessionId,
+      );
+      const results = await Promise.allSettled(selected.map(async ([, root]) => {
+        await root.initialized;
+        await root.process.call("refreshModelCatalog", sessionId === undefined ? [] : [sessionId]);
+      }));
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (errors.length) {
+        throw new Error(errors.map((result) =>
+          result.reason instanceof Error ? result.reason.message : String(result.reason),
+        ).join("; "));
+      }
+    },
     resolveToolSchemas: async input => piRoots.has(input.piSessionId)
       ? processFor(input.piSessionId).call("resolveToolSchemas", [input]) : Promise.resolve({ schemas: {} }),
     async getSnapshot(piSessionId) {

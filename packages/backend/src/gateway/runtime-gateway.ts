@@ -141,6 +141,12 @@ export type PiRuntimeDriver = {
   sendSubagent?(input: SendSubagentInput): Promise<{ ok: true }>;
   stopSubagent?(input: StopSubagentInput): Promise<{ ok: true }>;
   configureModel?(input: ConfigureRuntimeModelInput): Promise<RuntimeModelControls>;
+  /**
+   * Re-read each live session's model catalog from local credentials.
+   * Omit `sessionId` to refresh every live root. A Pace session id or Pi
+   * session id limits the refresh to that root (#359 reuses this).
+   */
+  refreshModelCatalog?(sessionId?: string): Promise<void>;
   resolveToolSchemas?(input: ResolveToolSchemasInput): Promise<RuntimeToolSchemas>;
   getSnapshot(piSessionId: string): Promise<RuntimeGatewaySnapshot>;
   disposeSession?(piSessionId: string): Promise<void>;

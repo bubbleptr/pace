@@ -34,5 +34,24 @@ process.on("message", async ({ id, method, args }) => {
       type: "status", payload: { kind: "status", title: "Accepted" } } });
     return;
   }
+  if (method === "refreshModelCatalog") {
+    writeFileSync(join(process.cwd(), `refreshed-${snapshot.sessionId}`), args[0] ?? "all");
+    process.send({
+      type: "event",
+      event: {
+        piSessionId: snapshot.piSessionId,
+        type: "model_catalog_changed",
+        payload: {
+          type: "model_catalog_changed",
+          modelControls: {
+            models: [{ provider: "openai", modelId: "gpt-4.1", name: "GPT-4.1", thinkingLevels: ["off"] }],
+            selected: null,
+          },
+        },
+      },
+    });
+    process.send({ id, result: null });
+    return;
+  }
   if (method === "getSnapshot" && !holdSnapshot) process.send({ id, result: snapshot });
 });

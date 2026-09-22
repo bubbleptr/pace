@@ -29,6 +29,8 @@ import {
 import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
+import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import {
   getVisibleModels,
   saveVisibleModels,
@@ -45,7 +47,6 @@ import type {
   RuntimeModelControls,
 } from "@pace/core";
 
-export const providerAuthStatusQueryKey = ["provider-auth-status"] as const;
 const availableModelControlsQueryKey = ["available-model-controls"] as const;
 
 type AuthTab = "subscription" | "api_key";
@@ -629,6 +630,9 @@ function SettingsContent({
       : "Could not load the model catalog.";
 
   const refresh = () => {
+    // Draft composers keep this catalog in module state. Drop it before the
+    // queries refetch, or the next new Session still paints the old models.
+    invalidateCachedModelCatalog();
     void queryClient.invalidateQueries({
       queryKey: providerAuthStatusQueryKey,
     });

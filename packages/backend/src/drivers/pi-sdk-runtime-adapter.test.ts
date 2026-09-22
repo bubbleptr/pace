@@ -1934,6 +1934,78 @@ describe("Pi SDK public runtime adapter", () => {
     await runtime.dispose?.();
   });
 
+  it("refreshes the projected model catalog from the session runtime after credentials change", async () => {
+    const openai = { provider: "openai", id: "gpt-4.1", name: "GPT-4.1", reasoning: false };
+    const anthropic = {
+      provider: "anthropic",
+      id: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+      reasoning: true,
+    };
+    let available = [openai];
+    let refreshed = false;
+    const refresh = vi.fn(async () => {
+      available = refreshed ? [openai] : [openai, anthropic];
+      refreshed = true;
+    });
+    const session = {
+      sessionId: "sdk-session-refresh",
+      isStreaming: false,
+      messages: [],
+      model: openai,
+      thinkingLevel: "off",
+      modelRuntime: {
+        refresh,
+        getModel: (provider: string, modelId: string) =>
+          available.find((model) => model.provider === provider && model.id === modelId),
+        getAvailableSnapshot: () => available,
+      },
+      prompt: vi.fn(async () => {}),
+      abort: vi.fn(async () => {}),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: async () => ({ session }) },
+    })({ sessionId: "app-session-refresh", projectId: "pig", cwd: "/repo" });
+
+    expect(runtime.modelControls?.models.map((model) => model.modelId)).toEqual(["gpt-4.1"]);
+
+    await runtime.refreshModelCatalog?.();
+
+    expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+    expect(runtime.modelControls?.models.map((model) => model.modelId)).toEqual([
+      "gpt-4.1",
+      "claude-sonnet-4",
+    ]);
+    expect(runtime.modelControls?.selected).toEqual({
+      provider: "openai",
+      modelId: "gpt-4.1",
+      thinkingLevel: "off",
+    });
+    await expect(runtime.getSnapshot?.()).resolves.toMatchObject({
+      modelControls: {
+        models: [
+          expect.objectContaining({ provider: "openai", modelId: "gpt-4.1" }),
+          expect.objectContaining({ provider: "anthropic", modelId: "claude-sonnet-4" }),
+        ],
+        selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" },
+      },
+    });
+
+    // Logging out drops that provider's models. The session's current model
+    // stays selected even when it is the one that left the catalog.
+    session.model = anthropic;
+    await runtime.refreshModelCatalog?.();
+    expect(runtime.modelControls?.models.map((model) => model.modelId)).toEqual(["gpt-4.1"]);
+    expect(runtime.modelControls?.selected).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4",
+      thinkingLevel: "off",
+    });
+    await runtime.dispose?.();
+  });
+
   it("restores the persisted model pair before exposing a resumed runtime", async () => {
     const models = [
       {
