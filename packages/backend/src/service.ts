@@ -529,6 +529,11 @@ async function dispatchRequest(input: {
       await refreshLiveSessionModelCatalogs(input.runtimeDriver);
       return report;
     }
+    case "test_provider_connection":
+      return input.providerAuth.testConnection(
+        requiredString(params.providerId, "providerId") as ProviderAuthId,
+        optionalString(params.modelId),
+      );
     case "list_available_model_controls":
       return listAvailableModelControls({ agentDir: input.agentDir });
     case "is_git_repository":

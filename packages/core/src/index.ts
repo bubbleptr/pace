@@ -37,11 +37,15 @@ export {
 export {
   FEATURED_PROVIDER_ORDER,
   PROVIDER_DISPLAY_OVERRIDES,
+  classifyProviderFailure,
+  describeProviderFailure,
   sortProvidersForDisplay,
   type ProviderAuthId,
   type ProviderAuthMode,
   type ProviderAuthStatusItem,
   type ProviderAuthStatusReport,
+  type ProviderConnectionTestResult,
+  type ProviderFailureKind,
 } from "./provider-auth";
 
 export type { ExecutionCheckoutGitClient } from "./checkout";

@@ -1555,6 +1555,9 @@ function ChatRunFailureGallery() {
       <Variant caption="historical failure (read only)">
         <ChatRunFailure error="The provider dropped the connection." />
       </Variant>
+      <Variant caption="subscription plan does not include the model">
+        <ChatRunFailure error={'403 {"error":{"message":"Your subscription plan does not include this model"}}'} />
+      </Variant>
       <Variant caption="retry failure (click Retry request)">
         <ChatRunFailure error="429 rate limit exceeded" onRetry={async () => { throw new Error("Runtime disconnected"); }} />
       </Variant>

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Model } from "@earendil-works/pi-ai";
 import {
   createProviderAuthService,
   type ProviderAuthRuntime,
@@ -134,6 +135,11 @@ describe("provider auth service", () => {
         });
         return { type: "oauth", access: "a", refresh: "r", expires: 0 };
       },
+      getAvailableSnapshot: () => [],
+      getModel: () => undefined,
+      async completeSimple() {
+        throw new Error("not used");
+      },
       async logout() {},
       async refresh() {
         return { aborted: false, errors: new Map() };
@@ -196,6 +202,11 @@ describe("provider auth service", () => {
         });
         return { type: "oauth", access: "a", refresh: "r", expires: 0 };
       },
+      getAvailableSnapshot: () => [],
+      getModel: () => undefined,
+      async completeSimple() {
+        throw new Error("not used");
+      },
       async logout() {},
       async refresh() {
         return { aborted: false, errors: new Map() };
@@ -212,5 +223,161 @@ describe("provider auth service", () => {
     await service.loginOAuth("xai");
 
     expect(opened).toEqual(["https://auth.x.ai/activate"]);
+  });
+});
+
+function probeModel(provider: string, id: string): Model<"openai-completions"> {
+  return {
+    id,
+    name: id,
+    api: "openai-completions",
+    provider,
+    baseUrl: "https://example.test",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8000,
+    maxTokens: 1024,
+  };
+}
+
+type ProbeReply = Awaited<ReturnType<ProviderAuthRuntime["completeSimple"]>>;
+
+async function connectionRuntime(
+  probe: ProviderAuthRuntime["completeSimple"],
+  options?: {
+    models?: Model<"openai-completions">[];
+    getModel?: ProviderAuthRuntime["getModel"];
+    timeoutMs?: number;
+  },
+) {
+  const runtime: ProviderAuthRuntime = {
+    getProviderAuthStatus: () => ({ configured: true }),
+    getProviders: () => [{ id: "anthropic", name: "Anthropic", auth: { apiKey: {} } }],
+    getAvailableSnapshot: () => options?.models ?? [probeModel("anthropic", "claude-sonnet-4")],
+    getModel: options?.getModel ?? (() => undefined),
+    completeSimple: probe,
+    async login() {
+      return { type: "api_key", key: "k" };
+    },
+    async logout() {},
+    async refresh() {
+      return { aborted: false, errors: new Map() };
+    },
+  };
+
+  return createProviderAuthService({
+    agentDir: await tempAgentDir(),
+    connectionTestTimeoutMs: options?.timeoutMs,
+    createRuntime: async () => runtime,
+  });
+}
+
+describe("test provider connection", () => {
+  it("probes the first available model with a one-token ping and reports latency", async () => {
+    let seen:
+      | { modelId: string; content: string; maxTokens?: number; sessionId?: string }
+      | undefined;
+    const service = await connectionRuntime(
+      async (model, context, options) => {
+        const message = context.messages[0];
+        seen = {
+          modelId: model.id,
+          content: typeof message?.content === "string" ? message.content : "",
+          maxTokens: options?.maxTokens,
+          sessionId: options?.sessionId,
+        };
+        return { stopReason: "length" } as ProbeReply;
+      },
+      {
+        models: [
+          probeModel("openai", "gpt-4.1"),
+          probeModel("anthropic", "claude-sonnet-4"),
+          probeModel("anthropic", "claude-haiku"),
+        ],
+      },
+    );
+
+    const result = await service.testConnection("anthropic");
+
+    expect(result).toMatchObject({ ok: true, modelId: "claude-sonnet-4" });
+    expect(result.ok && result.latencyMs).toEqual(expect.any(Number));
+    expect(seen).toMatchObject({
+      modelId: "claude-sonnet-4",
+      content: "ping",
+      maxTokens: 1,
+    });
+    expect(seen?.sessionId).toBeUndefined();
+  });
+
+  it("probes the requested model even when it is outside the available snapshot", async () => {
+    let modelId: string | undefined;
+    const requested = probeModel("anthropic", "claude-opus");
+    const service = await connectionRuntime(
+      async (model) => {
+        modelId = model.id;
+        return { stopReason: "stop" } as ProbeReply;
+      },
+      {
+        models: [probeModel("anthropic", "claude-sonnet-4")],
+        getModel: (providerId, id) =>
+          providerId === "anthropic" && id === "claude-opus" ? requested : undefined,
+      },
+    );
+
+    await expect(service.testConnection("anthropic", "claude-opus")).resolves.toMatchObject({
+      ok: true,
+      modelId: "claude-opus",
+    });
+    expect(modelId).toBe("claude-opus");
+  });
+
+  it("reports auth and entitlement failures from the probe response", async () => {
+    const responses = ["401: Invalid API key", "403 status code (no body)"];
+    const service = await connectionRuntime(async () => {
+      return { stopReason: "error", errorMessage: responses.shift() ?? "unknown" } as ProbeReply;
+    });
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "auth",
+      modelId: "claude-sonnet-4",
+      message: expect.stringMatching(/authentication failed/i),
+    });
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "entitlement",
+      modelId: "claude-sonnet-4",
+      message: expect.stringMatching(/subscription plan/i),
+    });
+  });
+
+  it("reports a thrown network error and a deadline instead of hanging", async () => {
+    let mode: "network" | "hang" = "network";
+    const service = await connectionRuntime((_model, _context, options) => {
+      if (mode === "network") {
+        return Promise.reject(Object.assign(new TypeError("fetch failed"), { code: "ECONNREFUSED" }));
+      }
+      return new Promise<ProbeReply>(() => {
+        options?.signal?.addEventListener("abort", () => {});
+      });
+    }, { timeoutMs: 20 });
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "network",
+      modelId: "claude-sonnet-4",
+      message: expect.stringMatching(/ECONNREFUSED/),
+    });
+
+    mode = "hang";
+    const started = Date.now();
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "network",
+      modelId: "claude-sonnet-4",
+      message: expect.stringMatching(/timed out/i),
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });

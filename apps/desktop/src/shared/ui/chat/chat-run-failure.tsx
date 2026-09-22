@@ -4,12 +4,20 @@ import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { classifyProviderFailure } from "@pace/core";
 
 function describeFailure(error: string) {
-  if (/\b401\b|invalid.?api.?key|authentication_error|unauthorized/i.test(error)) {
+  const kind = classifyProviderFailure(error);
+  if (kind === "auth") {
     return {
       title: "Provider authentication failed",
       description: "The provider rejected the credentials. Update them in Provider settings, or choose another model and retry.",
+    };
+  }
+  if (kind === "entitlement") {
+    return {
+      title: "This model is not included in your subscription plan.",
+      description: "Test the connection in Settings → Providers.",
     };
   }
   if (/\b429\b|rate.?limit|quota.?exceeded/i.test(error)) {

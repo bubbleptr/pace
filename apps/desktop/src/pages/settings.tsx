@@ -43,6 +43,7 @@ import type {
   ProviderAuthId,
   ProviderAuthStatusItem,
   ProviderAuthStatusReport,
+  ProviderConnectionTestResult,
   RuntimeModelCapability,
   RuntimeModelControls,
 } from "@pace/core";
@@ -73,6 +74,58 @@ function statusSummary(provider: ProviderAuthStatusItem) {
   }
 
   return "Configured";
+}
+
+function connectionChip(
+  result: ProviderConnectionTestResult | undefined,
+  testing: boolean,
+  transportError?: string,
+) {
+  if (testing) return { label: "Testing…", color: "blue" as const };
+  if (transportError) return { label: `Failed · ${transportError}`, color: "red" as const };
+  if (!result) return { label: "Not tested", color: "gray" as const };
+  if (result.ok) {
+    return {
+      label: `Verified · ${result.modelId} · ${result.latencyMs} ms`,
+      color: "green" as const,
+    };
+  }
+  return { label: `Failed · ${result.message}`, color: "red" as const };
+}
+
+function ProviderConnectionTest({ providerId }: { providerId: string }) {
+  const query = useQuery({
+    queryKey: ["provider-connection-test", providerId],
+    queryFn: () =>
+      invoke<ProviderConnectionTestResult>("test_provider_connection", {
+        providerId,
+      }),
+    // The result is an explicit probe, not something Settings should fetch on open.
+    enabled: false,
+    retry: false,
+    staleTime: Infinity,
+  });
+  const transportError =
+    !query.isFetching && query.isError
+      ? query.error instanceof Error
+        ? query.error.message
+        : "Connection test failed."
+      : undefined;
+  const chip = connectionChip(query.data, query.isFetching, transportError);
+
+  return (
+    <>
+      <Button
+        variant="secondary"
+        label={query.isFetching ? "Testing…" : "Test connection"}
+        isDisabled={query.isFetching}
+        onClick={() => {
+          void query.refetch();
+        }}
+      />
+      <Token size="sm" color={chip.color} label={chip.label} />
+    </>
+  );
 }
 
 function ProviderApiKeyCard({
@@ -133,7 +186,7 @@ function ProviderApiKeyCard({
           value={apiKey}
           onChange={(value) => setApiKey(value)}
         />
-        <HStack gap={2} wrap="wrap">
+        <HStack gap={2} wrap="wrap" vAlign="center">
           <Button
             variant="primary"
             label={
@@ -159,6 +212,9 @@ function ProviderApiKeyCard({
                 }
               }}
             />
+          ) : null}
+          {provider.configured ? (
+            <ProviderConnectionTest providerId={provider.id} />
           ) : null}
         </HStack>
         {error ? (
@@ -223,7 +279,7 @@ function ProviderSubscriptionCard({
         </VStack>
       </HStack>
       <VStack gap={3} style={{ marginBlockStart: "var(--spacing-4)" }}>
-        <HStack gap={2} wrap="wrap">
+        <HStack gap={2} wrap="wrap" vAlign="center">
           {provider.mode === "oauth" ? (
             <Button
               variant="destructive"
@@ -249,6 +305,9 @@ function ProviderSubscriptionCard({
               onClick={() => loginMutation.mutate()}
             />
           )}
+          {provider.configured ? (
+            <ProviderConnectionTest providerId={provider.id} />
+          ) : null}
         </HStack>
         {error ? (
           <Text
