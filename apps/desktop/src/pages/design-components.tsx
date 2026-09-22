@@ -2563,6 +2563,20 @@ function ModelSelectorControlGallery() {
             onManageModels={() => {}}
           />
         </Variant>
+        <Variant caption="same model on two channels — rows name the channel">
+          <ModelSelectorControl
+            controls={{
+              models: [
+                { provider: "openai-codex", modelId: "gpt-5.5", name: "GPT-5.5", thinkingLevels: ["off", "low", "medium", "high"], contextWindow: 400_000 },
+                { provider: "openai", modelId: "gpt-5.5", name: "GPT-5.5", thinkingLevels: ["off", "low", "medium", "high"], contextWindow: 400_000 },
+                ...modelSelectorControls.models,
+              ],
+              selected: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" },
+            }}
+            isDisabled={false}
+            onChange={() => {}}
+          />
+        </Variant>
       </VariantRow>
     </GallerySection>
   );

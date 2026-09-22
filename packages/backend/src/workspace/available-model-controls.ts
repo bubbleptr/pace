@@ -2,7 +2,7 @@
 // open Agent Session (draft create / DF-011).
 
 import { join } from "node:path";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type {
   ModelCatalogRefreshResult,
   RuntimeModelCapability,
@@ -10,6 +10,7 @@ import type {
   RuntimeModelSelection,
   RuntimeThinkingLevel,
 } from "@pace/core";
+import { createPaceModelRuntime } from "./account-models";
 
 const thinkingLevelOrder: RuntimeThinkingLevel[] = [
   "off",
@@ -142,20 +143,12 @@ async function readSettingsPreferredModel(agentDir: string) {
   }
 }
 
-async function createOfflineModelRuntime(agentDir: string) {
-  // Create stays offline so opening the catalog never fetches. Network
-  // access is an explicit refresh() below, and PI_OFFLINE still blocks it.
-  // Await create so the local models-store.json overlay is restored first.
-  return ModelRuntime.create({
-    authPath: join(agentDir, "auth.json"),
-    modelsPath: join(agentDir, "models.json"),
-    allowModelNetwork: false,
-  });
-}
-
 export async function refreshAvailableModelCatalog(input: {
   agentDir: string;
+  dataDir: string;
   force?: boolean;
+  /** Limit the refresh to these providers; omitted refreshes every provider. */
+  providers?: readonly string[];
 }): Promise<ModelCatalogRefreshResult> {
   // ModelRuntime treats any set PI_OFFLINE as network-disabled, but an
   // explicit allowNetwork: true would still fetch. Refuse before create.
@@ -163,10 +156,13 @@ export async function refreshAvailableModelCatalog(input: {
     return { offline: true };
   }
 
-  const runtime = await createOfflineModelRuntime(input.agentDir);
+  // Create stays offline so opening the catalog never fetches. Network
+  // access is this explicit refresh(), and PI_OFFLINE still blocks it.
+  const runtime = await createPaceModelRuntime(input);
   const result = await runtime.refresh({
     allowNetwork: true,
     force: input.force === true,
+    ...(input.providers ? { providers: input.providers } : {}),
   });
   const errors: Record<string, string> = {};
 
@@ -182,8 +178,9 @@ export async function refreshAvailableModelCatalog(input: {
 
 export async function listAvailableModelControls(input: {
   agentDir: string;
+  dataDir: string;
 }): Promise<RuntimeModelControls> {
-  const runtime = await createOfflineModelRuntime(input.agentDir);
+  const runtime = await createPaceModelRuntime(input);
   const registry = new ModelRegistry(runtime);
 
   const models = registry

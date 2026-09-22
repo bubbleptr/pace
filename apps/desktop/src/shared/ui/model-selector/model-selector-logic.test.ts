@@ -3,6 +3,7 @@ import type { RuntimeModelCapability } from "@pace/core";
 import {
   baseModelOf,
   fastSiblingOf,
+  isListedByAnotherProvider,
   formatContextWindow,
   isInsideTriangle,
   isModelVisible,
@@ -131,5 +132,23 @@ describe("isInsideTriangle", () => {
     expect(isInsideTriangle({ x: 102, y: 380 }, apex, top, bottom)).toBe(false);
     expect(isInsideTriangle({ x: 60, y: 300 }, apex, top, bottom)).toBe(false);
     expect(isInsideTriangle({ x: 220, y: 210 }, apex, top, bottom)).toBe(false);
+  });
+});
+
+describe("isListedByAnotherProvider", () => {
+  const codex: RuntimeModelCapability = { ...grok, provider: "openai-codex", modelId: "gpt-5.5", name: "GPT-5.5" };
+  const api: RuntimeModelCapability = { ...codex, provider: "openai" };
+  const onlyApi: RuntimeModelCapability = { ...api, modelId: "gpt-4.1", name: "GPT-4.1" };
+
+  it("flags a model that more than one provider serves, so rows can name their channel", () => {
+    const models = [codex, api, onlyApi];
+
+    expect(isListedByAnotherProvider(codex, models)).toBe(true);
+    expect(isListedByAnotherProvider(api, models)).toBe(true);
+    expect(isListedByAnotherProvider(onlyApi, models)).toBe(false);
+  });
+
+  it("does not count a fast sibling from the same provider", () => {
+    expect(isListedByAnotherProvider(grok, [grok, grokFast])).toBe(false);
   });
 });

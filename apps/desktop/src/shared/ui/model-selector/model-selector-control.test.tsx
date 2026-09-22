@@ -199,3 +199,30 @@ describe("ModelSelectorControl provider mark", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("ModelSelectorControl channels", () => {
+  it("names the channel only on rows whose model another provider also serves", async () => {
+    const gpt = { modelId: "gpt-5.5", name: "GPT-5.5", thinkingLevels: ["off" as const] };
+    render(
+      <ModelSelectorControl
+        controls={{
+          models: [
+            { ...gpt, provider: "openai-codex" },
+            { ...gpt, provider: "openai" },
+            ...controls.models,
+          ],
+          selected: controls.selected,
+        }}
+        isDisabled={false}
+        onChange={() => {}}
+      />,
+    );
+
+    const { list } = await openSelector();
+
+    expect(within(list).getByText("ChatGPT subscription")).toBeInTheDocument();
+    expect(within(list).getByText("OpenAI API")).toBeInTheDocument();
+    const grokRow = within(list).getByText("Grok 4").closest("li")!;
+    expect(within(grokRow).queryByText(/subscription|API/)).not.toBeInTheDocument();
+  });
+});
