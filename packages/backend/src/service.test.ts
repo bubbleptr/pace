@@ -276,6 +276,7 @@ describe("backend service", () => {
       remove: vi.fn(async () => report),
       loginOAuth: vi.fn(async () => report),
       logout: vi.fn(async () => report),
+      testConnection: vi.fn(async () => ({ ok: true as const, modelId: "gpt-5.5", latencyMs: 1 })),
     };
     const refreshModelCatalog = vi.fn(async () => {});
     const runtimeDriver = {
@@ -346,6 +347,7 @@ describe("backend service", () => {
         remove: vi.fn(async () => report),
         loginOAuth: vi.fn(async () => report),
         logout: vi.fn(async () => report),
+        testConnection: vi.fn(async () => ({ ok: true as const, modelId: "gpt-5.5", latencyMs: 1 })),
       },
       runtimeDriver: {
         refreshModelCatalog,
