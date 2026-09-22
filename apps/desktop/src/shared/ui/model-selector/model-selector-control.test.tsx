@@ -95,6 +95,22 @@ describe("ModelSelectorControl visibility", () => {
     expect(within(list).getByText("Hidden in Settings")).toBeInTheDocument();
   });
 
+  it("lists only the marked current selection after every model was cleared", async () => {
+    render(
+      <ModelSelectorControl
+        controls={controls}
+        isDisabled={false}
+        visibleModels={[]}
+        onChange={() => {}}
+      />,
+    );
+
+    const { list } = await openSelector();
+
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("Hidden in Settings")).toBeInTheDocument();
+  });
+
   it("opens model management from the Add Models row", async () => {
     const onManageModels = vi.fn();
 

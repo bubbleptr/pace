@@ -353,8 +353,12 @@ describe("Settings — visible models", () => {
     renderSettings();
 
     const section = await findModelsSection();
-    const group = within(section).getByRole("group", { name: "Grok (xAI) models" });
-    const selectAll = () => within(group).getByRole("checkbox", { name: "Select all" });
+    const card = within(section).getByTestId("model-visibility-xai");
+    const group = within(card).getByRole("group", { name: "Grok (xAI) models" });
+    const selectAll = () => within(card).getByRole("checkbox", { name: "Select all" });
+
+    // The control sits in the card header, not among the model rows.
+    expect(within(group).queryByRole("checkbox", { name: "Select all" })).toBeNull();
 
     expect(selectAll()).toBeChecked();
 
@@ -387,6 +391,26 @@ describe("Settings — visible models", () => {
       ]);
     });
     expect(selectAll()).toBeChecked();
+  });
+
+  it("keeps every model hidden after the last provider is cleared", async () => {
+    const user = userEvent.setup();
+
+    renderSettings();
+
+    const section = await findModelsSection();
+
+    for (const provider of ["anthropic", "xai", "moonshot"]) {
+      const card = within(section).getByTestId(`model-visibility-${provider}`);
+      await user.click(within(card).getByRole("checkbox", { name: "Select all" }));
+    }
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([]);
+    });
+    for (const checkbox of within(section).getAllByRole("checkbox")) {
+      expect(checkbox).not.toBeChecked();
+    }
   });
 
   it("refetches the model catalog after provider credentials change", async () => {

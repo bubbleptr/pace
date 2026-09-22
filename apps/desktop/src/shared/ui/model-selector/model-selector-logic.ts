@@ -62,14 +62,13 @@ export function isListedByAnotherProvider(
 export type ModelRef = { provider: string; modelId: string };
 
 /**
- * Settings owns which models reach the selector (issue #102). An empty set
- * means "never configured" and shows everything, so existing installs are
- * unaffected and a user who unchecks the last model is not left with an
- * unusable selector.
+ * Settings owns which models reach the selector (issue #102). `null` means
+ * "never configured" and shows everything, so existing installs are
+ * unaffected; an empty set is a choice the user made and hides every model.
  */
-export function isModelVisible(model: ModelRef, visible: ModelRef[]): boolean {
+export function isModelVisible(model: ModelRef, visible: ModelRef[] | null): boolean {
   return (
-    visible.length === 0 ||
+    visible === null ||
     visible.some(
       (candidate) =>
         candidate.provider === model.provider &&
@@ -85,7 +84,7 @@ export function isModelVisible(model: ModelRef, visible: ModelRef[]): boolean {
  */
 export function visibleModelsOf(
   models: RuntimeModelCapability[],
-  visible: ModelRef[],
+  visible: ModelRef[] | null,
   selected: ModelRef | null | undefined,
 ): RuntimeModelCapability[] {
   return models.filter(

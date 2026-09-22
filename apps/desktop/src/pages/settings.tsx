@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import {
@@ -558,8 +559,8 @@ function groupModelsByProvider(models: RuntimeModelCapability[]) {
 
 /**
  * Which catalog models the composer selector may offer (issue #102). Stored
- * per install, read by the selector; an empty set means "not configured" and
- * lists everything, which is also what unchecking the last model falls back to.
+ * per install, read by the selector; nothing stored means "not configured"
+ * and lists everything, while an empty set hides every model.
  */
 function ModelVisibilitySection({
   models,
@@ -620,8 +621,7 @@ function ModelVisibilitySection({
           Models
         </Heading>
         <Text as="p" type="supporting">
-          Choose which models the composer model selector offers. With none
-          selected, every available model is shown.
+          Choose which models the composer model selector offers.
         </Text>
         <HStack gap={3} vAlign="center" wrap="wrap">
           <Button
@@ -699,6 +699,24 @@ function ModelVisibilitySection({
             <HStack gap={3} vAlign="center">
               <ProviderIcon providerId={group.provider} label={label} />
               <Heading level={3}>{label}</Heading>
+              <CheckboxInput
+                label="Select all"
+                size="sm"
+                style={{ marginInlineStart: "auto" }}
+                value={
+                  checkedIds.length === group.models.length
+                    ? true
+                    : checkedIds.length === 0
+                      ? false
+                      : "indeterminate"
+                }
+                onChange={(checked) =>
+                  replaceProviderSelection(
+                    group.provider,
+                    checked ? group.models.map((model) => model.modelId) : [],
+                  )
+                }
+              />
             </HStack>
             <VStack style={{ marginBlockStart: "var(--spacing-4)" }}>
               <CheckboxList
@@ -707,23 +725,6 @@ function ModelVisibilitySection({
                 label={`${label} models`}
                 width="100%"
               >
-                <CheckboxListItem
-                  label="Select all"
-                  isChecked={
-                    checkedIds.length === group.models.length
-                      ? true
-                      : checkedIds.length === 0
-                        ? false
-                        : "indeterminate"
-                  }
-                  style={{ backgroundColor: "transparent" }}
-                  onCheck={(checked) =>
-                    replaceProviderSelection(
-                      group.provider,
-                      checked ? group.models.map((model) => model.modelId) : [],
-                    )
-                  }
-                />
                 {group.models.map((model) => (
                   <CheckboxListItem
                     description={model.modelId}

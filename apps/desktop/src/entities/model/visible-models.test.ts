@@ -13,7 +13,7 @@ describe("visible models preference", () => {
   });
 
   it("round-trips the visible model set and starts out unconfigured", () => {
-    expect(getVisibleModels()).toEqual([]);
+    expect(getVisibleModels()).toBeNull();
 
     saveVisibleModels([
       { provider: "xai", modelId: "grok-4" },
@@ -29,9 +29,15 @@ describe("visible models preference", () => {
   it("reads an unusable stored value as unconfigured instead of throwing", () => {
     window.localStorage.setItem(visibleModelsStorageKey, "{not json");
 
-    expect(getVisibleModels()).toEqual([]);
+    expect(getVisibleModels()).toBeNull();
 
     window.localStorage.setItem(visibleModelsStorageKey, '[{"provider":"xai"}]');
+
+    expect(getVisibleModels()).toBeNull();
+  });
+
+  it("keeps an explicitly emptied set apart from never configured", () => {
+    saveVisibleModels([]);
 
     expect(getVisibleModels()).toEqual([]);
   });
@@ -40,9 +46,7 @@ describe("visible models preference", () => {
     // Settings opens as a dialog over the workspace, so the composer never
     // remounts; the selector must follow the save without one.
     const { result } = renderHook(() => useVisibleModels());
-    const initial = result.current;
-
-    expect(initial).toEqual([]);
+    expect(result.current).toBeNull();
 
     act(() => {
       saveVisibleModels([{ provider: "xai", modelId: "grok-4" }]);
