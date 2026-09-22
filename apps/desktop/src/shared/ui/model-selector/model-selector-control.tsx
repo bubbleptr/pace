@@ -19,6 +19,7 @@ import type {
   RuntimeThinkingLevel,
 } from "@pace/core";
 import { ProviderMark } from "@/entities/provider/provider-icon";
+import { providerChannelLabel } from "@/entities/provider/provider-channel";
 import {
   Check,
   ChevronDown,
@@ -32,6 +33,7 @@ import {
   formatContextWindow,
   isFastModel,
   isInsideTriangle,
+  isListedByAnotherProvider,
   isModelVisible,
   matchesModelQuery,
   nearestThinkingLevel,
@@ -543,9 +545,16 @@ export function ModelSelectorControl({
                         )
                       }
                       description={
-                        isModelVisible(model, visibleModels)
-                          ? undefined
-                          : "Hidden in Settings"
+                        [
+                          isListedByAnotherProvider(model, baseModels)
+                            ? providerChannelLabel(model.provider)
+                            : undefined,
+                          isModelVisible(model, visibleModels)
+                            ? undefined
+                            : "Hidden in Settings",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || undefined
                       }
                       isDisabled={isControlDisabled}
                       isSelected={modelKey(model) === activeKey}

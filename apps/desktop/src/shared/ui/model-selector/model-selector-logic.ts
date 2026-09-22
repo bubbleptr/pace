@@ -43,6 +43,21 @@ export function baseModelOf(
   return fastSiblingOf(model, models) ?? model;
 }
 
+/**
+ * The same model id served by two providers (ChatGPT subscription and OpenAI
+ * API) renders as two rows with the same name and often the same mark; only
+ * then does a row need to say which channel it bills through.
+ */
+export function isListedByAnotherProvider(
+  model: ModelRef,
+  models: ModelRef[],
+): boolean {
+  return models.some(
+    (candidate) =>
+      candidate.modelId === model.modelId && candidate.provider !== model.provider,
+  );
+}
+
 /** A catalog entry addressed by identity alone (provider + model id). */
 export type ModelRef = { provider: string; modelId: string };
 
