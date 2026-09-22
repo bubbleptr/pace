@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import {
   CheckboxList,
   CheckboxListItem,
@@ -8,7 +10,7 @@ import {
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, type ReactNode, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutPanel } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -25,6 +27,8 @@ import {
   AnimatedKey,
   AnimatedMessage,
   AnimatedRobot,
+  MoreHorizontal,
+  RefreshCw,
 } from "@/shared/ui/icons";
 import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
@@ -46,6 +50,7 @@ import type {
   ProviderAuthStatusItem,
   ProviderAuthStatusReport,
   ProviderConnectionTestResult,
+  ProviderFailureKind,
   RuntimeModelCapability,
   RuntimeModelControls,
 } from "@pace/core";
@@ -133,25 +138,65 @@ function bumpProviderConnectionEpoch(queryClient: QueryClient, providerId: strin
   queryClient.setQueryData<number>(connectionEpochKey(providerId), (current) => (current ?? 0) + 1);
 }
 
-function connectionChip(
-  result: ProviderConnectionTestResult | undefined,
-  testing: boolean,
-  transportError?: string,
-) {
-  if (testing) return { label: "Testing…", color: "blue" as const, detail: "" };
-  if (transportError) return { label: `Failed · ${transportError}`, color: "red" as const, detail: "" };
-  if (!result) return { label: "Not tested", color: "gray" as const, detail: "" };
+type ConnectionTone = "success" | "warning" | "danger";
+
+type ConnectionStatus = {
+  tone?: ConnectionTone;
+  label: string;
+  /** Model and latency: useful when debugging, noise on the card. */
+  title?: string;
+  /** Raw provider text, shown only behind Details. */
+  detail?: string;
+  needsSignIn?: boolean;
+};
+
+const FAILURE_STATUS: Record<
+  ProviderFailureKind,
+  (mode: ProviderAuthStatusItem["mode"]) => Pick<ConnectionStatus, "tone" | "label" | "needsSignIn">
+> = {
+  auth: (mode) =>
+    mode === "oauth"
+      ? { tone: "warning", label: "Sign-in expired", needsSignIn: true }
+      : { tone: "warning", label: "API key rejected" },
+  entitlement: () => ({ tone: "warning", label: "Not covered by your plan" }),
+  network: () => ({ tone: "danger", label: "Can't reach provider" }),
+  unknown: () => ({ tone: "danger", label: "Check failed" }),
+};
+
+function connectionStatus(
+  provider: ProviderAuthStatusItem,
+  check: ProviderConnectionCheck,
+): ConnectionStatus {
+  // While a check runs the button carries the progress; the line keeps what
+  // is currently known instead of repeating "Checking…".
+  if (check.transportError) {
+    return { tone: "danger", label: "Check failed", detail: check.transportError };
+  }
+  const result = check.result;
+  // Never checked: the credential summary is the whole story.
+  if (!result) return { label: statusSummary(provider) };
   if (result.ok) {
     return {
-      label: `Verified · ${result.modelId} · ${result.latencyMs} ms`,
-      color: "green" as const,
-      detail: "",
+      tone: "success",
+      label: "Working",
+      title: `${result.modelId} · ${result.latencyMs} ms`,
     };
   }
-  return { label: `Failed · ${result.message}`, color: "red" as const, detail: result.detail };
+  return {
+    ...FAILURE_STATUS[result.kind](provider.mode),
+    title: [result.message, result.modelId].filter(Boolean).join(" · "),
+    detail: result.detail || undefined,
+  };
 }
 
-function ProviderConnectionTest({ providerId }: { providerId: string }) {
+type ProviderConnectionCheck = {
+  result?: ProviderConnectionTestResult;
+  checking: boolean;
+  transportError?: string;
+  run: () => void;
+};
+
+function useProviderConnectionCheck(providerId: string): ProviderConnectionCheck {
   const epochQuery = useQuery({
     queryKey: connectionEpochKey(providerId),
     queryFn: () => 0,
@@ -172,33 +217,101 @@ function ProviderConnectionTest({ providerId }: { providerId: string }) {
     retry: false,
     staleTime: Infinity,
   });
-  const transportError =
-    !query.isFetching && query.isError
-      ? query.error instanceof Error
-        ? query.error.message
-        : "Connection test failed"
-      : undefined;
-  const chip = connectionChip(query.data, query.isFetching, transportError);
+  const { refetch } = query;
+  const run = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
+  return {
+    result: query.data,
+    checking: query.isFetching,
+    transportError:
+      !query.isFetching && query.isError
+        ? query.error instanceof Error
+          ? query.error.message
+          : "Connection test failed"
+        : undefined,
+    run,
+  };
+}
+
+function ProviderStatusLine({ status }: { status: ConnectionStatus }) {
   return (
-    <>
-      <Button
-        variant="secondary"
-        label={query.isFetching ? "Testing…" : "Test connection"}
-        isDisabled={query.isFetching}
-        onClick={() => {
-          void query.refetch();
-        }}
-      />
-      <span title={chip.detail || undefined}>
-        <Token size="sm" color={chip.color} label={chip.label} />
+    <HStack gap={1.5} vAlign="center" data-testid="provider-connection-status">
+      {status.tone ? (
+        <span
+          aria-hidden="true"
+          style={{
+            inlineSize: 6,
+            blockSize: 6,
+            borderRadius: "var(--radius-full)",
+            background: `var(--${status.tone})`,
+            flexShrink: 0,
+          }}
+        />
+      ) : null}
+      <span title={status.title}>
+        <Text as="p" type="supporting">
+          {status.label}
+        </Text>
       </span>
-      {chip.detail ? (
-        <Text as="p" type="supporting" style={{ flexBasis: "100%", overflowWrap: "anywhere" }}>
-          {chip.detail}
+    </HStack>
+  );
+}
+
+function ProviderStatusDetails({ detail }: { detail?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!detail) return null;
+  return (
+    <Collapsible
+      trigger={<Text type="body" size="sm" color="secondary">Details</Text>}
+      isOpen={open}
+      onOpenChange={setOpen}
+    >
+      {open ? (
+        <Text as="div" type="body" size="sm" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {detail}
         </Text>
       ) : null}
-    </>
+    </Collapsible>
+  );
+}
+
+function ProviderCheckButton({ check }: { check: ProviderConnectionCheck }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      label={check.checking ? "Checking…" : "Check"}
+      icon={<RefreshCw aria-hidden="true" />}
+      isDisabled={check.checking}
+      onClick={check.run}
+    />
+  );
+}
+
+function ProviderCardHeader({
+  provider,
+  status,
+  actions,
+}: {
+  provider: ProviderAuthStatusItem;
+  status: ConnectionStatus;
+  actions?: ReactNode;
+}) {
+  return (
+    <HStack gap={3} vAlign="start">
+      <ProviderIcon providerId={provider.id} label={provider.label} />
+      <VStack gap={1} style={{ flex: 1, minInlineSize: 0 }}>
+        <Heading level={3}>{provider.label}</Heading>
+        <ProviderStatusLine status={status} />
+      </VStack>
+      {actions ? (
+        <HStack gap={1} vAlign="center">
+          {actions}
+        </HStack>
+      ) : null}
+    </HStack>
   );
 }
 
@@ -243,18 +356,45 @@ function ProviderApiKeyCard({
     },
   });
 
+  const check = useProviderConnectionCheck(provider.id);
+  const status = connectionStatus(provider, check);
+
   return (
     <Card data-testid={`provider-api-key-${provider.id}`}>
-      <HStack gap={3} vAlign="start">
-        <ProviderIcon providerId={provider.id} label={provider.label} />
-        <VStack gap={1}>
-          <Heading level={3}>{provider.label}</Heading>
-          <Text as="p" type="supporting">
-            {statusSummary(provider)}
-          </Text>
-        </VStack>
-      </HStack>
+      <ProviderCardHeader
+        provider={provider}
+        status={status}
+        actions={
+          provider.configured ? (
+            <>
+              <ProviderCheckButton check={check} />
+              <MoreMenu
+                icon={<MoreHorizontal aria-hidden="true" />}
+                label={`${provider.label} actions`}
+                size="sm"
+                variant="ghost"
+                isDisabled={removeMutation.isPending}
+                items={[
+                  {
+                    label: "Remove key…",
+                    onClick: () => {
+                      if (
+                        window.confirm(
+                          `Remove credentials for ${provider.label}? This cannot be undone from the UI.`,
+                        )
+                      ) {
+                        removeMutation.mutate();
+                      }
+                    },
+                  },
+                ]}
+              />
+            </>
+          ) : null
+        }
+      />
       <VStack gap={3} style={{ marginBlockStart: "var(--spacing-4)" }}>
+        <ProviderStatusDetails detail={status.detail} />
         <TextInput
           label={`${provider.label} API key`}
           isLabelHidden
@@ -274,25 +414,6 @@ function ProviderApiKeyCard({
             isDisabled={!apiKey.trim() || saveMutation.isPending}
             onClick={() => saveMutation.mutate()}
           />
-          {provider.configured ? (
-            <Button
-              variant="destructive"
-              label="Remove"
-              isDisabled={removeMutation.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Remove credentials for ${provider.label}? This cannot be undone from the UI.`,
-                  )
-                ) {
-                  removeMutation.mutate();
-                }
-              }}
-            />
-          ) : null}
-          {provider.configured ? (
-            <ProviderConnectionTest providerId={provider.id} />
-          ) : null}
         </HStack>
         {error ? (
           <Text
@@ -347,59 +468,71 @@ function ProviderSubscriptionCard({
     },
   });
 
+  const check = useProviderConnectionCheck(provider.id);
+  const status = connectionStatus(provider, check);
+  const signedIn = provider.mode === "oauth";
+  const showLogin = !signedIn || status.needsSignIn;
+  const loginLabel = loginMutation.isPending
+    ? "Waiting for browser…"
+    : signedIn
+      ? "Sign in again"
+      : "Login with subscription";
+
   return (
     <Card data-testid={`provider-subscription-${provider.id}`}>
-      <HStack gap={3} vAlign="start">
-        <ProviderIcon providerId={provider.id} label={provider.label} />
-        <VStack gap={1}>
-          <Heading level={3}>{provider.label}</Heading>
-          <Text as="p" type="supporting">
-            {statusSummary(provider)}
-          </Text>
-        </VStack>
-      </HStack>
-      <VStack gap={3} style={{ marginBlockStart: "var(--spacing-4)" }}>
-        <HStack gap={2} wrap="wrap" vAlign="center">
-          {provider.mode === "oauth" ? (
-            <Button
-              variant="destructive"
-              label="Logout"
-              isDisabled={logoutMutation.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(`Log out of ${provider.label} subscription?`)
-                ) {
-                  logoutMutation.mutate();
-                }
-              }}
-            />
-          ) : (
-            <Button
-              variant="primary"
-              label={
-                loginMutation.isPending
-                  ? "Waiting for browser…"
-                  : "Login with subscription"
-              }
-              isDisabled={loginMutation.isPending}
-              onClick={() => loginMutation.mutate()}
-            />
-          )}
-          {provider.configured ? (
-            <ProviderConnectionTest providerId={provider.id} />
+      <ProviderCardHeader
+        provider={provider}
+        status={status}
+        actions={
+          <>
+            {provider.configured ? <ProviderCheckButton check={check} /> : null}
+            {signedIn ? (
+              <MoreMenu
+                icon={<MoreHorizontal aria-hidden="true" />}
+                label={`${provider.label} actions`}
+                size="sm"
+                variant="ghost"
+                isDisabled={logoutMutation.isPending}
+                items={[
+                  {
+                    label: "Log out…",
+                    onClick: () => {
+                      if (window.confirm(`Log out of ${provider.label} subscription?`)) {
+                        logoutMutation.mutate();
+                      }
+                    },
+                  },
+                ]}
+              />
+            ) : null}
+          </>
+        }
+      />
+      {showLogin || status.detail || error ? (
+        <VStack gap={3} style={{ marginBlockStart: "var(--spacing-4)" }}>
+          {showLogin ? (
+            <HStack gap={2} wrap="wrap" vAlign="center">
+              <Button
+                variant="primary"
+                label={loginLabel}
+                isDisabled={loginMutation.isPending}
+                onClick={() => loginMutation.mutate()}
+              />
+            </HStack>
           ) : null}
-        </HStack>
-        {error ? (
-          <Text
-            as="p"
-            type="supporting"
-            role="alert"
-            style={{ color: "var(--danger)" }}
-          >
-            {error}
-          </Text>
-        ) : null}
-      </VStack>
+          <ProviderStatusDetails detail={status.detail} />
+          {error ? (
+            <Text
+              as="p"
+              type="supporting"
+              role="alert"
+              style={{ color: "var(--danger)" }}
+            >
+              {error}
+            </Text>
+          ) : null}
+        </VStack>
+      ) : null}
     </Card>
   );
 }

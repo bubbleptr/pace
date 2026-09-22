@@ -172,7 +172,11 @@ function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
   if (detail.status === 401 || /\b401\b/.test(detail.message)) return "auth";
   if (detail.status === 403 || /\b403\b/.test(detail.message)) return "entitlement";
   if (/\b(?:plan|subscription|entitlement)\b/i.test(detail.message)) return "entitlement";
-  if (/invalid.?api.?key|authentication_error|unauthorized/i.test(detail.message)) return "auth";
+  // A dead OAuth refresh token comes back as HTTP 400 invalid_grant: the fix is
+  // signing in again, same as a 401.
+  if (/invalid.?api.?key|authentication_error|unauthorized|invalid_grant|oauth refresh failed/i.test(detail.message)) {
+    return "auth";
+  }
   if (detail.networkCode || RESOLVED_NETWORK_MESSAGE.test(detail.message)) return "network";
   return "unknown";
 }
