@@ -669,6 +669,76 @@ describe("Pi SDK driver", () => {
     expect(configureModel).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces the live snapshot catalog after a credential refresh and leaves other sessions alone", async () => {
+    const refreshModelCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "openai",
+          modelId: "gpt-4.1",
+          name: "GPT-4.1",
+          thinkingLevels: ["off" as const],
+        },
+        {
+          provider: "anthropic",
+          modelId: "claude-sonnet-4",
+          name: "Claude Sonnet 4",
+          thinkingLevels: ["off" as const, "high" as const],
+        },
+      ],
+      selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" as const },
+    }));
+    const untouched = vi.fn(async () => ({ models: [], selected: null }));
+    const driver = createPiSdkDriver({
+      runtimeFactory: async (input) => ({
+        piSessionId: `pi-${input.sessionId}`,
+        sendPrompt: async () => {},
+        refreshModelCatalog: input.sessionId === "session-refresh" ? refreshModelCatalog : untouched,
+        modelControls: {
+          models: [
+            {
+              provider: "openai",
+              modelId: "gpt-4.1",
+              name: "GPT-4.1",
+              thinkingLevels: ["off"],
+            },
+          ],
+          selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" },
+        },
+      }),
+    });
+    const events: PiSdkRuntimeEvent[] = [];
+    driver.onEvent((event) => events.push(event));
+    await driver.createSession({ sessionId: "session-refresh", projectId: "pig", cwd: "/repo" });
+    await driver.createSession({ sessionId: "session-other", projectId: "pig", cwd: "/other" });
+
+    await driver.refreshModelCatalog?.("session-refresh");
+
+    expect(refreshModelCatalog).toHaveBeenCalledOnce();
+    expect(untouched).not.toHaveBeenCalled();
+    await expect(driver.getSnapshot("pi-session-refresh")).resolves.toMatchObject({
+      modelControls: {
+        models: [
+          expect.objectContaining({ modelId: "gpt-4.1" }),
+          expect.objectContaining({ modelId: "claude-sonnet-4" }),
+        ],
+      },
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        piSessionId: "pi-session-refresh",
+        type: "model_catalog_changed",
+        payload: expect.objectContaining({
+          type: "model_catalog_changed",
+          modelControls: expect.objectContaining({
+            models: expect.arrayContaining([
+              expect.objectContaining({ modelId: "claude-sonnet-4" }),
+            ]),
+          }),
+        }),
+      }),
+    ]);
+  });
+
   it("resolves tool schemas from a live SDK runtime and returns none without one", async () => {
     const bashSchema = {
       description: "Execute a shell command",

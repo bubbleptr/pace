@@ -263,6 +263,66 @@ describe("backend service", () => {
     });
   });
 
+  it("broadcasts a model-catalog refresh after credential changes and still returns the auth result when refresh fails", async () => {
+    const report = {
+      agentDir: "/tmp/agent",
+      authPath: "/tmp/agent/auth.json",
+      providers: [],
+      configuredCount: 1,
+    };
+    const providerAuth = {
+      listStatus: vi.fn(async () => report),
+      setApiKey: vi.fn(async () => report),
+      remove: vi.fn(async () => report),
+      loginOAuth: vi.fn(async () => report),
+      logout: vi.fn(async () => report),
+    };
+    const refreshModelCatalog = vi.fn(async () => {});
+    const runtimeDriver = {
+      refreshModelCatalog,
+      onEvent: vi.fn(() => () => {}),
+    } as unknown as PiRuntimeDriver;
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      providerAuth,
+      runtimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+    const commands = [
+      ["set_provider_api_key", { providerId: "openai", apiKey: "sk-test" }],
+      ["remove_provider_auth", { providerId: "openai" }],
+      ["login_provider_oauth", { providerId: "anthropic" }],
+      ["logout_provider_auth", { providerId: "anthropic" }],
+    ] as const;
+
+    for (const [method, params] of commands) {
+      await expect(service.handleRequest({ id: method, method, params })).resolves.toEqual({
+        id: method,
+        result: report,
+      });
+    }
+
+    expect(refreshModelCatalog).toHaveBeenCalledTimes(4);
+    expect(refreshModelCatalog).toHaveBeenNthCalledWith(1);
+    expect(providerAuth.setApiKey).toHaveBeenCalledWith("openai", "sk-test");
+    expect(providerAuth.remove).toHaveBeenCalledWith("openai");
+    expect(providerAuth.loginOAuth).toHaveBeenCalledWith("anthropic");
+    expect(providerAuth.logout).toHaveBeenCalledWith("anthropic");
+
+    refreshModelCatalog.mockRejectedValueOnce(new Error("session process is gone"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      service.handleRequest({
+        id: "logout-again",
+        method: "logout_provider_auth",
+        params: { providerId: "anthropic" },
+      }),
+    ).resolves.toEqual({ id: "logout-again", result: report });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("routes tool schema resolution through the Runtime Gateway", async () => {
     const bashSchema = {
       description: "Execute a shell command",

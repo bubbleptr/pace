@@ -204,6 +204,9 @@ export function surfaceForMessagePart(partType: AgentMessagePartType): "chat" | 
 // what new journals contain. Message deltas and cumulative tool partialResult
 // snapshots are covered by end events; persisting each update bloats replay.
 export function shouldJournalRuntimeEvent(payload: Record<string, unknown>): boolean {
+  // A credential refresh rewrites the live catalog. It is not chat history,
+  // and replaying it would surface as a message on the next open.
+  if (payload.type === "model_catalog_changed") return false;
   return !(
     (payload.type === "message_part" || payload.type === "tool") &&
     payload.phase === "update"

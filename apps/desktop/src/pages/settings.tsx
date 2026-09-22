@@ -29,6 +29,7 @@ import {
 import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
+import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
 import {
   getVisibleModels,
   saveVisibleModels,
@@ -629,6 +630,9 @@ function SettingsContent({
       : "Could not load the model catalog.";
 
   const refresh = () => {
+    // Draft composers keep this catalog in module state. Drop it before the
+    // queries refetch, or the next new Session still paints the old models.
+    invalidateCachedModelCatalog();
     void queryClient.invalidateQueries({
       queryKey: providerAuthStatusQueryKey,
     });

@@ -1260,6 +1260,54 @@ describe("Runtime Gateway client", () => {
     expect(observed).toEqual([]);
   });
 
+  it("keeps a model catalog refresh out of the chat timeline", async () => {
+    let receive: ((event: BackendRpcEvent) => void) | undefined;
+    const snapshot: RuntimeGatewaySnapshot = {
+      sessionId: "session-1",
+      runtimeId: "runtime-1",
+      piSessionId: "pi-session-1",
+      projectId: "p",
+      cwd: "/repo",
+      status: "idle",
+      events: [],
+      updatedAt: "2026-09-22T00:00:00Z",
+    };
+    const client = createRuntimeGatewayClient({
+      invoke: async <T,>() => snapshot as T,
+      onBackendEvent: (handler) => {
+        receive = handler;
+        return vi.fn();
+      },
+    });
+    const observed: unknown[] = [];
+    client.subscribeToAgentEvents?.("pi-session-1", (event) => observed.push(event));
+    client.subscribeToEvents("pi-session-1", (event) => observed.push(event));
+    receive?.({
+      type: "event",
+      event: {
+        id: "catalog",
+        seq: 1,
+        sessionId: "session-1",
+        piSessionId: "pi-session-1",
+        type: "model_catalog_changed",
+        ts: snapshot.updatedAt,
+        payload: {
+          type: "model_catalog_changed",
+          modelControls: {
+            models: [{
+              provider: "anthropic",
+              modelId: "claude-sonnet-4",
+              name: "Claude Sonnet 4",
+              thinkingLevels: ["off", "high"],
+            }],
+            selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" },
+          },
+        },
+      },
+    });
+    expect(observed).toEqual([]);
+  });
+
   it("keeps extension diagnostics visible without turning an idle session into a failed run", async () => {
     let receive: ((event: BackendRpcEvent) => void) | undefined;
     const snapshot: RuntimeGatewaySnapshot = { sessionId: "session-1", runtimeId: "pi-sdk:session-1", piSessionId: "pi-session-1", projectId: "pig", cwd: "/repo", status: "idle", events: [], updatedAt: "2026-09-05T00:00:00.000Z" };

@@ -56,6 +56,7 @@ import { createSessionRuntimeModel } from "@/entities/session/session-runtime-mo
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
+import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
 import * as sessionsApi from "@/entities/session/sessions";
@@ -283,6 +284,7 @@ function setDockedLayout(matches: boolean) {
 describe("AgentWorkspaceSessionsPage", () => {
   beforeEach(() => {
     setDockedLayout(false);
+    invalidateCachedModelCatalog();
     window.localStorage.clear();
     delete window.pace;
     delete (
@@ -5324,6 +5326,55 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
+  it("reloads the draft model list after credentials change", async () => {
+    let models = [
+      {
+        provider: "deepseek",
+        modelId: "deepseek-chat",
+        name: "DeepSeek Chat",
+        thinkingLevels: ["off"],
+      },
+    ];
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_session_projections") return [];
+      if (command === "list_provider_auth_status") {
+        return { agentDir: "", authPath: "", configuredCount: 1, providers: [] };
+      }
+      if (command === "list_available_model_controls") {
+        return {
+          models,
+          selected: { provider: models[0].provider, modelId: models[0].modelId, thinkingLevel: "off" },
+        };
+      }
+      if (command === "get_config_inventory") {
+        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
+      }
+      throw new Error(`unexpected backend command ${command}`);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    saveSessionDraft(pigProjectPath, "");
+    renderProjectSessions("/projects/pig/sessions?view=draft");
+    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("DeepSeek Chat");
+
+    models = [
+      {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        thinkingLevels: ["off", "high"],
+      },
+    ];
+    act(() => { invalidateCachedModelCatalog(); });
+    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
+  });
+
   it("lists only visible models and opens Models settings over the workspace", async () => {
     const user = userEvent.setup();
     const invoke = vi.fn(async (command: string) => {
@@ -7671,6 +7722,90 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
     expect(screen.getByTestId("full-chat-composer")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Queue the next task…")).toBeInTheDocument();
+  });
+
+  it("updates an open live session's model list when the catalog refresh arrives", async () => {
+    const listeners = new Set<(event: BackendRpcEvent) => void>();
+    window.pace = {
+      invoke: vi.fn(async () => {
+        throw new Error("unexpected invoke");
+      }) as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: (listener) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    const user = userEvent.setup();
+    const sonnet = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+      thinkingLevels: ["off" as const, "high" as const],
+    };
+    const projection = {
+      ...createSessionProjection({
+        id: "session-catalog-refresh",
+        projectId: "pig-docs",
+        initialPrompt: "Keep this session",
+        createdAt: "2026-09-22T00:00:00.000Z",
+      }),
+      status: "completed" as const,
+      creationStage: "accepted" as const,
+      runtimeId: "pi-sdk:session-catalog-refresh",
+      piSessionId: "pi-catalog-refresh",
+      modelControls: {
+        models: [sonnet],
+        selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" as const },
+      },
+    };
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        runtimeBridge={createInMemoryPiRuntimeBridge()}
+        sessionProjection={projection}
+      />,
+    );
+    expect(screen.getByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
+
+    act(() => {
+      for (const listener of listeners) {
+        listener({
+          type: "event",
+          event: {
+            id: "catalog",
+            seq: 1,
+            sessionId: projection.id,
+            piSessionId: "pi-catalog-refresh",
+            type: "model_catalog_changed",
+            ts: "2026-09-22T00:01:00.000Z",
+            payload: {
+              type: "model_catalog_changed",
+              modelControls: {
+                models: [
+                  sonnet,
+                  {
+                    provider: "openai",
+                    modelId: "gpt-4.1",
+                    name: "GPT-4.1",
+                    thinkingLevels: ["off"],
+                  },
+                ],
+                selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
+              },
+            },
+          },
+        });
+      }
+    });
+
+    await user.click(screen.getByTestId("model-thinking-trigger"));
+    const list = await screen.findByTestId("model-thinking-model-list");
+    expect(within(list).getByText("Claude Sonnet 4")).toBeInTheDocument();
+    expect(within(list).getByText("GPT-4.1")).toBeInTheDocument();
   });
 
   it("uses one composer control for the model list and capability-driven Thinking slider", async () => {

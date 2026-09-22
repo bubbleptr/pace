@@ -314,6 +314,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             providerAuth,
             piSessionListAll,
             runtimeGateway,
+            runtimeDriver,
             runtimeJournal,
             terminalManager,
             invalidation,
@@ -338,6 +339,17 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   };
 }
 
+async function refreshLiveSessionModelCatalogs(driver: PiRuntimeDriver) {
+  if (!driver.refreshModelCatalog) return;
+  try {
+    await driver.refreshModelCatalog();
+  } catch (error) {
+    // The credential write already succeeded. A live session that cannot
+    // re-read auth.json must not fail the Settings request.
+    console.error("Pace could not refresh live session model catalogs.", error);
+  }
+}
+
 async function dispatchRequest(input: {
   request: BackendRpcRequest;
   agentDir: string;
@@ -351,6 +363,7 @@ async function dispatchRequest(input: {
   providerAuth: ProviderAuthService;
   piSessionListAll: () => Promise<PiSessionListItem[]>;
   runtimeGateway: RuntimeGatewayService;
+  runtimeDriver: PiRuntimeDriver;
   runtimeJournal: SessionEventJournal;
   terminalManager: TerminalManager;
   invalidation: ReturnType<typeof createWorkspaceInvalidation>;
@@ -473,23 +486,35 @@ async function dispatchRequest(input: {
       return input.environmentPreflight.complete();
     case "list_provider_auth_status":
       return input.providerAuth.listStatus();
-    case "set_provider_api_key":
-      return input.providerAuth.setApiKey(
+    case "set_provider_api_key": {
+      const report = await input.providerAuth.setApiKey(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
         requiredString(params.apiKey, "apiKey"),
       );
-    case "remove_provider_auth":
-      return input.providerAuth.remove(
+      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      return report;
+    }
+    case "remove_provider_auth": {
+      const report = await input.providerAuth.remove(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
       );
-    case "login_provider_oauth":
-      return input.providerAuth.loginOAuth(
+      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      return report;
+    }
+    case "login_provider_oauth": {
+      const report = await input.providerAuth.loginOAuth(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
       );
-    case "logout_provider_auth":
-      return input.providerAuth.logout(
+      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      return report;
+    }
+    case "logout_provider_auth": {
+      const report = await input.providerAuth.logout(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
       );
+      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      return report;
+    }
     case "list_available_model_controls":
       return listAvailableModelControls({ agentDir: input.agentDir });
     case "is_git_repository":

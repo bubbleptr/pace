@@ -22,6 +22,17 @@ describe("Session process isolation", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("asks every live root to refresh its model catalog, or one root when given a session id", async () => {
+    await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
+    await driver.createSession({ sessionId: "b", projectId: "b", cwd: join(root, "b") });
+    await driver.refreshModelCatalog?.();
+    expect(await readFile(join(root, "a", "refreshed-a"), "utf8")).toBe("all");
+    expect(await readFile(join(root, "b", "refreshed-b"), "utf8")).toBe("all");
+    await driver.refreshModelCatalog?.("b");
+    expect(await readFile(join(root, "b", "refreshed-b"), "utf8")).toBe("b");
+    expect(await readFile(join(root, "a", "refreshed-a"), "utf8")).toBe("all");
+  });
+
   it("gives each root Session its own cwd and module state, including roots in the same project", async () => {
     const create = (sessionId: string, project: string) => driver.createSession({
       sessionId, projectId: project, cwd: join(root, project),

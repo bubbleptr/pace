@@ -369,6 +369,7 @@ function stateFromSnapshot(snapshot: RuntimeGatewaySnapshot): PiSessionState {
 
   for (const envelope of snapshot.events) {
     if (envelope.payload.type === "session_info_changed") continue;
+    if (envelope.payload.type === "model_catalog_changed") continue;
     if (isAgentRuntimeEventPayload(envelope.payload)) {
       replay.push({
         kind: "agent",
@@ -649,6 +650,11 @@ export function createRuntimeGatewayClient(
         if (state && typeof event.event.payload.name === "string") {
           state.sessionName = event.event.payload.name;
         }
+        return;
+      }
+
+      // Catalog refreshes update the composer projection. They are not turns.
+      if (event.event.payload.type === "model_catalog_changed") {
         return;
       }
 

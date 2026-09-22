@@ -34,5 +34,10 @@ process.on("message", async ({ id, method, args }) => {
       type: "status", payload: { kind: "status", title: "Accepted" } } });
     return;
   }
+  if (method === "refreshModelCatalog") {
+    writeFileSync(join(process.cwd(), `refreshed-${snapshot.sessionId}`), args[0] ?? "all");
+    process.send({ id, result: null });
+    return;
+  }
   if (method === "getSnapshot" && !holdSnapshot) process.send({ id, result: snapshot });
 });

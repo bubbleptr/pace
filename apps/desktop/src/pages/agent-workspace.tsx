@@ -74,7 +74,7 @@ import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
 import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-state";
 import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-status";
-import { invoke } from "@/shared/runtime";
+import { invoke, onBackendEvent } from "@/shared/runtime";
 import {
   Stop,
   ChatAdd,
@@ -175,6 +175,12 @@ import {
   overlayPreferredModel,
   saveLastModelSelection,
 } from "@/entities/session/last-model-preference";
+import {
+  modelControlsFromUnknown,
+  readCachedModelCatalog,
+  rememberModelCatalog,
+  subscribeModelCatalogInvalidation,
+} from "@/entities/model/model-catalog-cache";
 import { getVisibleModels } from "@/entities/model/visible-models";
 import {
   findSessionChangeTarget,
@@ -758,20 +764,6 @@ function QueuedMessageList({
   );
 }
 
-/**
- * Last model catalog read in this renderer. The Session Draft reads it before
- * any Session exists, so the Live composer can paint the same model chip on
- * its first frame of the Draft → Live handoff instead of blanking the control
- * until its own read returns.
- */
-let cachedModelCatalog: RuntimeModelControls["models"] = [];
-
-function rememberModelCatalog(models: RuntimeModelControls["models"]) {
-  if (models.length) {
-    cachedModelCatalog = models;
-  }
-}
-
 function FullChatComposer({
   queueMode = false,
   isCreating = false,
@@ -813,7 +805,7 @@ function FullChatComposer({
   // after leaving that page (issue #102).
   const [visibleModels] = useState(getVisibleModels);
   const [availableModels, setAvailableModels] =
-    useState<RuntimeModelControls["models"]>(() => cachedModelCatalog);
+    useState<RuntimeModelControls["models"]>(readCachedModelCatalog);
   const needsModelCatalog =
     !projection?.modelControls?.models.length &&
     Boolean(projection?.piSessionId || isCreating);
@@ -841,6 +833,16 @@ function FullChatComposer({
     });
     return () => { cancelled = true; };
   }, [needsModelCatalog, sessionId]);
+  // Credential changes clear the shared cache. A composer still showing
+  // that cache (no Session catalog yet) has to read auth.json again.
+  // A live Session catalog arrives on its own event, so don't fetch over it.
+  useEffect(() => subscribeModelCatalogInvalidation(() => {
+    if (projection?.modelControls?.models.length) return;
+    void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
+      rememberModelCatalog(controls.models);
+      setAvailableModels(controls.models);
+    }).catch(() => {});
+  }), [projection?.modelControls?.models.length]);
   const [draft, setDraft] = useState(() =>
     sessionId ? getFollowUpDraft(sessionId)?.message ?? "" : "",
   );
@@ -2325,6 +2327,13 @@ function SessionDraftComposer({
     useProviderAuthStatus();
   const [draftModelControls, setDraftModelControls] =
     useState<RuntimeModelControls | null>(null);
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  useEffect(
+    () => subscribeModelCatalogInvalidation(() => {
+      setCatalogVersion((version) => version + 1);
+    }),
+    [],
+  );
   const sessionProjectionsStore = useSessionProjectionsOptional();
   const recentSessionModel = mostRecentSessionModelSelection(
     sessionProjectionsStore?.sessionProjections ?? [],
@@ -2367,7 +2376,7 @@ function SessionDraftComposer({
     return () => {
       cancelled = true;
     };
-  }, [providerAuthLoading, providersConfigured, recentSessionModelKey]);
+  }, [catalogVersion, providerAuthLoading, providersConfigured, recentSessionModelKey]);
 
   const switchProjectBranch = async (branch: string) => {
     try {
@@ -3669,9 +3678,22 @@ function LiveSessionColumn({
       },
     );
 
+    const unsubscribeCatalog = onBackendEvent((event) => {
+      if (event.type !== "event" || event.event.piSessionId !== piSessionId) return;
+      if (event.event.payload.type !== "model_catalog_changed") return;
+      const modelControls = modelControlsFromUnknown(event.event.payload.modelControls);
+      if (!modelControls) return;
+      applyLiveProjectionEvent({
+        type: "model-controls-changed",
+        modelControls,
+        occurredAt: event.event.ts,
+      });
+    });
+
     return () => {
       unsubscribeLegacyEvents();
       unsubscribeAgentEvents?.();
+      unsubscribeCatalog();
     };
   }, [getRuntimeBridge, liveProjection?.piSessionId, showDraft]);
 
