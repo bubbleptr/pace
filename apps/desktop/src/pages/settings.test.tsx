@@ -446,7 +446,6 @@ describe("Settings — visible models", () => {
     expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(section).getByRole("button", { name: "Refresh models" })).toBeEnabled();
     expect(within(section).getByText(/Last refreshed/)).toBeInTheDocument();
-    expect(within(section).getByText("/agent/models.json")).toBeInTheDocument();
 
     await user.click(within(section).getByRole("button", { name: "Refresh models" }));
 

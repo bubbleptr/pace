@@ -561,16 +561,11 @@ function groupModelsByProvider(models: RuntimeModelCapability[]) {
  * per install, read by the selector; an empty set means "not configured" and
  * lists everything, which is also what unchecking the last model falls back to.
  */
-function modelsJsonPath(agentDir: string) {
-  return `${agentDir.replace(/[\\/]+$/, "")}/models.json`;
-}
-
 function ModelVisibilitySection({
   models,
   isLoading,
   errorMessage,
   providerLabels,
-  agentDir,
   catalogOffline,
   refreshedAt,
   catalogErrors,
@@ -582,7 +577,6 @@ function ModelVisibilitySection({
   isLoading: boolean;
   errorMessage?: string;
   providerLabels: Record<string, string>;
-  agentDir?: string;
   catalogOffline: boolean;
   refreshedAt?: string;
   catalogErrors: Record<string, string>;
@@ -753,11 +747,6 @@ function ModelVisibilitySection({
           </Card>
         );
       })}
-      {agentDir ? (
-        <Text as="p" type="supporting">
-          Custom models can be written to <code>{modelsJsonPath(agentDir)}</code>.
-        </Text>
-      ) : null}
     </VStack>
   );
 }
@@ -1224,7 +1213,6 @@ function SettingsContent({
             style={{ display: section === "models" ? undefined : "none" }}
           >
             <ModelVisibilitySection
-              agentDir={statusQuery.data?.agentDir}
               catalogErrors={
                 catalogResult && "errors" in catalogResult ? catalogResult.errors : {}
               }
