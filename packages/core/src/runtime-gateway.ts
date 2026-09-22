@@ -98,6 +98,11 @@ export type RuntimeModelControls = {
   selected: RuntimeModelSelection | null;
 };
 
+/** Settings → Models network catalog refresh. Offline never includes a timestamp. */
+export type ModelCatalogRefreshResult =
+  | { offline: true }
+  | { refreshedAt: string; errors: Record<string, string> };
+
 /** Current-runtime tool definition. Absent names are omitted, not invented. */
 export type RuntimeToolSchema = {
   description: string;

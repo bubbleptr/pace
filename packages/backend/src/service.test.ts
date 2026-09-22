@@ -3,6 +3,7 @@ import { realpathSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBackendService } from "./service";
 import {
@@ -171,6 +172,7 @@ describe("backend service", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     await Promise.all(
       tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
@@ -382,6 +384,107 @@ describe("backend service", () => {
     } finally {
       errorSpy.mockRestore();
       vi.useRealTimers();
+    }
+  });
+
+  it("refreshes the model catalog over the network and updates live sessions", async () => {
+    const refreshModelCatalog = vi.fn(async () => {});
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      runtimeDriver: {
+        refreshModelCatalog,
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+    const refresh = vi.fn(async () => ({ aborted: false, errors: new Map() }));
+    vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
+      refresh,
+      getAvailableSnapshot: () => [],
+    }) as unknown as ModelRuntime);
+
+    await expect(
+      service.handleRequest({
+        id: "refresh-models",
+        method: "refresh_model_catalog",
+        params: { force: true },
+      }),
+    ).resolves.toEqual({
+      id: "refresh-models",
+      result: {
+        refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        errors: {},
+      },
+    });
+    expect(refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true });
+    expect(refreshModelCatalog).toHaveBeenCalledOnce();
+  });
+
+  it("returns a provider refresh error and still updates live sessions", async () => {
+    const refreshModelCatalog = vi.fn(async () => {});
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      runtimeDriver: {
+        refreshModelCatalog,
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+    vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
+      refresh: vi.fn(async () => ({
+        aborted: false,
+        errors: new Map([["xai", new Error("catalog unavailable")]]),
+      })),
+      getAvailableSnapshot: () => [],
+    }) as unknown as ModelRuntime);
+
+    await expect(
+      service.handleRequest({
+        id: "refresh-partial",
+        method: "refresh_model_catalog",
+        params: { force: true },
+      }),
+    ).resolves.toEqual({
+      id: "refresh-partial",
+      result: {
+        refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        errors: { xai: "catalog unavailable" },
+      },
+    });
+    expect(refreshModelCatalog).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh the catalog or live sessions when PI_OFFLINE is set", async () => {
+    vi.stubEnv("PI_OFFLINE", "1");
+    const refreshModelCatalog = vi.fn(async () => {});
+    const create = vi.spyOn(ModelRuntime, "create");
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      runtimeDriver: {
+        refreshModelCatalog,
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+
+    try {
+      await expect(
+        service.handleRequest({
+          id: "refresh-offline",
+          method: "refresh_model_catalog",
+          params: { force: true },
+        }),
+      ).resolves.toEqual({
+        id: "refresh-offline",
+        result: { offline: true },
+      });
+      expect(create).not.toHaveBeenCalled();
+      expect(refreshModelCatalog).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

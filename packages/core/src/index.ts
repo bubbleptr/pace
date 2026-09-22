@@ -135,6 +135,7 @@ export {
   type RuntimeModelCapability,
   type RuntimeModelSelection,
   type RuntimeModelControls,
+  type ModelCatalogRefreshResult,
   type RuntimeGatewaySnapshot,
   type RuntimeGatewayQueuedMessage,
   type RuntimeGatewayQueueMutationResult,

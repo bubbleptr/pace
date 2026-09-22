@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
+  ModelCatalogRefreshResult,
   RuntimeModelCapability,
   RuntimeModelControls,
   RuntimeModelSelection,
@@ -141,19 +142,48 @@ async function readSettingsPreferredModel(agentDir: string) {
   }
 }
 
+async function createOfflineModelRuntime(agentDir: string) {
+  // Create stays offline so opening the catalog never fetches. Network
+  // access is an explicit refresh() below, and PI_OFFLINE still blocks it.
+  // Await create so the local models-store.json overlay is restored first.
+  return ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: join(agentDir, "models.json"),
+    allowModelNetwork: false,
+  });
+}
+
+export async function refreshAvailableModelCatalog(input: {
+  agentDir: string;
+  force?: boolean;
+}): Promise<ModelCatalogRefreshResult> {
+  // ModelRuntime treats any set PI_OFFLINE as network-disabled, but an
+  // explicit allowNetwork: true would still fetch. Refuse before create.
+  if (process.env.PI_OFFLINE !== undefined) {
+    return { offline: true };
+  }
+
+  const runtime = await createOfflineModelRuntime(input.agentDir);
+  const result = await runtime.refresh({
+    allowNetwork: true,
+    force: input.force === true,
+  });
+  const errors: Record<string, string> = {};
+
+  for (const [providerId, error] of result.errors) {
+    errors[providerId] = error instanceof Error ? error.message : String(error);
+  }
+
+  return {
+    refreshedAt: new Date().toISOString(),
+    errors,
+  };
+}
+
 export async function listAvailableModelControls(input: {
   agentDir: string;
 }): Promise<RuntimeModelControls> {
-  const authPath = join(input.agentDir, "auth.json");
-  const modelsJsonPath = join(input.agentDir, "models.json");
-  // ModelRuntime.create restores the local models-store.json overlay (e.g.
-  // GPT-5.6) on top of the bundled catalog, offline. Await it so the
-  // registry snapshot is populated before reading.
-  const runtime = await ModelRuntime.create({
-    authPath,
-    modelsPath: modelsJsonPath,
-    allowModelNetwork: false,
-  });
+  const runtime = await createOfflineModelRuntime(input.agentDir);
   const registry = new ModelRegistry(runtime);
 
   const models = registry

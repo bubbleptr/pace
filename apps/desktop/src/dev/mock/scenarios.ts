@@ -457,6 +457,7 @@ export function createMockApi(): PaceRendererApi {
           break;
         case "get_environment_preflight_status":
         case "list_available_model_controls":
+        case "refresh_model_catalog":
         case "resolve_tool_schemas":
         case "list_provider_auth_status":
         case "test_provider_connection":

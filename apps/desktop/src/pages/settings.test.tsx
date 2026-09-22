@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -9,7 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SettingsDialog } from "@/pages/settings";
+import { SettingsDialog, resetCatalogRefreshGate, startCatalogRefresh } from "@/pages/settings";
 import { AppFrame } from "@/app/app-shell";
 import {
   getVisibleModels,
@@ -18,7 +19,7 @@ import {
 import { resetUpdateStatusStore } from "@/entities/update/use-update-status";
 import type { PaceRendererApi } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type { ProviderConnectionTestResult } from "@pace/core";
+import type { ModelCatalogRefreshResult, ProviderConnectionTestResult } from "@pace/core";
 
 const providerAuthStatus = {
   agentDir: "/agent",
@@ -95,20 +96,53 @@ const disabledUpdateStatus: UpdateStatus = {
   reason: "Updates are only available in the packaged desktop app.",
 };
 
+const defaultCatalogRefreshedAt = "2026-09-22T15:04:00.000Z";
+
+type CatalogRefreshFixture =
+  | { offline: true }
+  | {
+      refreshedAt?: string;
+      errors?: Record<string, string>;
+      models?: typeof modelControls.models;
+    };
+
+const defaultConnectionTestResult: ProviderConnectionTestResult = {
+  ok: true,
+  modelId: "claude-sonnet-4",
+  latencyMs: 42,
+};
+
+type RenderSettingsOptions = {
+  connectionTestResult?: ProviderConnectionTestResult;
+  probe?: () => Promise<ProviderConnectionTestResult>;
+  catalogRefresh?: CatalogRefreshFixture;
+  catalogRefreshImpl?: (args?: Record<string, unknown>) => Promise<ModelCatalogRefreshResult>;
+  strict?: boolean;
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 function renderSettings(
   path = "/usage?settings=models",
   updateStatus: UpdateStatus = disabledUpdateStatus,
-  connectionTestResult: ProviderConnectionTestResult = {
-    ok: true,
-    modelId: "claude-sonnet-4",
-    latencyMs: 42,
-  },
-  probe?: () => Promise<ProviderConnectionTestResult>,
+  options: RenderSettingsOptions = {},
 ) {
+  const connectionTestResult = options.connectionTestResult ?? defaultConnectionTestResult;
+  const catalogRefresh = options.catalogRefresh ?? {
+    refreshedAt: defaultCatalogRefreshedAt,
+    errors: {},
+  };
   const updateListeners = new Set<(status: UpdateStatus) => void>();
-  const invoke = vi.fn(async (command: string) => {
+  let models = modelControls.models;
+  const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "test_provider_connection") {
-      return probe ? probe() : connectionTestResult;
+      return options.probe ? options.probe() : connectionTestResult;
     }
 
     if (
@@ -119,7 +153,30 @@ function renderSettings(
     }
 
     if (command === "list_available_model_controls") {
-      return modelControls;
+      return { ...modelControls, models };
+    }
+
+    if (command === "refresh_model_catalog") {
+      if (options.catalogRefreshImpl) {
+        return options.catalogRefreshImpl(args);
+      }
+
+      if ("offline" in catalogRefresh) {
+        return { offline: true };
+      }
+
+      if (args?.force === true) {
+        if (catalogRefresh.models) models = catalogRefresh.models;
+        return {
+          refreshedAt: catalogRefresh.refreshedAt ?? defaultCatalogRefreshedAt,
+          errors: catalogRefresh.errors ?? {},
+        };
+      }
+
+      return {
+        refreshedAt: catalogRefresh.refreshedAt ?? defaultCatalogRefreshedAt,
+        errors: {},
+      };
     }
 
     if (command === "get_chat_workspace_root") {
@@ -177,12 +234,20 @@ function renderSettings(
     routeTree: rootRoute.addChildren([usageRoute]),
   });
 
-  return {
-    ...render(
-      <QueryClientProvider client={new QueryClient()}>
+  const tree = (
+    <QueryClientProvider client={new QueryClient()}>
+      {options.strict ? (
+        <StrictMode>
+          <RouterProvider router={router} />
+        </StrictMode>
+      ) : (
         <RouterProvider router={router} />
-      </QueryClientProvider>,
-    ),
+      )}
+    </QueryClientProvider>
+  );
+
+  return {
+    ...render(tree),
     router,
     emitUpdate: (status: UpdateStatus) => {
       act(() => {
@@ -200,6 +265,7 @@ async function findModelsSection() {
 
 beforeEach(() => {
   resetUpdateStatusStore();
+  resetCatalogRefreshGate();
 });
 
 describe("Settings — visible models", () => {
@@ -284,10 +350,12 @@ describe("Settings — visible models", () => {
     const user = userEvent.setup();
     const { countCalls } = renderSettings();
 
-    await findModelsSection();
+    const section = await findModelsSection();
     await waitFor(() => {
-      expect(countCalls("list_available_model_controls")).toBe(1);
+      expect(section.querySelector("time")).toBeTruthy();
+      expect(countCalls("list_available_model_controls")).toBeGreaterThanOrEqual(2);
     });
+    const listsAfterOpen = countCalls("list_available_model_controls");
 
     await user.click(screen.getByRole("button", { name: "Providers" }));
     await user.click(screen.getByRole("button", { name: "API Key" }));
@@ -301,8 +369,158 @@ describe("Settings — visible models", () => {
     await user.click(within(card).getByRole("button", { name: "Replace key" }));
 
     await waitFor(() => {
-      expect(countCalls("list_available_model_controls")).toBe(2);
+      expect(countCalls("list_available_model_controls")).toBe(listsAfterOpen + 1);
     });
+  });
+
+  it("refreshes the catalog on opening Models and shows the force refresh result", async () => {
+    const user = userEvent.setup();
+    const refreshedAt = "2026-09-22T15:04:00.000Z";
+    renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefresh: {
+        refreshedAt,
+        errors: { xai: "catalog unavailable" },
+        models: [
+          ...modelControls.models,
+          {
+            provider: "xai",
+            modelId: "grok-4.7",
+            name: "Grok 4.7",
+            thinkingLevels: ["off", "high"],
+          },
+        ],
+      },
+    });
+
+    const section = await findModelsSection();
+
+    await waitFor(() => {
+      expect(section.querySelector("time")).toHaveAttribute("datetime", refreshedAt);
+    });
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", {
+      force: false,
+    });
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Refresh models" })).toBeEnabled();
+    expect(within(section).getByText(/Last refreshed/)).toBeInTheDocument();
+    expect(within(section).getByText("/agent/models.json")).toBeInTheDocument();
+
+    await user.click(within(section).getByRole("button", { name: "Refresh models" }));
+
+    expect(
+      await within(section).findByRole("checkbox", { name: "Grok 4.7" }),
+    ).toBeInTheDocument();
+    expect(within(section).getByRole("checkbox", { name: "Grok 4" })).toBeInTheDocument();
+    expect(within(section).getByRole("alert")).toHaveTextContent("Grok (xAI)");
+    expect(within(section).getByRole("alert")).toHaveTextContent("catalog unavailable");
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", {
+      force: true,
+    });
+  });
+
+  it("does not refresh the catalog until the Models section is open", async () => {
+    const user = userEvent.setup();
+    const { countCalls } = renderSettings("/usage?settings=providers");
+
+    await screen.findByRole("region", { name: "Providers" });
+    expect(countCalls("refresh_model_catalog")).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+
+    await waitFor(() => {
+      expect(countCalls("refresh_model_catalog")).toBe(1);
+    });
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", {
+      force: false,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    await user.click(screen.getByRole("button", { name: "Models" }));
+
+    await waitFor(() => {
+      expect(countCalls("refresh_model_catalog")).toBe(2);
+    });
+  });
+
+  it("reuses the in-flight refresh when Models is left and reopened", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<ModelCatalogRefreshResult>();
+    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => pending.promise,
+    });
+    const section = await findModelsSection();
+    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
+
+    await waitFor(() => expect(refreshButton()).toBeDisabled());
+    expect(countCalls("refresh_model_catalog")).toBe(1);
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
+
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    await user.click(screen.getByRole("button", { name: "Models" }));
+
+    expect(countCalls("refresh_model_catalog")).toBe(1);
+    expect(refreshButton()).toBeDisabled();
+
+    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await waitFor(() => expect(refreshButton()).toBeEnabled());
+  });
+
+  it("keeps Refresh models disabled when a later refresh settles before an earlier one", async () => {
+    const first = deferred<ModelCatalogRefreshResult>();
+    const second = deferred<ModelCatalogRefreshResult>();
+    renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => first.promise,
+    });
+    const section = await findModelsSection();
+    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
+    await waitFor(() => expect(refreshButton()).toBeDisabled());
+
+    act(() => {
+      startCatalogRefresh(true, () => second.promise);
+    });
+    expect(refreshButton()).toBeDisabled();
+
+    await act(async () => {
+      second.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+      await second.promise;
+    });
+    expect(refreshButton()).toBeDisabled();
+
+    first.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await waitFor(() => expect(refreshButton()).toBeEnabled());
+  });
+
+  it("fires one auto-refresh when Models mounts under StrictMode", async () => {
+    const pending = deferred<ModelCatalogRefreshResult>();
+    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => pending.promise,
+      strict: true,
+    });
+
+    await findModelsSection();
+    await waitFor(() => expect(countCalls("refresh_model_catalog")).toBe(1));
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
+
+    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await act(async () => {
+      await pending.promise;
+    });
+  });
+
+  it("disables Refresh models when catalog refresh is offline", async () => {
+    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefresh: { offline: true },
+    });
+    const section = await findModelsSection();
+
+    await waitFor(() => {
+      expect(within(section).getByText(/PI_OFFLINE/)).toBeInTheDocument();
+    });
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", {
+      force: false,
+    });
+    expect(within(section).getByRole("button", { name: "Refresh models" })).toBeDisabled();
+    expect(countCalls("refresh_model_catalog")).toBe(1);
   });
 
   it("opens directly to Models and switches sections without losing an API key draft", async () => {
@@ -599,11 +817,13 @@ describe("Settings — provider connection test", () => {
   it("shows the probe failure reason on the card", async () => {
     const user = userEvent.setup();
     renderSettings("/usage?settings=providers", disabledUpdateStatus, {
-      ok: false,
-      kind: "entitlement",
-      message: "Not covered by your subscription plan",
-      detail: "403 status code (no body)",
-      modelId: "claude-sonnet-4",
+      connectionTestResult: {
+        ok: false,
+        kind: "entitlement",
+        message: "Not covered by your subscription plan",
+        detail: "403 status code (no body)",
+        modelId: "claude-sonnet-4",
+      },
     });
 
     const anthropic = await screen.findByTestId("provider-subscription-anthropic");
@@ -638,12 +858,10 @@ describe("Settings — provider connection test", () => {
     const pending = new Promise<ProviderConnectionTestResult>((resolve) => {
       resolveProbe = resolve;
     });
-    renderSettings(
-      "/usage?settings=providers",
-      disabledUpdateStatus,
-      { ok: true, modelId: "claude-sonnet-4", latencyMs: 42 },
-      () => pending,
-    );
+    renderSettings("/usage?settings=providers", disabledUpdateStatus, {
+      connectionTestResult: { ok: true, modelId: "claude-sonnet-4", latencyMs: 42 },
+      probe: () => pending,
+    });
     await user.click(await screen.findByRole("button", { name: "API Key" }));
     const card = await screen.findByTestId("provider-api-key-anthropic");
 

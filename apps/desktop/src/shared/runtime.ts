@@ -327,6 +327,13 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
         branch: null,
         branches: [],
       } as T);
+    case "refresh_model_catalog":
+      // Browser dev has no Pi model store to fetch. Report a completed refresh
+      // so Settings → Models can render the button and timestamp.
+      return Promise.resolve({
+        refreshedAt: new Date().toISOString(),
+        errors: {},
+      } as T);
     case "list_available_model_controls":
       return Promise.resolve({
         models: [
