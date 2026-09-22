@@ -33,13 +33,55 @@
 - 尊重 `PI_OFFLINE`:设置了就禁用按钮并提示。
 - 不做定时轮询。Grok 4.7 能否出现取决于 Pi 上游远程目录是否收录,Pace 不兜底。兜底入口是 `~/.pi/agent/models.json`,在 Models 页底部给一句提示和路径。
 
+### S4 按账号过滤模型列表(订阅与 API 分通道)
+
+2026-09-23 追加。起因:ChatGPT 订阅已停用 `gpt-5.3-codex-spark`,Pace 仍列出它;订阅新上的 `gpt-6-sol` / `gpt-6-luna` 却看不到。S3 救不了:pi.dev 目录(`openai-codex` 与 `openai` 两份)线上仍含 Spark,且 `remote-catalog-provider.js:7-17` 的合并只增不删,内置 JSON 里的模型只能靠升级 SDK 移除。
+
+**已验证(2026-09-23,真实账号):**
+
+- `GET https://chatgpt.com/backend-api/codex/models?client_version=<ver>`,头 `Authorization: Bearer <access>` + `chatgpt-account-id: <accountId>`(均在 Pi 的 `auth.json` → `openai-codex`)。返回 200 + etag,`models[]` 每项含 `slug`、`display_name`、`context_window`、`visibility`(`list` / `hide`)等。
+- 返回:gpt-6-astra、gpt-6-sol、gpt-6-luna、gpt-5.6-sol/terra/luna、gpt-5.5(`list`),gpt-reserve、codex-auto-review(`hide`)。与 Codex CLI 本地 `~/.codex/models_cache.json` 一致。
+- `client_version=0.1.0` 返回空列表:版本号过低会拿到空集。决定:Pace 写死一个较新的版本号,随 Pace 发版更新,不依赖用户本机是否装了 Codex CLI。
+
+**规则:**
+
+```
+通道内:可用模型 = Pi 目录 ∩ 该账号在该通道实时查到的列表
+通道间:选择器列表 = 各通道结果的并集
+```
+
+- 通道 = Pi provider。订阅(`openai-codex`)和 API(`openai`)是两个 provider,各自过滤,**通道之间不取交集**,否则单通道独有的模型会被误删。
+- 同一模型两条通道都可用时显示两条,因计费方式不同,由用户选。身份仍为 `provider + modelId`,与 Pi TUI(`model-selector.js:255-272`,`gpt-5.6-sol [openai-codex]`)和 Pace 现状(`model-selector-logic.ts:47`)一致。
+- 标签用人话:`openai-codex` → "ChatGPT 订阅",`openai` → "OpenAI API";只在出现同名模型时才显示来源标签。
+- 实时列表有、Pi 目录没有的模型(如 gpt-6-sol):用接口的 `display_name` / `context_window` 补一条条目照常显示,其余字段(api、baseUrl 等)沿用同 provider 已有模型,不等 Pi 更新目录。
+- `visibility: hide` 的不显示。
+
+**实现入口:**
+
+- 用 SDK 扩展钩子 `runtime.registerProvider(id, { refreshModels })`。`provider-composer.js:340-360`:`refreshModels(context)` 拿到 `context.credential`,返回的模型列表**整体替换**该 provider 的列表,且每次 `refresh()` 都会调用。过滤因此在 runtime 内部生效,Settings、composer、live session 看到同一份结果,不用在 `listAvailableModelControls` 另做一层过滤。
+- Pace 的三处 `ModelRuntime.create`(provider-auth、available-model-controls、session 进程)都要注册同一个钩子,放在一个共享模块里。
+- 刷新时机沿用 S2/S3 的通道:凭证变化、打开 Models 页、手动 Refresh。结果按 etag 缓存。
+- 失败回退:接口失败、超时、返回空列表或 `PI_OFFLINE` 时,不替换,保留 Pi 目录,并在 Models 页显示"未能按账号校验"。不能因为接口挂了就把列表清空。
+
+**分阶段:**
+
+1. 订阅(`openai-codex`):用上面已验证的接口。本切片只做这一步。
+2. API key 通道(`openai`、`anthropic` 等 `/v1/models`):同一机制,另开 issue。
+3. 其他没有列表接口的 provider(如 kimi-coding):保持 Pi 目录,依赖 S1 的 403 分类提示。
+
+**上游:** 给 Pi 提 issue,建议 `openai-codex` 内置 `refreshModels` 或 `fetchModels`(`createProvider` 已支持该钩子,`models.js:437,468`)。上游落地后删掉 Pace 这层。
+
+**风险:** 该接口不是公开 API,路径、参数或 `client_version` 门槛可能变化。回退规则保证最坏情况等于现状。
+
 ## 切片
 
 - S1 → #357(已合并,PR #361)
 - S2 → #358(已合并,PR #360)
 - S3 → #359(已合并,PR #362)
+- S4 → 待开 issue(先做订阅通道)
 
 ## 待定
+
 
 - 逐模型探测是否必要,等 S1 上线后用 Kimi 实测。
 - 探测结果是否要落盘供 About 页 "Copy diagnostics"(#350)使用。
