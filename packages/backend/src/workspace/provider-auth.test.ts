@@ -339,6 +339,53 @@ describe("test provider connection", () => {
     expect(modelId).toBe("claude-opus");
   });
 
+  it("moves past a model the account cannot use to the next available model", async () => {
+    const probed: string[] = [];
+    const service = await connectionRuntime(
+      async (model) => {
+        probed.push(model.id);
+        return model.id === "gpt-5.3-codex-spark"
+          ? ({
+              stopReason: "error",
+              errorMessage:
+                "Codex error: The 'gpt-5.3-codex-spark' model is not supported when using Codex with a ChatGPT account.",
+            } as ProbeReply)
+          : ({ stopReason: "length" } as ProbeReply);
+      },
+      {
+        models: [
+          probeModel("anthropic", "gpt-5.3-codex-spark"),
+          probeModel("anthropic", "gpt-5.5"),
+        ],
+      },
+    );
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: true,
+      modelId: "gpt-5.5",
+    });
+    expect(probed).toEqual(["gpt-5.3-codex-spark", "gpt-5.5"]);
+  });
+
+  it("stops at a provider-wide failure instead of trying other models", async () => {
+    const probed: string[] = [];
+    const service = await connectionRuntime(
+      async (model) => {
+        probed.push(model.id);
+        return { stopReason: "error", errorMessage: "401: Invalid API key" } as ProbeReply;
+      },
+      {
+        models: [probeModel("anthropic", "claude-sonnet-4"), probeModel("anthropic", "claude-haiku")],
+      },
+    );
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "auth",
+    });
+    expect(probed).toEqual(["claude-sonnet-4"]);
+  });
+
   it("reports auth and entitlement failures from the probe response", async () => {
     const responses = ["401: Invalid API key", "403 status code (no body)"];
     const service = await connectionRuntime(async () => {

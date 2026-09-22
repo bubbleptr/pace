@@ -31,6 +31,14 @@ describe("classifyProviderFailure", () => {
     expect(classifyProviderFailure("401: Invalid API key")).toBe("auth");
   });
 
+  it("classifies a rejected OAuth refresh token as auth even though the status is 400", () => {
+    expect(
+      classifyProviderFailure(
+        "OAuth refresh failed for xai: xAI OAuth token refresh failed (HTTP 400): invalid_grant: Invalid or unknown refresh token",
+      ),
+    ).toBe("auth");
+  });
+
   it("classifies 403 and plan, subscription, or entitlement wording as entitlement", () => {
     expect(
       classifyProviderFailure(Object.assign(new Error("forbidden"), { statusCode: 403 })),

@@ -23,6 +23,7 @@ type AuthInteraction = Parameters<RuntimeInstance["login"]>[2];
 type AuthPrompt = Parameters<AuthInteraction["prompt"]>[0];
 type AuthEvent = Parameters<AuthInteraction["notify"]>[0];
 type StoredCredential = ReturnType<typeof readStoredCredential>;
+type ProbeModel = Parameters<RuntimeInstance["completeSimple"]>[0];
 type RuntimeProvider = {
   id: string;
   name: string;
@@ -140,12 +141,16 @@ function pendPrompt(): Promise<string> {
 }
 
 const CONNECTION_TEST_TIMEOUT_MS = 15_000;
+const MAX_PROBE_MODELS = 3;
 
 function timeoutMessage(timeoutMs: number): string {
   return `Timed out after ${timeoutMs / 1000} seconds`;
 }
 
-function selectProbeModel(
+/** Probe order. An explicit model is the only candidate; otherwise a few
+ * snapshot models, because the first one listed can be a model this account
+ * cannot use (Codex lists gpt-5.3-codex-spark, which ChatGPT plans reject). */
+function probeCandidates(
   runtime: ProviderAuthRuntime,
   providerId: string,
   modelId?: string,
@@ -153,13 +158,56 @@ function selectProbeModel(
   const snapshot = runtime.getAvailableSnapshot();
   if (modelId) {
     const listed = snapshot.find((model) => model.provider === providerId && model.id === modelId);
-    if (listed) return listed;
+    if (listed) return [listed];
     const resolved = runtime.getModel(providerId, modelId);
-    if (resolved?.provider === providerId) return resolved;
-    return undefined;
+    return resolved?.provider === providerId ? [resolved] : [];
   }
 
-  return snapshot.find((model) => model.provider === providerId);
+  return snapshot.filter((model) => model.provider === providerId).slice(0, MAX_PROBE_MODELS);
+}
+
+async function probeModel(
+  runtime: ProviderAuthRuntime,
+  model: ProbeModel,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<ProviderConnectionTestResult> {
+  const started = Date.now();
+  try {
+    // This runtime is not a session. Leaving sessionId unset keeps the
+    // probe off provider session caches and out of Pace's session journal,
+    // which only records gateway events.
+    const response = await settleOrAbort(
+      runtime.completeSimple(
+        model,
+        { messages: [{ role: "user", content: "ping", timestamp: started }] },
+        { maxTokens: 1, signal, maxRetries: 0 },
+      ),
+      signal,
+    );
+
+    if (response.stopReason === "aborted" || signal.aborted) {
+      return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
+    }
+
+    if (response.stopReason === "error") {
+      const failure = describeProviderFailure(response.errorMessage ?? "Connection test failed");
+      return failureResult(failure.kind, failure.message, failure.detail, model.id);
+    }
+
+    return {
+      ok: true,
+      modelId: model.id,
+      latencyMs: Math.max(0, Date.now() - started),
+    };
+  } catch (error) {
+    if (signal.aborted) {
+      return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
+    }
+
+    const failure = describeProviderFailure(error);
+    return failureResult(failure.kind, failure.message, failure.detail, model.id);
+  }
 }
 
 function failureResult(
@@ -330,8 +378,8 @@ export function createProviderAuthService(
       // Local snapshot only. The probe below is the network request.
       await runtime.refresh({ allowNetwork: false }).catch(() => {});
 
-      const model = selectProbeModel(runtime, providerId, modelId);
-      if (!model) {
+      const candidates = probeCandidates(runtime, providerId, modelId);
+      if (candidates.length === 0) {
         return failureResult(
           "unknown",
           modelId
@@ -347,42 +395,18 @@ export function createProviderAuthService(
       const timer = setTimeout(() => {
         controller.abort(new DOMException(timeoutMessage(timeoutMs), "TimeoutError"));
       }, timeoutMs);
-      const started = Date.now();
 
       try {
-        // This runtime is not a session. Leaving sessionId unset keeps the
-        // probe off provider session caches and out of Pace's session journal,
-        // which only records gateway events.
-        const response = await settleOrAbort(
-          runtime.completeSimple(
-            model,
-            { messages: [{ role: "user", content: "ping", timestamp: started }] },
-            { maxTokens: 1, signal: controller.signal, maxRetries: 0 },
-          ),
-          controller.signal,
-        );
-
-        if (response.stopReason === "aborted" || controller.signal.aborted) {
-          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
+        let result: ProviderConnectionTestResult | undefined;
+        for (const model of candidates) {
+          result = await probeModel(runtime, model, controller.signal, timeoutMs);
+          // Auth, plan and network failures hold for every model of the
+          // provider; only an unclassified failure may be model-specific.
+          if (result.ok || result.kind !== "unknown" || controller.signal.aborted) {
+            return result;
+          }
         }
-
-        if (response.stopReason === "error") {
-          const failure = describeProviderFailure(response.errorMessage ?? "Connection test failed");
-          return failureResult(failure.kind, failure.message, failure.detail, model.id);
-        }
-
-        return {
-          ok: true,
-          modelId: model.id,
-          latencyMs: Math.max(0, Date.now() - started),
-        };
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
-        }
-
-        const failure = describeProviderFailure(error);
-        return failureResult(failure.kind, failure.message, failure.detail, model.id);
+        return result!;
       } finally {
         clearTimeout(timer);
       }
