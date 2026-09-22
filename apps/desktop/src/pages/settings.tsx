@@ -693,6 +693,9 @@ function ModelVisibilitySection({
 
       {groupModelsByProvider(models).map((group) => {
         const label = providerLabels[group.provider] ?? group.provider;
+        const checkedIds = group.models
+          .filter((model) => isModelVisible(model, visibleModels))
+          .map((model) => model.modelId);
 
         return (
           <Card
@@ -709,21 +712,40 @@ function ModelVisibilitySection({
                 isLabelHidden
                 label={`${label} models`}
                 width="100%"
-                value={group.models
-                  .filter((model) => isModelVisible(model, visibleModels))
-                  .map((model) => model.modelId)}
-                onChange={(modelIds) =>
-                  replaceProviderSelection(group.provider, modelIds)
-                }
               >
+                <CheckboxListItem
+                  label="Select all"
+                  isChecked={
+                    checkedIds.length === group.models.length
+                      ? true
+                      : checkedIds.length === 0
+                        ? false
+                        : "indeterminate"
+                  }
+                  style={{ backgroundColor: "transparent" }}
+                  onCheck={(checked) =>
+                    replaceProviderSelection(
+                      group.provider,
+                      checked ? group.models.map((model) => model.modelId) : [],
+                    )
+                  }
+                />
                 {group.models.map((model) => (
                   <CheckboxListItem
                     description={model.modelId}
+                    isChecked={checkedIds.includes(model.modelId)}
                     key={model.modelId}
                     label={model.name}
                     // The checkbox conveys visibility; a row fill implies navigation selection.
                     style={{ backgroundColor: "transparent" }}
-                    value={model.modelId}
+                    onCheck={(checked) =>
+                      replaceProviderSelection(
+                        group.provider,
+                        checked
+                          ? [...checkedIds, model.modelId]
+                          : checkedIds.filter((modelId) => modelId !== model.modelId),
+                      )
+                    }
                   />
                 ))}
               </CheckboxList>

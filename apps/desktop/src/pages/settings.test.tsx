@@ -347,6 +347,48 @@ describe("Settings — visible models", () => {
     });
   });
 
+  it("clears and restores every model of one provider from its Select all row", async () => {
+    const user = userEvent.setup();
+
+    renderSettings();
+
+    const section = await findModelsSection();
+    const group = within(section).getByRole("group", { name: "Grok (xAI) models" });
+    const selectAll = () => within(group).getByRole("checkbox", { name: "Select all" });
+
+    expect(selectAll()).toBeChecked();
+
+    await user.click(selectAll());
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([
+        { provider: "anthropic", modelId: "claude-sonnet-4" },
+        { provider: "moonshot", modelId: "kimi-k3" },
+      ]);
+    });
+    expect(within(group).getByRole("checkbox", { name: "Grok 4" })).not.toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Grok 4 Fast" })).not.toBeChecked();
+    expect(selectAll()).not.toBeChecked();
+
+    // A partial selection shows as indeterminate, never as "all checked".
+    await user.click(within(group).getByRole("checkbox", { name: "Grok 4" }));
+    await waitFor(() => {
+      expect(selectAll()).toBePartiallyChecked();
+    });
+
+    await user.click(selectAll());
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([
+        { provider: "anthropic", modelId: "claude-sonnet-4" },
+        { provider: "moonshot", modelId: "kimi-k3" },
+        { provider: "xai", modelId: "grok-4" },
+        { provider: "xai", modelId: "grok-4-fast" },
+      ]);
+    });
+    expect(selectAll()).toBeChecked();
+  });
+
   it("refetches the model catalog after provider credentials change", async () => {
     const user = userEvent.setup();
     const { countCalls } = renderSettings();
