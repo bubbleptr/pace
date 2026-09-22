@@ -402,6 +402,7 @@ describe("backend service", () => {
     vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
       refresh,
       getAvailableSnapshot: () => [],
+      getProvider: () => undefined,
     }) as unknown as ModelRuntime);
 
     await expect(
@@ -438,6 +439,7 @@ describe("backend service", () => {
         errors: new Map([["xai", new Error("catalog unavailable")]]),
       })),
       getAvailableSnapshot: () => [],
+      getProvider: () => undefined,
     }) as unknown as ModelRuntime);
 
     await expect(

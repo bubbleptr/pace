@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { createPaceModelRuntime } from "./account-models";
 import {
   PROVIDER_DISPLAY_OVERRIDES,
   describeProviderFailure,
@@ -58,6 +59,7 @@ export type ProviderAuthService = {
 
 export type ProviderAuthServiceOptions = {
   agentDir: string;
+  dataDir: string;
   openExternalUrl?: (url: string) => void | Promise<void>;
   /** Override runtime creation for tests. */
   createRuntime?: () => Promise<ProviderAuthRuntime>;
@@ -255,16 +257,10 @@ export function createProviderAuthService(
   options: ProviderAuthServiceOptions,
 ): ProviderAuthService {
   const authPath = join(options.agentDir, "auth.json");
-  const modelsPath = join(options.agentDir, "models.json");
   const openExternal = options.openExternalUrl ?? openUrlDefault;
   const createRuntime =
     options.createRuntime ??
-    (() =>
-      ModelRuntime.create({
-        authPath,
-        modelsPath,
-        allowModelNetwork: false,
-      }));
+    (() => createPaceModelRuntime({ agentDir: options.agentDir, dataDir: options.dataDir }));
 
   let runtimePromise: Promise<ProviderAuthRuntime> | null = null;
   const getRuntime = () => (runtimePromise ??= createRuntime());

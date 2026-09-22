@@ -12,6 +12,7 @@ const service = createBackendService({
     entryPath: join(__dirname, "session-worker.js"),
     agentDir: resolveAgentDir(),
   }),
+  refreshAccountModelsOnStart: true,
 });
 
 parentPort.on("message", async (event) => {

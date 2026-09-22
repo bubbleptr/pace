@@ -15,7 +15,7 @@ async function tempAgentDir() {
 describe("listAvailableModelControls", () => {
   it("returns empty models when no auth is configured", async () => {
     const agentDir = await tempAgentDir();
-    const controls = await listAvailableModelControls({ agentDir });
+    const controls = await listAvailableModelControls({ agentDir, dataDir: agentDir });
 
     expect(controls.models).toEqual([]);
     expect(controls.selected).toBeNull();
@@ -29,7 +29,7 @@ describe("listAvailableModelControls", () => {
       "utf8",
     );
 
-    const controls = await listAvailableModelControls({ agentDir });
+    const controls = await listAvailableModelControls({ agentDir, dataDir: agentDir });
 
     expect(controls.models.length).toBeGreaterThan(0);
     expect(controls.models.every((model) => model.provider && model.modelId)).toBe(true);
@@ -53,7 +53,7 @@ describe("listAvailableModelControls", () => {
       "utf8",
     );
 
-    const controls = await listAvailableModelControls({ agentDir });
+    const controls = await listAvailableModelControls({ agentDir, dataDir: agentDir });
 
     expect(controls.models.some((model) => model.provider === "openai-codex")).toBe(
       true,
@@ -69,7 +69,7 @@ describe("listAvailableModelControls", () => {
       "utf8",
     );
 
-    const controls = await listAvailableModelControls({ agentDir });
+    const controls = await listAvailableModelControls({ agentDir, dataDir: agentDir });
 
     // Every catalog model ships these fields; the mapping must not drop them.
     expect(
@@ -126,12 +126,13 @@ describe("refresh_model_catalog", () => {
     const create = vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
       refresh,
       getAvailableSnapshot: () => snapshot,
+      getProvider: () => undefined,
     }) as unknown as ModelRuntime);
 
-    const before = await listAvailableModelControls({ agentDir });
+    const before = await listAvailableModelControls({ agentDir, dataDir: agentDir });
     expect(before.models.map((model) => model.modelId)).toEqual(["gpt-4.1"]);
 
-    const result = await refreshAvailableModelCatalog({ agentDir, force: true });
+    const result = await refreshAvailableModelCatalog({ agentDir, dataDir: agentDir, force: true });
 
     expect(result).toEqual({
       refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
@@ -143,7 +144,7 @@ describe("refresh_model_catalog", () => {
       allowModelNetwork: false,
     });
     expect(refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true });
-    const after = await listAvailableModelControls({ agentDir });
+    const after = await listAvailableModelControls({ agentDir, dataDir: agentDir });
     expect(after.models.map((model) => model.modelId)).toEqual([
       "gpt-4.1",
       "grok-4.7",
@@ -166,16 +167,17 @@ describe("refresh_model_catalog", () => {
     vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
       refresh,
       getAvailableSnapshot: () => snapshot,
+      getProvider: () => undefined,
     }) as unknown as ModelRuntime);
 
-    const result = await refreshAvailableModelCatalog({ agentDir });
+    const result = await refreshAvailableModelCatalog({ agentDir, dataDir: agentDir });
 
     expect(result).toEqual({
       refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       errors: { xai: "catalog unavailable" },
     });
     expect(refresh).toHaveBeenCalledWith({ allowNetwork: true, force: false });
-    const after = await listAvailableModelControls({ agentDir });
+    const after = await listAvailableModelControls({ agentDir, dataDir: agentDir });
     expect(after.models.map((model) => model.modelId)).toEqual([
       "claude-sonnet",
       "gpt-4.1",
@@ -187,7 +189,7 @@ describe("refresh_model_catalog", () => {
     process.env.PI_OFFLINE = "1";
     const create = vi.spyOn(ModelRuntime, "create");
 
-    await expect(refreshAvailableModelCatalog({ agentDir, force: true })).resolves.toEqual({
+    await expect(refreshAvailableModelCatalog({ agentDir, dataDir: agentDir, force: true })).resolves.toEqual({
       offline: true,
     });
     expect(create).not.toHaveBeenCalled();

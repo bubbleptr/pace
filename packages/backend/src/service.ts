@@ -35,6 +35,7 @@ import {
   refreshAvailableModelCatalog,
 } from "./workspace/available-model-controls";
 import { createNodeExecutionCheckoutGitClient } from "./workspace/execution-checkout";
+import { accountModelProviderIds, createPaceModelRuntime } from "./workspace/account-models";
 import {
   createNodeProjectGitReader,
   createNodeSessionChangesReader,
@@ -125,6 +126,8 @@ export type BackendServiceOptions = {
   environmentPreflight?: EnvironmentPreflightReader;
   providerAuth?: ProviderAuthService;
   terminalManager?: TerminalManager;
+  /** Fetch the signed-in accounts' model lists once at startup (the app sets this; tests do not). */
+  refreshAccountModelsOnStart?: boolean;
 };
 
 export function createBackendService(options: BackendServiceOptions = {}): BackendService {
@@ -205,6 +208,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     options.providerAuth ??
     createProviderAuthService({
       agentDir,
+      dataDir,
     });
   const piSessionListAll =
     options.piSessionListAll ??
@@ -229,7 +233,8 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
         cwd: input.cwd, agentDir, settingsManager,
       });
       await resourceLoader.reload();
-      return { agentDir, settingsManager, resourceLoader };
+      const modelRuntime = await createPaceModelRuntime({ agentDir, dataDir });
+      return { agentDir, settingsManager, resourceLoader, modelRuntime };
     },
   };
   const runtimeDriver = options.runtimeDriver ?? createPiSdkDriver({
@@ -244,6 +249,11 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     dataDir,
   });
   const terminalManager = options.terminalManager ?? createTerminalManager();
+  if (options.refreshAccountModelsOnStart) {
+    // Background: startup must not wait on chatgpt.com. Freshness is cached,
+    // so frequent restarts do not refetch.
+    void refreshAccountModels({ agentDir, dataDir, runtimeDriver });
+  }
 
   runtimeGateway.onEvent((event) => {
     const { payload } = event.event;
@@ -364,6 +374,28 @@ async function refreshLiveSessionModelCatalogs(driver: PiRuntimeDriver) {
     console.error("Pace could not refresh live session model catalogs.", error);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+async function refreshAccountModels(input: {
+  agentDir: string;
+  dataDir: string;
+  runtimeDriver: PiRuntimeDriver;
+}) {
+  try {
+    const result = await refreshAvailableModelCatalog({
+      agentDir: input.agentDir,
+      dataDir: input.dataDir,
+      providers: accountModelProviderIds,
+    });
+    if ("offline" in result) return;
+    for (const [providerId, message] of Object.entries(result.errors)) {
+      console.error(`Pace could not refresh the ${providerId} account model list: ${message}`);
+    }
+    await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+  } catch (error) {
+    // The Pi catalog stays usable; the next refresh tries again.
+    console.error("Pace could not refresh account model lists.", error);
   }
 }
 
@@ -519,10 +551,15 @@ async function dispatchRequest(input: {
       return report;
     }
     case "login_provider_oauth": {
-      const report = await input.providerAuth.loginOAuth(
-        requiredString(params.providerId, "providerId") as ProviderAuthId,
-      );
-      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      const providerId = requiredString(params.providerId, "providerId") as ProviderAuthId;
+      const report = await input.providerAuth.loginOAuth(providerId);
+      if (accountModelProviderIds.includes(providerId)) {
+        // A new account has no cached model list yet; fetch it before Settings
+        // re-reads the catalog so a retired model never flashes into view.
+        await refreshAccountModels(input);
+      } else {
+        await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      }
       return report;
     }
     case "logout_provider_auth": {
@@ -538,13 +575,14 @@ async function dispatchRequest(input: {
         optionalString(params.modelId),
       );
     case "list_available_model_controls":
-      return listAvailableModelControls({ agentDir: input.agentDir });
+      return listAvailableModelControls({ agentDir: input.agentDir, dataDir: input.dataDir });
     case "refresh_model_catalog": {
       if (params.force !== undefined && typeof params.force !== "boolean") {
         throw new Error("force must be a boolean");
       }
       const result = await refreshAvailableModelCatalog({
         agentDir: input.agentDir,
+        dataDir: input.dataDir,
         force: params.force === true,
       });
       // Offline skipped the network, so live sessions already have this catalog.
