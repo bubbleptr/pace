@@ -323,6 +323,66 @@ describe("backend service", () => {
     errorSpy.mockRestore();
   });
 
+  it("returns the credential report when one live catalog refresh never settles", async () => {
+    const report = {
+      agentDir: "/tmp/agent",
+      authPath: "/tmp/agent/auth.json",
+      providers: [],
+      configuredCount: 1,
+    };
+    let healthyFinished = false;
+    const refreshModelCatalog = vi.fn(() => {
+      const healthy = Promise.resolve().then(() => {
+        healthyFinished = true;
+      });
+      const hung = new Promise<void>(() => {});
+      return Promise.all([healthy, hung]).then(() => undefined);
+    });
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      providerAuth: {
+        listStatus: vi.fn(async () => report),
+        setApiKey: vi.fn(async () => report),
+        remove: vi.fn(async () => report),
+        loginOAuth: vi.fn(async () => report),
+        logout: vi.fn(async () => report),
+      },
+      runtimeDriver: {
+        refreshModelCatalog,
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const pending = service.handleRequest({
+        id: "set-key",
+        method: "set_provider_api_key",
+        params: { providerId: "openai", apiKey: "sk-test" },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(healthyFinished).toBe(true);
+      await vi.advanceTimersByTimeAsync(4_999);
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual({ id: "set-key", result: report });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Pace could not refresh live session model catalogs.",
+        expect.objectContaining({ message: expect.stringContaining("timed out") }),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("routes tool schema resolution through the Runtime Gateway", async () => {
     const bashSchema = {
       description: "Execute a shell command",

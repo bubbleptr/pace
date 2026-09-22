@@ -30,6 +30,7 @@ import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
 import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import {
   getVisibleModels,
   saveVisibleModels,
@@ -46,7 +47,6 @@ import type {
   RuntimeModelControls,
 } from "@pace/core";
 
-export const providerAuthStatusQueryKey = ["provider-auth-status"] as const;
 const availableModelControlsQueryKey = ["available-model-controls"] as const;
 
 type AuthTab = "subscription" | "api_key";

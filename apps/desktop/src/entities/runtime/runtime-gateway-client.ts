@@ -31,6 +31,7 @@ import {
   type SessionReplayEntry,
 } from "@/entities/runtime/pi-runtime-bridge";
 import type { AgentRuntimeEvent } from "@pace/core";
+import { modelControlsFromUnknown } from "@/entities/model/model-catalog-cache";
 import { invoke as invokeRuntime, onBackendEvent as onRuntimeBackendEvent } from "@/shared/runtime";
 
 type InvokeGatewayMethod = <T>(
@@ -348,6 +349,16 @@ function createAgentEventCompatMapper(): AgentEventCompatMapper {
   };
 }
 
+function cloneModelControls(controls: RuntimeModelControls): RuntimeModelControls {
+  return {
+    models: controls.models.map((model) => ({
+      ...model,
+      thinkingLevels: [...model.thinkingLevels],
+    })),
+    selected: controls.selected ? { ...controls.selected } : null,
+  };
+}
+
 function mapEnvelopeToRuntimeEvent(
   envelope: RuntimeGatewayEventEnvelope,
   compat: AgentEventCompatMapper,
@@ -655,6 +666,9 @@ export function createRuntimeGatewayClient(
 
       // Catalog refreshes update the composer projection. They are not turns.
       if (event.event.payload.type === "model_catalog_changed") {
+        const controls = modelControlsFromUnknown(event.event.payload.modelControls);
+        const state = states.get(event.event.piSessionId);
+        if (state && controls) state.modelControls = cloneModelControls(controls);
         return;
       }
 
@@ -735,8 +749,18 @@ export function createRuntimeGatewayClient(
       // screen. Replay the union, including live deltas, in Gateway order.
       const events = new Map(snapshot.events.map(event => [event.seq, event]));
       for (const event of buffered) events.set(event.seq, event);
+      const ordered = [...events.values()].sort((a, b) => a.seq - b.seq);
+      // The snapshot was taken before these pushes. Apply them in order so a
+      // history resync does not put the stale catalog back on the composer.
+      let modelControls = snapshot.modelControls;
+      for (const event of ordered) {
+        if (event.payload.type !== "model_catalog_changed") continue;
+        const next = modelControlsFromUnknown(event.payload.modelControls);
+        if (next) modelControls = cloneModelControls(next);
+      }
       const state = stateFromSnapshot({ ...snapshot,
-        events: [...events.values()].sort((a, b) => a.seq - b.seq),
+        ...(modelControls ? { modelControls } : {}),
+        events: ordered,
         executionState: buffered.some(({ payload }) =>
           (payload.type === "run" && payload.phase === "start") || payload.kind === "message" || payload.kind === "control")
           ? "ready" : snapshot.executionState,

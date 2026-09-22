@@ -339,14 +339,28 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   };
 }
 
+const liveCatalogRefreshTimeoutMs = 5_000;
+
 async function refreshLiveSessionModelCatalogs(driver: PiRuntimeDriver) {
   if (!driver.refreshModelCatalog) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await driver.refreshModelCatalog();
+    // One unresponsive session process must not hold the Settings request.
+    // Healthy roots still finish; this only stops waiting.
+    await Promise.race([
+      driver.refreshModelCatalog(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("Live session model catalog refresh timed out."));
+        }, liveCatalogRefreshTimeoutMs);
+      }),
+    ]);
   } catch (error) {
     // The credential write already succeeded. A live session that cannot
     // re-read auth.json must not fail the Settings request.
     console.error("Pace could not refresh live session model catalogs.", error);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

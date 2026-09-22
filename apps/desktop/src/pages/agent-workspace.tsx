@@ -822,27 +822,28 @@ function FullChatComposer({
         }
       : projection?.modelControls;
 
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  const catalogRequest = useRef(0);
+  useEffect(() => subscribeModelCatalogInvalidation(() => {
+    setCatalogVersion((version) => version + 1);
+  }), []);
+  // One fetch for the initial read and every credential change. A live
+  // Session catalog arrives on its own event, so don't fetch over it.
+  // Only the latest request may write: an older auth.json read can finish last.
   useEffect(() => {
-    if (!needsModelCatalog) return;
-    let cancelled = false;
+    if (projection?.modelControls?.models.length) return;
+    if (!needsModelCatalog && catalogVersion === 0) return;
+    const request = ++catalogRequest.current;
+    let active = true;
     void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
+      if (!active || request !== catalogRequest.current) return;
       rememberModelCatalog(controls.models);
-      if (!cancelled) setAvailableModels(controls.models);
+      setAvailableModels(controls.models);
     }).catch(() => {
       // An unavailable catalog must not prevent reading history or sending a prompt.
     });
-    return () => { cancelled = true; };
-  }, [needsModelCatalog, sessionId]);
-  // Credential changes clear the shared cache. A composer still showing
-  // that cache (no Session catalog yet) has to read auth.json again.
-  // A live Session catalog arrives on its own event, so don't fetch over it.
-  useEffect(() => subscribeModelCatalogInvalidation(() => {
-    if (projection?.modelControls?.models.length) return;
-    void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
-      rememberModelCatalog(controls.models);
-      setAvailableModels(controls.models);
-    }).catch(() => {});
-  }), [projection?.modelControls?.models.length]);
+    return () => { active = false; };
+  }, [catalogVersion, needsModelCatalog, projection?.modelControls?.models.length, sessionId]);
   const [draft, setDraft] = useState(() =>
     sessionId ? getFollowUpDraft(sessionId)?.message ?? "" : "",
   );
@@ -2355,17 +2356,15 @@ function SessionDraftComposer({
 
     void invoke<RuntimeModelControls>("list_available_model_controls")
       .then((controls) => {
+        if (cancelled) return;
         // Shared with the Live composer so the handoff keeps the same chip.
         rememberModelCatalog(controls.models);
-
-        if (!cancelled) {
-          setDraftModelControls(
-            overlayPreferredModel(controls, [
-              getLastModelSelection(),
-              recentSessionModel,
-            ]),
-          );
-        }
+        setDraftModelControls(
+          overlayPreferredModel(controls, [
+            getLastModelSelection(),
+            recentSessionModel,
+          ]),
+        );
       })
       .catch(() => {
         if (!cancelled) {

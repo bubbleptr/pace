@@ -1,45 +1,24 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ProviderAuthStatusReport } from "@pace/core";
 import { invoke } from "@/shared/runtime";
 
+/** Shared with Settings so a credential write refreshes every mounted reader. */
+export const providerAuthStatusQueryKey = ["provider-auth-status"] as const;
+
 /**
- * Load provider credential status once. Fail-open (treat as configured) when
- * the backend cannot answer so tests / offline shells stay usable.
+ * Provider credential status. Fail-open (treat as configured) when the
+ * backend cannot answer so tests / offline shells stay usable.
  */
 export function useProviderAuthStatus() {
-  const [report, setReport] = useState<ProviderAuthStatusReport | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void invoke<ProviderAuthStatusReport>("list_provider_auth_status")
-      .then((next) => {
-        if (!cancelled) {
-          setReport(next);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setReport({
-            agentDir: "",
-            authPath: "",
-            configuredCount: 1,
-            providers: [],
-          });
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const query = useQuery({
+    queryKey: providerAuthStatusQueryKey,
+    queryFn: () => invoke<ProviderAuthStatusReport>("list_provider_auth_status"),
+    retry: false,
+  });
 
   return {
-    report,
-    loading,
-    configured: (report?.configuredCount ?? 0) > 0,
+    report: query.data ?? null,
+    loading: query.isPending,
+    configured: query.isError || (query.data?.configuredCount ?? 0) > 0,
   };
 }

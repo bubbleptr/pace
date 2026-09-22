@@ -346,6 +346,38 @@ it("journals recoverable extension errors without failing the active session", a
   expect(await projections.get("extension-session")).toMatchObject({ status: "idle" });
 });
 
+it("delivers a model catalog refresh without writing it into the session journal", async () => {
+  const driver = createFakeRuntimeDriver();
+  const journal = createInMemorySessionEventJournal();
+  const gateway = createRuntimeGatewayService({
+    driver,
+    journal,
+    projections: createInMemorySessionProjectionStore(),
+  });
+  const seen: string[] = [];
+  gateway.onEvent((event) => {
+    if (event.event.payload.type === "model_catalog_changed") seen.push(event.event.piSessionId);
+  });
+  await gateway.handleRequest({
+    id: "create",
+    method: "create_session",
+    params: { sessionId: "catalog-session", projectId: "p", cwd: "/project" },
+  });
+  driver.emitDriverEvent({
+    piSessionId: "pi-session-1",
+    type: "model_catalog_changed",
+    payload: {
+      type: "model_catalog_changed",
+      modelControls: {
+        models: [{ provider: "openai", modelId: "gpt-4.1", name: "GPT-4.1", thinkingLevels: ["off"] }],
+        selected: null,
+      },
+    },
+  });
+  expect(seen).toEqual(["pi-session-1"]);
+  expect(await journal.read("pi-session-1")).toEqual([]);
+});
+
 it.each(["create_session", "resume_session", "fork_session"] as const)("includes startup errors in the first %s response after existing history", async (method) => {
   const driver = createFakeRuntimeDriver();
   const journal = createInMemorySessionEventJournal();

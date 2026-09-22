@@ -56,15 +56,19 @@ import { createSessionRuntimeModel } from "@/entities/session/session-runtime-mo
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
-import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { invalidateCachedModelCatalog, readCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
 import * as sessionsApi from "@/entities/session/sessions";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 
 function render(ui: Parameters<typeof renderWithoutQuery>[0]) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderWithoutQuery(ui, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = renderWithoutQuery(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+  });
+  return Object.assign(result, { queryClient });
 }
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
@@ -5375,6 +5379,100 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
   });
 
+  it("loads draft models when the first credential arrives and clears them when the last one leaves", async () => {
+    let configuredCount = 0;
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_session_projections") return [];
+      if (command === "list_provider_auth_status") {
+        return { agentDir: "", authPath: "", configuredCount, providers: [] };
+      }
+      if (command === "list_available_model_controls") {
+        return {
+          models: [{
+            provider: "anthropic",
+            modelId: "claude-sonnet-4",
+            name: "Claude Sonnet 4",
+            thinkingLevels: ["off", "high"],
+          }],
+          selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
+        };
+      }
+      if (command === "get_config_inventory") {
+        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
+      }
+      throw new Error(`unexpected backend command ${command}`);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    saveSessionDraft(pigProjectPath, "");
+    const { queryClient } = renderProjectSessions("/projects/pig/sessions?view=draft");
+    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
+
+    configuredCount = 1;
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
+    });
+    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
+
+    configuredCount = 0;
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
+    });
+    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
+    expect(screen.queryByTestId("model-thinking-trigger")).not.toBeInTheDocument();
+  });
+
+  it("keeps the newer draft catalog when an older credential refresh resolves last", async () => {
+    const pending: Array<(controls: { models: Array<Record<string, unknown>>; selected: Record<string, unknown> }) => void> = [];
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_session_projections") return [];
+      if (command === "list_provider_auth_status") {
+        return { agentDir: "", authPath: "", configuredCount: 1, providers: [] };
+      }
+      if (command === "list_available_model_controls") {
+        return new Promise((resolve) => {
+          pending.push(resolve);
+        });
+      }
+      if (command === "get_config_inventory") {
+        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
+      }
+      throw new Error(`unexpected backend command ${command}`);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    saveSessionDraft(pigProjectPath, "");
+    renderProjectSessions("/projects/pig/sessions?view=draft");
+    await waitFor(() => expect(pending).toHaveLength(1));
+    act(() => { invalidateCachedModelCatalog(); });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    const catalog = (modelId: string, name: string) => ({
+      models: [{ provider: "openai", modelId, name, thinkingLevels: ["off"] }],
+      selected: { provider: "openai", modelId, thinkingLevel: "off" },
+    });
+    await act(async () => {
+      pending[1]?.(catalog("fresh", "Fresh Model"));
+    });
+    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Fresh Model");
+    await act(async () => {
+      pending[0]?.(catalog("stale", "Stale Model"));
+    });
+    expect(screen.getByTestId("model-thinking-trigger")).toHaveTextContent("Fresh Model");
+    expect(readCachedModelCatalog().map((model) => model.modelId)).toEqual(["fresh"]);
+  });
+
   it("lists only visible models and opens Models settings over the workspace", async () => {
     const user = userEvent.setup();
     const invoke = vi.fn(async (command: string) => {
@@ -7806,6 +7904,69 @@ describe("AgentWorkspaceSessionsPage", () => {
     const list = await screen.findByTestId("model-thinking-model-list");
     expect(within(list).getByText("Claude Sonnet 4")).toBeInTheDocument();
     expect(within(list).getByText("GPT-4.1")).toBeInTheDocument();
+  });
+
+  it("keeps the newer fallback catalog when an older fetch resolves last", async () => {
+    const pending: Array<(controls: { models: Array<Record<string, unknown>>; selected: null }) => void> = [];
+    window.pace = {
+      invoke: vi.fn(async (command: string) => {
+        if (command === "list_available_model_controls") {
+          return new Promise((resolve) => {
+            pending.push(resolve);
+          });
+        }
+        throw new Error(`unexpected invoke ${command}`);
+      }) as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    const user = userEvent.setup();
+    const projection = {
+      ...createSessionProjection({
+        id: "session-catalog-race",
+        projectId: "pig-docs",
+        initialPrompt: "Cold catalog",
+        createdAt: "2026-09-22T00:00:00.000Z",
+      }),
+      status: "completed" as const,
+      creationStage: "accepted" as const,
+      piSessionId: "pi-catalog-race",
+      modelControls: {
+        models: [],
+        selected: { provider: "openai", modelId: "shared", thinkingLevel: "off" as const },
+      },
+    };
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        runtimeBridge={createInMemoryPiRuntimeBridge()}
+        sessionProjection={projection}
+      />,
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+    act(() => { invalidateCachedModelCatalog(); });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    const models = (modelId: string, name: string) => ({
+      models: [
+        { provider: "openai", modelId: "shared", name: "Shared", thinkingLevels: ["off"] },
+        { provider: "openai", modelId, name, thinkingLevels: ["off"] },
+      ],
+      selected: null,
+    });
+    await act(async () => {
+      pending[1]?.(models("fresh", "Fresh Model"));
+    });
+    await user.click(screen.getByTestId("model-thinking-trigger"));
+    expect(await screen.findByText("Fresh Model")).toBeInTheDocument();
+    await act(async () => {
+      pending[0]?.(models("stale", "Stale Model"));
+    });
+    expect(screen.getByText("Fresh Model")).toBeInTheDocument();
+    expect(screen.queryByText("Stale Model")).not.toBeInTheDocument();
+    expect(readCachedModelCatalog().map((model) => model.modelId)).toEqual(["shared", "fresh"]);
   });
 
   it("uses one composer control for the model list and capability-driven Thinking slider", async () => {
