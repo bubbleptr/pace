@@ -18,6 +18,7 @@ import {
 import { resetUpdateStatusStore } from "@/entities/update/use-update-status";
 import type { PaceRendererApi } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
+import type { ProviderConnectionTestResult } from "@pace/core";
 
 const providerAuthStatus = {
   agentDir: "/agent",
@@ -97,9 +98,19 @@ const disabledUpdateStatus: UpdateStatus = {
 function renderSettings(
   path = "/usage?settings=models",
   updateStatus: UpdateStatus = disabledUpdateStatus,
+  connectionTestResult: ProviderConnectionTestResult = {
+    ok: true,
+    modelId: "claude-sonnet-4",
+    latencyMs: 42,
+  },
+  probe?: () => Promise<ProviderConnectionTestResult>,
 ) {
   const updateListeners = new Set<(status: UpdateStatus) => void>();
   const invoke = vi.fn(async (command: string) => {
+    if (command === "test_provider_connection") {
+      return probe ? probe() : connectionTestResult;
+    }
+
     if (
       command === "list_provider_auth_status" ||
       command === "set_provider_api_key"
@@ -553,6 +564,101 @@ describe("Settings — changelog", () => {
     expect(input).toHaveValue("sk-unsaved");
     await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(router.state.location.href).toBe("/usage?range=week#totals"));
+  });
+});
+
+describe("Settings — provider connection test", () => {
+  it("shows Test connection only for configured providers and records the probe on the card", async () => {
+    const user = userEvent.setup();
+    renderSettings("/usage?settings=providers");
+
+    const anthropic = await screen.findByTestId("provider-subscription-anthropic");
+    const xai = screen.getByTestId("provider-subscription-xai");
+    expect(within(anthropic).getByText("Not tested")).toBeInTheDocument();
+    expect(within(anthropic).getByRole("button", { name: "Test connection" })).toBeEnabled();
+    expect(within(xai).queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
+    expect(within(xai).queryByText("Not tested")).not.toBeInTheDocument();
+
+    await user.click(within(anthropic).getByRole("button", { name: "Test connection" }));
+
+    expect(await within(anthropic).findByText("Verified · claude-sonnet-4 · 42 ms")).toBeInTheDocument();
+    expect(window.pace!.invoke).toHaveBeenCalledWith("test_provider_connection", {
+      providerId: "anthropic",
+    });
+
+    await user.click(screen.getByRole("button", { name: "API Key" }));
+    const apiCard = await screen.findByTestId("provider-api-key-anthropic");
+    expect(within(apiCard).getByText("Verified · claude-sonnet-4 · 42 ms")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("provider-api-key-xai")).queryByRole("button", {
+        name: "Test connection",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the probe failure reason on the card", async () => {
+    const user = userEvent.setup();
+    renderSettings("/usage?settings=providers", disabledUpdateStatus, {
+      ok: false,
+      kind: "entitlement",
+      message: "Not covered by your subscription plan",
+      detail: "403 status code (no body)",
+      modelId: "claude-sonnet-4",
+    });
+
+    const anthropic = await screen.findByTestId("provider-subscription-anthropic");
+    await user.click(within(anthropic).getByRole("button", { name: "Test connection" }));
+
+    expect(
+      await within(anthropic).findByText("Failed · Not covered by your subscription plan"),
+    ).toBeInTheDocument();
+    expect(within(anthropic).getByTitle("403 status code (no body)")).toBeInTheDocument();
+    expect(within(anthropic).getByText("403 status code (no body)")).toBeInTheDocument();
+  });
+
+  it("clears a verified probe when the API key is replaced", async () => {
+    const user = userEvent.setup();
+    renderSettings("/usage?settings=providers");
+    await user.click(await screen.findByRole("button", { name: "API Key" }));
+    const card = await screen.findByTestId("provider-api-key-anthropic");
+
+    await user.click(within(card).getByRole("button", { name: "Test connection" }));
+    expect(await within(card).findByText("Verified · claude-sonnet-4 · 42 ms")).toBeInTheDocument();
+
+    await user.type(within(card).getByPlaceholderText("Paste API key"), "sk-replaced");
+    await user.click(within(card).getByRole("button", { name: "Replace key" }));
+
+    expect(await within(card).findByText("Not tested")).toBeInTheDocument();
+    expect(within(card).queryByText("Verified · claude-sonnet-4 · 42 ms")).not.toBeInTheDocument();
+  });
+
+  it("does not show a probe that resolves after the credential changed", async () => {
+    const user = userEvent.setup();
+    let resolveProbe: (result: ProviderConnectionTestResult) => void = () => {};
+    const pending = new Promise<ProviderConnectionTestResult>((resolve) => {
+      resolveProbe = resolve;
+    });
+    renderSettings(
+      "/usage?settings=providers",
+      disabledUpdateStatus,
+      { ok: true, modelId: "claude-sonnet-4", latencyMs: 42 },
+      () => pending,
+    );
+    await user.click(await screen.findByRole("button", { name: "API Key" }));
+    const card = await screen.findByTestId("provider-api-key-anthropic");
+
+    await user.click(within(card).getByRole("button", { name: "Test connection" }));
+    expect(within(card).getByRole("button", { name: "Testing…" })).toBeDisabled();
+
+    await user.type(within(card).getByPlaceholderText("Paste API key"), "sk-replaced");
+    await user.click(within(card).getByRole("button", { name: "Replace key" }));
+    expect(await within(card).findByText("Not tested")).toBeInTheDocument();
+
+    resolveProbe({ ok: true, modelId: "claude-sonnet-4", latencyMs: 42 });
+    await waitFor(() => {
+      expect(within(card).queryByText(/Verified/)).not.toBeInTheDocument();
+    });
+    expect(within(card).getByText("Not tested")).toBeInTheDocument();
   });
 });
 

@@ -8,11 +8,14 @@ import { spawn } from "node:child_process";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import {
   PROVIDER_DISPLAY_OVERRIDES,
+  describeProviderFailure,
   sortProvidersForDisplay,
   type ProviderAuthId,
   type ProviderAuthMode,
   type ProviderAuthStatusItem,
   type ProviderAuthStatusReport,
+  type ProviderConnectionTestResult,
+  type ProviderFailureKind,
 } from "@pace/core";
 
 type RuntimeInstance = Awaited<ReturnType<typeof ModelRuntime.create>>;
@@ -29,7 +32,13 @@ type RuntimeProvider = {
 /** Minimal runtime surface so tests can substitute a stub. */
 export type ProviderAuthRuntime = Pick<
   RuntimeInstance,
-  "getProviderAuthStatus" | "login" | "logout" | "refresh"
+  | "getProviderAuthStatus"
+  | "login"
+  | "logout"
+  | "refresh"
+  | "getAvailableSnapshot"
+  | "getModel"
+  | "completeSimple"
 > & {
   getProviders(): readonly RuntimeProvider[];
 };
@@ -40,6 +49,10 @@ export type ProviderAuthService = {
   remove(providerId: ProviderAuthId): Promise<ProviderAuthStatusReport>;
   loginOAuth(providerId: ProviderAuthId): Promise<ProviderAuthStatusReport>;
   logout(providerId: ProviderAuthId): Promise<ProviderAuthStatusReport>;
+  testConnection(
+    providerId: ProviderAuthId,
+    modelId?: string,
+  ): Promise<ProviderConnectionTestResult>;
 };
 
 export type ProviderAuthServiceOptions = {
@@ -47,6 +60,8 @@ export type ProviderAuthServiceOptions = {
   openExternalUrl?: (url: string) => void | Promise<void>;
   /** Override runtime creation for tests. */
   createRuntime?: () => Promise<ProviderAuthRuntime>;
+  /** Probe deadline. Production uses 15s; tests shorten it. */
+  connectionTestTimeoutMs?: number;
 };
 
 function maskKey(key: string): string {
@@ -122,6 +137,70 @@ function findRuntimeProvider(runtime: ProviderAuthRuntime, providerId: string) {
  * let the browser callback (or device-code poll) win. */
 function pendPrompt(): Promise<string> {
   return new Promise<string>(() => {});
+}
+
+const CONNECTION_TEST_TIMEOUT_MS = 15_000;
+
+function timeoutMessage(timeoutMs: number): string {
+  return `Timed out after ${timeoutMs / 1000} seconds`;
+}
+
+function selectProbeModel(
+  runtime: ProviderAuthRuntime,
+  providerId: string,
+  modelId?: string,
+) {
+  const snapshot = runtime.getAvailableSnapshot();
+  if (modelId) {
+    const listed = snapshot.find((model) => model.provider === providerId && model.id === modelId);
+    if (listed) return listed;
+    const resolved = runtime.getModel(providerId, modelId);
+    if (resolved?.provider === providerId) return resolved;
+    return undefined;
+  }
+
+  return snapshot.find((model) => model.provider === providerId);
+}
+
+function failureResult(
+  kind: ProviderFailureKind,
+  message: string,
+  detail: string,
+  modelId?: string,
+): ProviderConnectionTestResult {
+  return {
+    ok: false,
+    kind,
+    message,
+    detail,
+    ...(modelId ? { modelId } : {}),
+  };
+}
+
+/**
+ * Resolves when `work` settles, or rejects when `signal` aborts — whichever
+ * comes first. completeSimple is supposed to honor the signal, but a provider
+ * that ignores it must not leave Settings waiting.
+ */
+function settleOrAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function createProviderAuthService(
@@ -243,6 +322,70 @@ export function createProviderAuthService(
       findRuntimeProvider(runtime, providerId);
       await runtime.logout(providerId);
       return listStatus();
+    },
+
+    async testConnection(providerId, modelId) {
+      const runtime = await getRuntime();
+      findRuntimeProvider(runtime, providerId);
+      // Local snapshot only. The probe below is the network request.
+      await runtime.refresh({ allowNetwork: false }).catch(() => {});
+
+      const model = selectProbeModel(runtime, providerId, modelId);
+      if (!model) {
+        return failureResult(
+          "unknown",
+          modelId
+            ? `Model "${modelId}" is not available for this provider`
+            : "No model is available to test for this provider",
+          "",
+          modelId,
+        );
+      }
+
+      const timeoutMs = options.connectionTestTimeoutMs ?? CONNECTION_TEST_TIMEOUT_MS;
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        controller.abort(new DOMException(timeoutMessage(timeoutMs), "TimeoutError"));
+      }, timeoutMs);
+      const started = Date.now();
+
+      try {
+        // This runtime is not a session. Leaving sessionId unset keeps the
+        // probe off provider session caches and out of Pace's session journal,
+        // which only records gateway events.
+        const response = await settleOrAbort(
+          runtime.completeSimple(
+            model,
+            { messages: [{ role: "user", content: "ping", timestamp: started }] },
+            { maxTokens: 1, signal: controller.signal, maxRetries: 0 },
+          ),
+          controller.signal,
+        );
+
+        if (response.stopReason === "aborted" || controller.signal.aborted) {
+          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
+        }
+
+        if (response.stopReason === "error") {
+          const failure = describeProviderFailure(response.errorMessage ?? "Connection test failed");
+          return failureResult(failure.kind, failure.message, failure.detail, model.id);
+        }
+
+        return {
+          ok: true,
+          modelId: model.id,
+          latencyMs: Math.max(0, Date.now() - started),
+        };
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
+        }
+
+        const failure = describeProviderFailure(error);
+        return failureResult(failure.kind, failure.message, failure.detail, model.id);
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }

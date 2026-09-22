@@ -307,6 +307,13 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
     case "login_provider_oauth":
     case "logout_provider_auth":
       return invokeBrowserFallback("list_provider_auth_status");
+    case "test_provider_connection":
+      return Promise.resolve({
+        ok: false,
+        kind: "unknown",
+        message: "Connection tests run in the desktop app",
+        detail: "",
+      } as T);
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);
     case "send_subagent":
