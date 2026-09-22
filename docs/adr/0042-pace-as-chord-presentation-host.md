@@ -67,6 +67,7 @@ Pace 向插件 presentation facet 提供的内置服务，对标上游的 `Agent
 2. **Pace 提供哪些 presentation 服务**，以及 slot 的命名与 CONTEXT.md 词汇对齐。
 3. **信任模型。** 项目目录中的插件代码会在用户 GUI 进程执行；上游也把这列为 ship 前必须解决的决策。
 4. **上游依赖**：`experimental/plugin` 何时进 dist、是否提供 GUI 入口约定。需向上游开 issue。
+   - chord 0.87.0（Pi 上游，2026-09-21，commit `10d1ad621` "feat: add transactional replicated state"）把 `MutableReplicatedState.state` + `publish(ctx)` 换成了 `change(ctx, draft => …)` + `replace(ctx, value)`。该 commit 没有改 wire API（`createRemoteServiceEndpoint`、state codecs、`createRemoteServiceBinding`）。Pace 仍锁定 0.86.0。
 
 ## 与已有文档的冲突
 

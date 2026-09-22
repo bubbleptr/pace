@@ -10,14 +10,17 @@
  * only Chord's public wire API and its own JSON channel, without pi-server,
  * pi-client or pi-protocol?
  *
- * The two adapters below mirror what pi-server (`serveChordFacetHost`) and
+ * The adapters below mirror what pi-server (`serveChordFacetHost`) and
  * pi-client (`createChordPortTransport`) do around Chord, reduced to the
  * minimum. Everything that crosses the port is strict JSON, which is exactly
  * what `child_process` IPC with the default `json` serialization preserves.
+ * `relayChordFrames` is the exception: it only looks at `kind` and does not
+ * host Chord at all.
  *
  * This is exploratory code. It is not wired into any driver.
  */
 import type { ChildProcess } from "node:child_process";
+import type { MessagePort } from "node:worker_threads";
 import {
   createRemoteServiceBinding,
   createRemoteServiceEndpoint,
@@ -305,5 +308,48 @@ export function createParentProcessChordPort(): JsonMessagePort {
         process.off("message", handler);
       };
     },
+  };
+}
+
+/**
+ * Renderer-side port over one end of a structured-clone `MessageChannel`.
+ *
+ * Node's `MessagePort` emits the cloned value itself (not a DOM `MessageEvent`).
+ * Attaching `message` refs the port; callers must `unref()` or `close()` it or
+ * the test process will not exit.
+ */
+export function createMessagePortChordPort(port: MessagePort): JsonMessagePort {
+  return {
+    send(message) {
+      port.postMessage(message);
+    },
+    onMessage(listener) {
+      const handler = (message: unknown) => {
+        if (isChordPortMessage(message)) listener(message);
+      };
+      port.on("message", handler);
+      return () => {
+        port.off("message", handler);
+      };
+    },
+  };
+}
+
+/**
+ * Backend between a session child and a renderer: forward `chord_*` frames
+ * both ways. Payload grammar stays on the two Chord hosts; this process only
+ * looks at `kind`, so it does not need to host Chord itself.
+ */
+export function relayChordFrames(childPort: JsonMessagePort, rendererPort: JsonMessagePort): () => void {
+  const forward = (from: JsonMessagePort, to: JsonMessagePort) =>
+    from.onMessage(message => {
+      if (!message.kind.startsWith("chord_")) return;
+      to.send(message);
+    });
+  const stopChild = forward(childPort, rendererPort);
+  const stopRenderer = forward(rendererPort, childPort);
+  return () => {
+    stopChild();
+    stopRenderer();
   };
 }

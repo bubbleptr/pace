@@ -84,3 +84,43 @@ chord 就是 Pi 官方正在做的「插件多宿主运行时」：一个插件�
 
 1. `session-process-server.ts` 无条件解构 `{ id, method, args }`，每个 `chord_call` 都会回一帧 `Unsupported Session command: undefined`，且数字 id 会与驱动请求撞车。要按 `kind` 分流或分离 id 空间。
 2. Node 只把 listen 之前的 IPC backlog 冲给第一个 `message` handler，而 `createFacetHost` 是异步的。子进程入口必须同步注册分流 handler 并缓冲，或由 driver 在会话建立后才开放 chord 流量。spike 用 `spike_ready` 握手绕过，这不是生产协议。
+
+## 8. Spike 3（2026-09-22）：renderer 侧 presentation host、backend 只做转发、热重载
+
+代码：`chord-plugin-spike.ts` 新增 `createMessagePortChordPort`、`relayChordFrames`；测试为 `chord-plugin-spike-browser.test.ts`、`chord-plugin-spike-relay.test.ts`、`chord-plugin-spike-reload.test.ts`；fork 用例的 `waitFor` / `waitForSpikeReady` / `waitForDriverResult` / `disposeChild` 抽到 `chord-plugin-spike-test-helpers.ts`。根 `devDependencies` 增加 `esbuild@0.28.2`，只为下面的浏览器打包探测。`fixtures/chord-session-process.mjs` 未改。热重载两条用例连续跑了 3 次，断言结果相同。
+
+复核：`bunx vitest run packages/backend/src/drivers/chord-plugin-spike` 5 文件 9 用例通过，`bun run typecheck` 通过，全量 `bun run test` 146 文件 1615 用例通过。
+
+### Q1. chord 运行时能否进浏览器
+
+esbuild 配置：`platform: "browser"`、`bundle: true`、`format: "esm"`、`write: false`、不设 external。入口同时 import `@earendil-works/chord` 与 `@earendil-works/chord/context`，并导出 `createFacetHost`、`defineFacet`、`BACKGROUND_CONTEXT`。包自己写了 `sideEffects: false`，不导出的话运行时会被 tree-shake 掉，探测就没有意义。
+
+构建成功。产物 124987 字节，全文没有 `node:`。
+
+vitest 默认环境是 jsdom，不能在这个环境里直接 `import "esbuild"`：jsdom 换过的 `TextEncoder` 和 `Uint8Array` 不在同一个 realm，esbuild 在 `lib/main.js` 的启动检查（`instanceof Uint8Array`）里直接抛错，打包还没开始。测试把 esbuild 放进一个不带 `NODE_OPTIONS` 的 Node 子进程；chord 运行时如果真的 import 了 `node:`，这个构建仍然会失败。实测没有失败。
+
+同一文件里另有一条用例：`typeof window !== "undefined"` 时 `defineFacet` + `createFacetHost` 能激活并 dispose。jsdom 用例约 1ms。打包用例在 esbuild 二进制已缓存时约 105ms，第一次冷启动约 1.8s。
+
+### Q2. 三跳：子进程 session facet，backend 纯转发，renderer 侧 presentation host
+
+子进程仍是 spike 2 的 fixture。`relayChordFrames` 只看 `kind` 是否以 `chord_` 开头，不读 call / update 的内容。renderer 侧是 Node `MessageChannel` 的一端（`postMessage` / `on("message")`，用完 `unref` 并 `close`），上面跑 `createChordPortTransport` + presentation `FacetHost`。
+
+结果（relay 用例约 124ms；同一次里原来的 fork 用例约 121ms）：
+
+- 激活后、调用前，`progress.value` 是 `{ step: 0, label: "idle" }`。
+- `advance({ by: 2 })` 返回 `{ step: 2 }`，再 `advance({ by: 3 })`，订阅者序列是 `[0, 2, 5]`。
+- 同一条子进程 IPC 上并行的 `createSession` 仍得到 `{ sessionId: "a", projectId: "a" }`。
+- relay 发往 renderer 的帧共 6 条，顺序是 `chord_result`、`chord_result`、`chord_update`、`chord_result`、`chord_update`、`chord_result`。没有这三种以外的 kind。`chord_call` 只从 renderer 发往 child，所以这条 tap 里看不到它。
+
+### Q3. 两侧热重载（内存管道）
+
+Presentation 侧重载（用例约 6ms）：v1 在 `advance({ by: 2 })` 后记下 `[0, 2]`。`presentationHost.reload([v2])`（同一个 facet id）返回时，v2 已经拿到当前值 `{ step: 2, label: "step 2" }`，没有重新 catalogue。之后 v2 `advance({ by: 1 })`，v2 的序列是 `[2, 3]`，v1 停在 `[0, 2]`。reload 调用期间线上新增消息数是 0：没有 `unsubscribe`，也没有新的 `subscribe`。远程绑定留在 host 上，v2 只是给已经 hydrate 的 replica 再挂一个本地订阅。
+
+Session 侧重载（用例约 1ms）：`sessionHost.reload([v2])` 不抛错。v2 同一个 facet id，同一个 service，初始状态 `{ step: 100, label: "reloaded" }`。线上新增 1 条消息，类型是 `replaced`。订阅回调再响一次，delivery kind 是 `hydrate`（不是 `update`），值就是这个新快照。`reload()` resolve 之后 `progress.value` 已经是 `{ step: 100, label: "reloaded" }`。订阅回调里读到的 `progress.value`，以及 reload 前后的轮询，都没有出现 `undefined`。轮询序列只有 `0:idle` → `100:reloaded`。
+
+也就是说：替换帧到达之前，replica 一直显示旧快照；`replaced` 在同一次投递里被写成新的 base snapshot，调用方看不到 `value === undefined` 的空窗。README 写 replica 在 replacement 后 unready 直到 rehydrate，0.86.0 的 singleton `replace` 确实发了新快照，但没有走 `clear()`，也没有发 `unavailable`。
+
+接入生产前必须处理：
+
+1. 主进程现有通道是 Electron `MessagePortMain`（`apps/desktop/electron/main.ts` 里 `port1.on("message", ({ data }) => …)`），要手动 `start()`。本 spike 的 `createMessagePortChordPort` 按 Node `worker_threads` 的 `MessagePort` 写：`on("message", value)` 拿到的是值本身，挂上 listener 就会开始派发。renderer 里的 DOM `MessagePort` 则是 `MessageEvent`。结构化克隆这一跳已经通了，监听器形状不能原样搬。
+2. 面板不能靠 `progress.value === undefined` 发现 provider 被热替换。session 侧重载是一帧 `replaced`，订阅者看到一次新的 `hydrate`；这一帧到达前 UI 仍是旧快照。
