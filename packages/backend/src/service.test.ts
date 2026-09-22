@@ -364,7 +364,8 @@ describe("backend service", () => {
       const pending = service.handleRequest({
         id: "set-key",
         method: "set_provider_api_key",
-        params: { providerId: "openai", apiKey: "sk-test" },
+        // A provider without an account model list, so only the live refresh runs.
+        params: { providerId: "xai", apiKey: "sk-test" },
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(healthyFinished).toBe(true);

@@ -66,7 +66,7 @@
 **分阶段:**
 
 1. 订阅(`openai-codex`):用上面已验证的接口。本切片只做这一步。
-2. API key 通道(`openai`、`anthropic` 等 `/v1/models`):同一机制,另开 issue。
+2. API key 通道(`openai`、`anthropic` 的 `/v1/models`):同一机制。与订阅不同,只取交集、不补充目录外的模型(原始 API 列表里有 embedding、音频、快照等非对话模型)。缓存按 key 的 sha256 前缀区分,不落盘 key 本身。
 3. 其他没有列表接口的 provider(如 kimi-coding):保持 Pi 目录,依赖 S1 的 403 分类提示。
 
 **上游:** 给 Pi 提 issue,建议 `openai-codex` 内置 `refreshModels` 或 `fetchModels`(`createProvider` 已支持该钩子,`models.js:437,468`)。上游落地后删掉 Pace 这层。

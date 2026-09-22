@@ -1,11 +1,14 @@
 // Per-account model availability on top of Pi's catalog (model-availability S4).
 //
 // Pi's catalog (bundled JSON + pi.dev overlay) only ever adds models, so a
-// model a ChatGPT plan retires stays listed until the SDK ships a new build.
-// The subscription backend does list what an account may use; we cache that
-// list per account and intersect it with the catalog inside the runtime, so
+// model a plan retires or a key cannot reach stays listed until the SDK ships
+// a new build. Providers do list what an account may use; we cache that list
+// per account and intersect it with the catalog inside the runtime, so
 // Settings, the composer and live sessions all read the same filtered list.
+// Each channel (Pi provider) is filtered on its own; channels are never
+// intersected with each other.
 
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
@@ -15,30 +18,151 @@ type Provider = NonNullable<ReturnType<PaceModelRuntime["getProvider"]>>;
 type CatalogModel = ReturnType<Provider["getModels"]>[number];
 type RefreshContext = Parameters<NonNullable<Provider["refreshModels"]>>[0];
 
-const codexProviderId = "openai-codex";
-/** Providers whose model list Pace narrows to what the signed-in account can use. */
-export const accountModelProviderIds: readonly string[] = [codexProviderId];
-// The endpoint answers an empty list below some client version, so pin a
-// recent Codex CLI release and bump it with Pace releases.
-const codexClientVersion = "0.155.0";
-const codexModelsUrl = `https://chatgpt.com/backend-api/codex/models?client_version=${codexClientVersion}`;
 // Same cadence as Pi's pi.dev overlay; force bypasses it.
 const accountModelsFreshMs = 4 * 60 * 60 * 1000;
 
 type AccountModel = {
-  slug: string;
-  display_name?: string;
-  context_window?: number;
-  visibility?: string;
+  id: string;
+  name?: string;
+  contextWindow?: number;
 };
 
 type AccountModelsEntry = {
+  /** Account identity the list belongs to; never a secret. */
   accountId: string;
   checkedAt: number;
   models: AccountModel[];
 };
 
 type AccountModelsCache = Record<string, AccountModelsEntry>;
+
+type FetchInput = {
+  credential: NonNullable<RefreshContext["credential"]>;
+  catalog: readonly CatalogModel[];
+  fetch: typeof fetch;
+  signal: AbortSignal;
+};
+
+type AccountModelSource = {
+  providerId: string;
+  /** Stable, non-secret id of the stored credential's account; undefined skips filtering. */
+  identity(stored: unknown): string | undefined;
+  list(input: FetchInput): Promise<AccountModel[]>;
+  /**
+   * Show listed models Pi's catalog lacks. Only for curated lists: raw API
+   * lists include embeddings, audio and snapshots that are not chat models.
+   */
+  includeUnknown: boolean;
+};
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function oauthAccountId(stored: unknown) {
+  return field(stored, "type") === "oauth" ? nonEmptyString(field(stored, "accountId")) : undefined;
+}
+
+function apiKeyIdentity(stored: unknown) {
+  if (field(stored, "type") !== "api_key") return undefined;
+  const key = nonEmptyString(field(stored, "key"));
+  // Hash the stored form so the cache follows key changes without holding the key.
+  return key ? `key:${createHash("sha256").update(key).digest("hex").slice(0, 16)}` : undefined;
+}
+
+async function getJson(input: FetchInput, url: string, headers: Record<string, string>) {
+  const response = await input.fetch(url, {
+    headers: { accept: "application/json", ...headers },
+    signal: input.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Model list request failed (HTTP ${response.status}).`);
+  }
+  return (await response.json()) as unknown;
+}
+
+function catalogBaseUrl(catalog: readonly CatalogModel[], fallback: string) {
+  // Follow a models.json baseUrl override so proxies list their own models.
+  return (catalog[0]?.baseUrl ?? fallback).replace(/\/+$/u, "");
+}
+
+function listedIds(body: unknown): AccountModel[] {
+  const data = field(body, "data");
+  return Array.isArray(data)
+    ? data.flatMap((entry) => {
+        const id = nonEmptyString(field(entry, "id"));
+        return id ? [{ id }] : [];
+      })
+    : [];
+}
+
+// The endpoint answers an empty list below some client version, so pin a
+// recent Codex CLI release and bump it with Pace releases.
+const codexClientVersion = "0.155.0";
+
+const sources: readonly AccountModelSource[] = [
+  {
+    providerId: "openai-codex",
+    identity: oauthAccountId,
+    includeUnknown: true,
+    async list(input) {
+      const access = nonEmptyString(field(input.credential, "access"));
+      const accountId = oauthAccountId(input.credential);
+      if (!access || !accountId) throw new Error("ChatGPT credential is missing its account.");
+      const body = await getJson(
+        input,
+        `https://chatgpt.com/backend-api/codex/models?client_version=${codexClientVersion}`,
+        { authorization: `Bearer ${access}`, "chatgpt-account-id": accountId },
+      );
+      const models = field(body, "models");
+      return Array.isArray(models)
+        ? models.flatMap((entry) => {
+            const id = nonEmptyString(field(entry, "slug"));
+            if (!id || field(entry, "visibility") === "hide") return [];
+            const contextWindow = field(entry, "context_window");
+            return [{
+              id,
+              name: nonEmptyString(field(entry, "display_name")),
+              contextWindow: typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : undefined,
+            }];
+          })
+        : [];
+    },
+  },
+  {
+    providerId: "openai",
+    identity: apiKeyIdentity,
+    includeUnknown: false,
+    async list(input) {
+      const key = nonEmptyString(field(input.credential, "key"));
+      if (!key) throw new Error("OpenAI API key is missing.");
+      const baseUrl = catalogBaseUrl(input.catalog, "https://api.openai.com/v1");
+      return listedIds(await getJson(input, `${baseUrl}/models`, { authorization: `Bearer ${key}` }));
+    },
+  },
+  {
+    providerId: "anthropic",
+    identity: apiKeyIdentity,
+    includeUnknown: false,
+    async list(input) {
+      const key = nonEmptyString(field(input.credential, "key"));
+      if (!key) throw new Error("Anthropic API key is missing.");
+      const baseUrl = catalogBaseUrl(input.catalog, "https://api.anthropic.com");
+      // 1000 is the page maximum and far above the model count, so one page is the list.
+      return listedIds(await getJson(input, `${baseUrl}/v1/models?limit=1000`, {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+      }));
+    },
+  },
+];
+
+/** Providers whose model list Pace narrows to what the signed-in account can use. */
+export const accountModelProviderIds: readonly string[] = sources.map((source) => source.providerId);
 
 export function accountModelsCachePath(dataDir: string) {
   return join(dataDir, "account-models.json");
@@ -65,78 +189,52 @@ async function writeCacheEntry(cachePath: string, providerId: string, entry: Acc
   await rename(tempPath, cachePath);
 }
 
-function accountIdOf(credential: unknown): string | undefined {
-  if ((credential as { type?: unknown } | undefined)?.type !== "oauth") return undefined;
-  const accountId = (credential as { accountId?: unknown }).accountId;
-  return typeof accountId === "string" && accountId ? accountId : undefined;
+async function cachedAccountModels(cachePath: string, providerId: string, accountId: string | undefined) {
+  if (!accountId) return undefined;
+  const entry = (await readCache(cachePath))[providerId];
+  if (entry?.accountId !== accountId || !Array.isArray(entry.models)) return undefined;
+  // A list with no readable model (e.g. an older cache shape) would hide
+  // everything; treat it as absent and let the next refresh rewrite it.
+  const models = entry.models.filter((model) => typeof nonEmptyString(field(model, "id")) === "string");
+  return models.length > 0 ? { ...entry, models } : undefined;
 }
 
-function isAccountModel(value: unknown): value is AccountModel {
-  return typeof value === "object" && value !== null && typeof (value as AccountModel).slug === "string";
-}
-
-async function fetchCodexAccountModels(input: {
-  access: string;
-  accountId: string;
-  fetch: typeof fetch;
-  signal: AbortSignal;
-}): Promise<AccountModel[]> {
-  const response = await input.fetch(codexModelsUrl, {
-    headers: {
-      authorization: `Bearer ${input.access}`,
-      "chatgpt-account-id": input.accountId,
-      accept: "application/json",
-    },
-    signal: input.signal,
-  });
-  if (!response.ok) {
-    throw new Error(`ChatGPT model list request failed (HTTP ${response.status}).`);
-  }
-  const body = (await response.json()) as { models?: unknown };
-  const models = Array.isArray(body.models) ? body.models.filter(isAccountModel) : [];
-  // An empty answer is indistinguishable from a broken endpoint; hiding every
-  // model would be worse than showing a stale catalog.
-  if (!models.some((model) => model.visibility !== "hide")) {
-    throw new Error("ChatGPT returned no models for this account.");
-  }
-  return models;
-}
-
-function projectAccountModels(catalog: readonly CatalogModel[], account: readonly AccountModel[]) {
+function projectAccountModels(
+  catalog: readonly CatalogModel[],
+  account: readonly AccountModel[],
+  includeUnknown: boolean,
+) {
   const template = catalog[0];
   const projected: CatalogModel[] = [];
   for (const entry of account) {
-    if (entry.visibility === "hide") continue;
-    const known = catalog.find((model) => model.id === entry.slug);
+    const known = catalog.find((model) => model.id === entry.id);
     if (known) {
       projected.push(known);
-    } else if (template) {
+    } else if (includeUnknown && template) {
       // New to the account but not yet in Pi's catalog: borrow transport
       // fields from a sibling so it streams, and take what the account says.
       projected.push({
         ...template,
-        id: entry.slug,
-        name: entry.display_name?.trim() || entry.slug,
-        contextWindow:
-          typeof entry.context_window === "number" && entry.context_window > 0
-            ? entry.context_window
-            : template.contextWindow,
+        id: entry.id,
+        name: entry.name?.trim() || entry.id,
+        contextWindow: entry.contextWindow ?? template.contextWindow,
       });
     }
   }
   return projected;
 }
 
-async function cachedAccountModels(cachePath: string, providerId: string, accountId: string | undefined) {
-  if (!accountId) return undefined;
-  const entry = (await readCache(cachePath))[providerId];
-  return entry?.accountId === accountId ? entry : undefined;
-}
-
 function withAccountModels(
   base: Provider,
-  options: { cachePath: string; fetch: typeof fetch; initial: AccountModel[] | undefined },
+  options: {
+    source: AccountModelSource;
+    authPath: string;
+    cachePath: string;
+    fetch: typeof fetch;
+    initial: AccountModel[] | undefined;
+  },
 ) {
+  const { source } = options;
   let account = options.initial;
   let settleFirstRefresh!: () => void;
   const firstRefresh = new Promise<void>((resolve) => {
@@ -144,21 +242,24 @@ function withAccountModels(
   });
 
   const refreshAccount = async (context: RefreshContext) => {
-    const accountId = accountIdOf(context.credential);
+    // Identity comes from the stored credential in both phases: the network
+    // phase sees a resolved key, which would not match what offline reads see.
+    const accountId = source.identity(readStoredCredential(base.id, options.authPath));
     const entry = await cachedAccountModels(options.cachePath, base.id, accountId);
     if (!(await context.publish({ update: () => { account = entry?.models; } }))) return;
 
-    if (!context.allowNetwork || context.signal.aborted || !accountId) return;
+    if (!context.allowNetwork || context.signal.aborted || !accountId || !context.credential) return;
     if (!context.force && entry && Date.now() - entry.checkedAt < accountModelsFreshMs) return;
 
-    const access = (context.credential as { access?: unknown }).access;
-    if (typeof access !== "string" || !access) return;
-    const models = await fetchCodexAccountModels({
-      access,
-      accountId,
+    const models = await source.list({
+      credential: context.credential,
+      catalog: base.getModels(),
       fetch: options.fetch,
       signal: context.signal,
     });
+    // An empty answer is indistinguishable from a broken endpoint; hiding
+    // every model would be worse than showing a stale catalog.
+    if (models.length === 0) throw new Error(`${base.id} returned no models for this account.`);
     if (context.signal.aborted) return;
     await writeCacheEntry(options.cachePath, base.id, { accountId, checkedAt: Date.now(), models });
     await context.publish({ update: () => { account = models; } });
@@ -168,7 +269,7 @@ function withAccountModels(
     ...base,
     getModels: () => {
       const catalog = base.getModels();
-      return account ? projectAccountModels(catalog, account) : catalog;
+      return account ? projectAccountModels(catalog, account, source.includeUnknown) : catalog;
     },
     refreshModels: async (context) => {
       // A pi.dev outage must not block the account list, and vice versa.
@@ -205,28 +306,38 @@ export async function createPaceModelRuntime(input: {
   dataDir: string;
   fetch?: typeof fetch;
 }): Promise<PaceModelRuntime> {
+  const authPath = join(input.agentDir, "auth.json");
   const runtime = await ModelRuntime.create({
-    authPath: join(input.agentDir, "auth.json"),
+    authPath,
     modelsPath: join(input.agentDir, "models.json"),
     allowModelNetwork: false,
   });
-  const base = runtime.getProvider(codexProviderId);
-  if (base) {
-    const cachePath = accountModelsCachePath(input.dataDir);
+  const cachePath = accountModelsCachePath(input.dataDir);
+  const firstRefreshes: Promise<void>[] = [];
+
+  for (const source of sources) {
+    const base = runtime.getProvider(source.providerId);
+    if (!base) continue;
     // Seed from the cache so the very first snapshot is already filtered.
-    const credential = readStoredCredential(codexProviderId, join(input.agentDir, "auth.json"));
-    const initial = await cachedAccountModels(cachePath, codexProviderId, accountIdOf(credential));
+    const accountId = source.identity(readStoredCredential(source.providerId, authPath));
+    const initial = await cachedAccountModels(cachePath, source.providerId, accountId);
     const wrapped = withAccountModels(base, {
+      source,
+      authPath,
       cachePath,
       fetch: input.fetch ?? ((...args) => globalThis.fetch(...args)),
       initial: initial?.models,
     });
     runtime.registerNativeProvider(wrapped.provider);
+    firstRefreshes.push(wrapped.firstRefresh);
+  }
+
+  if (firstRefreshes.length > 0) {
     // registerNativeProvider fires an unawaited refresh. Pi supersedes an
     // older refresh of the same provider, so a caller's network refresh
     // started now could be cancelled by it; let its provider phase finish.
     // The timeout only guards against a refresh that never reaches providers.
-    await Promise.race([firstRefreshTimeout(), wrapped.firstRefresh]);
+    await Promise.race([firstRefreshTimeout(), Promise.all(firstRefreshes)]);
   }
   return runtime;
 }

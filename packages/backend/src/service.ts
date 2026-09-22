@@ -399,6 +399,19 @@ async function refreshAccountModels(input: {
   }
 }
 
+async function refreshAfterCredentialChange(
+  input: { agentDir: string; dataDir: string; runtimeDriver: PiRuntimeDriver },
+  providerId: string,
+) {
+  if (accountModelProviderIds.includes(providerId)) {
+    // A new account or key has no cached model list yet; fetch it before
+    // Settings re-reads the catalog so an unusable model never flashes in.
+    await refreshAccountModels(input);
+  } else {
+    await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+  }
+}
+
 async function dispatchRequest(input: {
   request: BackendRpcRequest;
   agentDir: string;
@@ -536,11 +549,12 @@ async function dispatchRequest(input: {
     case "list_provider_auth_status":
       return input.providerAuth.listStatus();
     case "set_provider_api_key": {
+      const providerId = requiredString(params.providerId, "providerId") as ProviderAuthId;
       const report = await input.providerAuth.setApiKey(
-        requiredString(params.providerId, "providerId") as ProviderAuthId,
+        providerId,
         requiredString(params.apiKey, "apiKey"),
       );
-      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      await refreshAfterCredentialChange(input, providerId);
       return report;
     }
     case "remove_provider_auth": {
@@ -553,13 +567,7 @@ async function dispatchRequest(input: {
     case "login_provider_oauth": {
       const providerId = requiredString(params.providerId, "providerId") as ProviderAuthId;
       const report = await input.providerAuth.loginOAuth(providerId);
-      if (accountModelProviderIds.includes(providerId)) {
-        // A new account has no cached model list yet; fetch it before Settings
-        // re-reads the catalog so a retired model never flashes into view.
-        await refreshAccountModels(input);
-      } else {
-        await refreshLiveSessionModelCatalogs(input.runtimeDriver);
-      }
+      await refreshAfterCredentialChange(input, providerId);
       return report;
     }
     case "logout_provider_auth": {
