@@ -132,6 +132,7 @@ export {
   type RuntimeFollowUpMode,
   type RuntimeThinkingLevel,
   type RuntimeModelInputModality,
+  compareModelCapabilities,
   type RuntimeModelCapability,
   type RuntimeModelSelection,
   type RuntimeModelControls,

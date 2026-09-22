@@ -10,6 +10,7 @@
 // empty set — nothing configured, or everything unchecked — keeps listing
 // the whole catalog.
 
+import { useSyncExternalStore } from "react";
 import type { ModelRef } from "@/shared/ui/model-selector/model-selector-logic";
 
 export const visibleModelsStorageKey = "pigui.visibleModels.v1";
@@ -50,11 +51,51 @@ export function getVisibleModels(): ModelRef[] {
   }
 }
 
+const listeners = new Set<() => void>();
+
 export function saveVisibleModels(models: ModelRef[]) {
   getStorage()?.setItem(
     visibleModelsStorageKey,
     JSON.stringify(
       models.map(({ provider, modelId }) => ({ provider, modelId })),
     ),
+  );
+  for (const listener of listeners) listener();
+}
+
+function subscribeVisibleModels(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+// useSyncExternalStore compares snapshots by identity, so the parsed array is
+// reused until the stored string changes; a fresh array per read would
+// re-render forever.
+let snapshotRaw: string | null | undefined;
+let snapshot: ModelRef[] = [];
+
+function readVisibleModelsSnapshot(): ModelRef[] {
+  const raw = getStorage()?.getItem(visibleModelsStorageKey) ?? null;
+
+  if (raw !== snapshotRaw) {
+    snapshotRaw = raw;
+    snapshot = getVisibleModels();
+  }
+
+  return snapshot;
+}
+
+/**
+ * Settings opens as a dialog over the workspace, so a composer reading the
+ * set once on mount would keep listing the old models until the next
+ * navigation. This follows every save made in the same window.
+ */
+export function useVisibleModels(): ModelRef[] {
+  return useSyncExternalStore(
+    subscribeVisibleModels,
+    readVisibleModelsSnapshot,
+    readVisibleModelsSnapshot,
   );
 }

@@ -1975,8 +1975,8 @@ describe("Pi SDK public runtime adapter", () => {
 
     expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
     expect(runtime.modelControls?.models.map((model) => model.modelId)).toEqual([
-      "gpt-4.1",
       "claude-sonnet-4",
+      "gpt-4.1",
     ]);
     expect(runtime.modelControls?.selected).toEqual({
       provider: "openai",
@@ -1986,8 +1986,8 @@ describe("Pi SDK public runtime adapter", () => {
     await expect(runtime.getSnapshot?.()).resolves.toMatchObject({
       modelControls: {
         models: [
-          expect.objectContaining({ provider: "openai", modelId: "gpt-4.1" }),
           expect.objectContaining({ provider: "anthropic", modelId: "claude-sonnet-4" }),
+          expect.objectContaining({ provider: "openai", modelId: "gpt-4.1" }),
         ],
         selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" },
       },
@@ -2003,6 +2003,47 @@ describe("Pi SDK public runtime adapter", () => {
       modelId: "claude-sonnet-4",
       thinkingLevel: "off",
     });
+    await runtime.dispose?.();
+  });
+
+  it("lists the live catalog by provider then name, whatever order Pi composed it in", async () => {
+    // Pi's snapshot is composition order; Settings and the draft composer read
+    // the sorted backend list, so a live session must not show another order.
+    const available = [
+      { provider: "xai", id: "grok-4", name: "Grok 4", reasoning: false },
+      { provider: "openai", id: "gpt-4.1", name: "GPT-4.1", reasoning: false },
+      { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: false },
+      { provider: "anthropic", id: "claude-opus-4", name: "Claude Opus 4", reasoning: false },
+    ];
+    const session = {
+      sessionId: "sdk-session-order",
+      isStreaming: false,
+      messages: [],
+      model: available[0],
+      thinkingLevel: "off",
+      modelRuntime: {
+        refresh: vi.fn(async () => {}),
+        getModel: (provider: string, modelId: string) =>
+          available.find((model) => model.provider === provider && model.id === modelId),
+        getAvailableSnapshot: () => available,
+      },
+      prompt: vi.fn(async () => {}),
+      abort: vi.fn(async () => {}),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: async () => ({ session }) },
+    })({ sessionId: "app-session-order", projectId: "pig", cwd: "/repo" });
+
+    expect(
+      runtime.modelControls?.models.map((model) => `${model.provider}/${model.modelId}`),
+    ).toEqual([
+      "anthropic/claude-opus-4",
+      "anthropic/claude-sonnet-4",
+      "openai/gpt-4.1",
+      "xai/grok-4",
+    ]);
     await runtime.dispose?.();
   });
 
