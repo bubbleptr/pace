@@ -74,7 +74,10 @@ export type ProviderConnectionTestResult =
   | {
       ok: false;
       kind: ProviderFailureKind;
+      /** Short chip label. Not the provider's own wording. */
       message: string;
+      /** Raw provider text, untruncated. Empty when Pace synthesized the failure. */
+      detail: string;
       /** Absent when the probe could not choose a model. */
       modelId?: string;
     };
@@ -154,6 +157,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+// pi-ai retries these as transport failures (`retry.js`, the network/proxy/fetch
+// block of RETRYABLE_PROVIDER_ERROR_PATTERN). OpenAI and Anthropic SDKs also
+// default APIConnectionError to "Connection error." and APIConnectionTimeoutError
+// to "Request timed out."; formatProviderError keeps that message when the
+// failure has no HTTP status, so completeSimple resolves stopReason "error"
+// with this text instead of throwing.
+const RESOLVED_NETWORK_MESSAGE =
+  /network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|ECONNREFUSED|ETIMEDOUT|ECONNRESET|UND_ERR_/i;
+
 function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
   // Status wins over prose: a 401 that mentions a plan is still an auth failure,
   // and a 403 that says "unauthorized" is still an entitlement reject.
@@ -161,32 +173,21 @@ function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
   if (detail.status === 403 || /\b403\b/.test(detail.message)) return "entitlement";
   if (/\b(?:plan|subscription|entitlement)\b/i.test(detail.message)) return "entitlement";
   if (/invalid.?api.?key|authentication_error|unauthorized/i.test(detail.message)) return "auth";
-  if (
-    detail.networkCode ||
-    /\bfetch failed\b|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|UND_ERR_/i.test(
-      detail.message,
-    )
-  ) {
-    return "network";
-  }
+  if (detail.networkCode || RESOLVED_NETWORK_MESSAGE.test(detail.message)) return "network";
   return "unknown";
 }
 
 function messageFor(kind: ProviderFailureKind, detail: ProviderFailureDetail): string {
   switch (kind) {
     case "auth":
-      return "Authentication failed.";
+      return "Authentication failed";
     case "entitlement":
-      return "Not covered by your subscription plan.";
+      return "Not covered by your subscription plan";
     case "network":
-      if (detail.networkCode) return `Network error (${detail.networkCode}).`;
-      if (/\bfetch failed\b/i.test(detail.message)) return "Network error (fetch failed).";
-      return "Network error.";
-    default: {
-      const text = detail.message.replace(/\s+/g, " ").trim();
-      if (!text) return "Connection test failed.";
-      return text.length > 180 ? `${text.slice(0, 179)}…` : text;
-    }
+      if (detail.networkCode) return `Network error (${detail.networkCode})`;
+      return "Network error";
+    default:
+      return "Connection test failed";
   }
 }
 
@@ -194,12 +195,13 @@ export function classifyProviderFailure(error: unknown): ProviderFailureKind {
   return kindFromDetail(inspectProviderFailure(error));
 }
 
-/** User-facing probe copy. Chat renders its own longer entitlement sentence. */
+/** Chip label plus the raw provider text. Chat keeps its own longer entitlement sentence. */
 export function describeProviderFailure(error: unknown): {
   kind: ProviderFailureKind;
   message: string;
+  detail: string;
 } {
   const detail = inspectProviderFailure(error);
   const kind = kindFromDetail(detail);
-  return { kind, message: messageFor(kind, detail) };
+  return { kind, message: messageFor(kind, detail), detail: detail.message.trim() };
 }

@@ -32,7 +32,7 @@
 
 ### ChatRunFailure
 
-一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让 401 / 429 有出口。内部按 401 / 429 / 其他三分文案，调用方不用自己判断。
+一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让认证失败和限流有出口。文案由 `classifyProviderFailure` 决定，调用方不用自己判断：认证（HTTP 401，或 invalid api key / unauthorized）标题 “Provider authentication failed”；套餐（HTTP 403，或文案含 plan / subscription / entitlement）标题 “This model is not included in your subscription plan”，说明是 “Test the connection in Settings → Providers.”，指向 Settings → Providers 做连通性检测；限流（429）标题 “Provider limit reached”；其余标题 “Run failed”。原始错误始终留在折叠的 Error details 里。
 
 ### ChatContextChange
 

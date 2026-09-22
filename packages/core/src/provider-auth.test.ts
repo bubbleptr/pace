@@ -57,6 +57,11 @@ describe("classifyProviderFailure", () => {
         }),
       ),
     ).toBe("network");
+    // OpenAI / Anthropic leave these on errorMessage when formatProviderError has no status.
+    expect(classifyProviderFailure("Connection error.")).toBe("network");
+    expect(classifyProviderFailure("Request timed out.")).toBe("network");
+    expect(classifyProviderFailure("Provider finish_reason: network_error")).toBe("network");
+    expect(classifyProviderFailure("socket hang up")).toBe("network");
   });
 
   it("leaves unrecognized failures unknown", () => {

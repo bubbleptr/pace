@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -276,14 +276,21 @@ async function connectionRuntime(
 describe("test provider connection", () => {
   it("probes the first available model with a one-token ping and reports latency", async () => {
     let seen:
-      | { modelId: string; content: string; maxTokens?: number; sessionId?: string }
+      | {
+          modelId: string;
+          messages: { role?: string; content?: unknown }[];
+          maxTokens?: number;
+          sessionId?: string;
+        }
       | undefined;
     const service = await connectionRuntime(
       async (model, context, options) => {
-        const message = context.messages[0];
         seen = {
           modelId: model.id,
-          content: typeof message?.content === "string" ? message.content : "",
+          messages: context.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
           maxTokens: options?.maxTokens,
           sessionId: options?.sessionId,
         };
@@ -302,11 +309,11 @@ describe("test provider connection", () => {
 
     expect(result).toMatchObject({ ok: true, modelId: "claude-sonnet-4" });
     expect(result.ok && result.latencyMs).toEqual(expect.any(Number));
-    expect(seen).toMatchObject({
-      modelId: "claude-sonnet-4",
-      content: "ping",
-      maxTokens: 1,
-    });
+    expect(seen?.modelId).toBe("claude-sonnet-4");
+    expect(seen?.maxTokens).toBe(1);
+    expect(seen?.messages).toHaveLength(1);
+    expect(seen?.messages[0]?.role).toBe("user");
+    expect(typeof seen?.messages[0]?.content === "string" && seen.messages[0].content.trim()).toBeTruthy();
     expect(seen?.sessionId).toBeUndefined();
   });
 
@@ -343,41 +350,72 @@ describe("test provider connection", () => {
       kind: "auth",
       modelId: "claude-sonnet-4",
       message: expect.stringMatching(/authentication failed/i),
+      detail: "401: Invalid API key",
     });
     await expect(service.testConnection("anthropic")).resolves.toMatchObject({
       ok: false,
       kind: "entitlement",
       modelId: "claude-sonnet-4",
       message: expect.stringMatching(/subscription plan/i),
+      detail: "403 status code (no body)",
     });
   });
 
-  it("reports a thrown network error and a deadline instead of hanging", async () => {
-    let mode: "network" | "hang" = "network";
-    const service = await connectionRuntime((_model, _context, options) => {
-      if (mode === "network") {
-        return Promise.reject(Object.assign(new TypeError("fetch failed"), { code: "ECONNREFUSED" }));
-      }
-      return new Promise<ProbeReply>(() => {
-        options?.signal?.addEventListener("abort", () => {});
-      });
-    }, { timeoutMs: 20 });
+  it("classifies a resolved connection error from completeSimple as network and keeps the raw text", async () => {
+    const responses = ["Connection error.", "Request timed out."];
+    const service = await connectionRuntime(async () => {
+      return { stopReason: "error", errorMessage: responses.shift() } as ProbeReply;
+    });
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "network",
+      modelId: "claude-sonnet-4",
+      message: "Network error",
+      detail: "Connection error.",
+    });
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: false,
+      kind: "network",
+      detail: "Request timed out.",
+    });
+  });
+
+  it("reports a thrown network error with the socket code and the raw message", async () => {
+    const service = await connectionRuntime(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { code: "ECONNREFUSED" })),
+    );
 
     await expect(service.testConnection("anthropic")).resolves.toMatchObject({
       ok: false,
       kind: "network",
       modelId: "claude-sonnet-4",
       message: expect.stringMatching(/ECONNREFUSED/),
+      detail: expect.stringMatching(/fetch failed/),
+    });
+  });
+
+  it("aborts the probe when the deadline fires", async () => {
+    let signal: AbortSignal | undefined;
+    const service = await connectionRuntime((_model, _context, options) => {
+      signal = options?.signal;
+      return new Promise<ProbeReply>(() => {});
     });
 
-    mode = "hang";
-    const started = Date.now();
-    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
-      ok: false,
-      kind: "network",
-      modelId: "claude-sonnet-4",
-      message: expect.stringMatching(/timed out/i),
-    });
-    expect(Date.now() - started).toBeLessThan(2_000);
+    vi.useFakeTimers();
+    try {
+      const pending = service.testConnection("anthropic");
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        kind: "network",
+        modelId: "claude-sonnet-4",
+        message: "Timed out after 15 seconds",
+        detail: "",
+      });
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

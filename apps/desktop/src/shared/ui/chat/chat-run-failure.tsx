@@ -16,7 +16,7 @@ function describeFailure(error: string) {
   }
   if (kind === "entitlement") {
     return {
-      title: "This model is not included in your subscription plan.",
+      title: "This model is not included in your subscription plan",
       description: "Test the connection in Settings → Providers.",
     };
   }

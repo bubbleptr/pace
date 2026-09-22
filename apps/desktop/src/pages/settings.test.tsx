@@ -103,11 +103,12 @@ function renderSettings(
     modelId: "claude-sonnet-4",
     latencyMs: 42,
   },
+  probe?: () => Promise<ProviderConnectionTestResult>,
 ) {
   const updateListeners = new Set<(status: UpdateStatus) => void>();
   const invoke = vi.fn(async (command: string) => {
     if (command === "test_provider_connection") {
-      return connectionTestResult;
+      return probe ? probe() : connectionTestResult;
     }
 
     if (
@@ -600,7 +601,8 @@ describe("Settings — provider connection test", () => {
     renderSettings("/usage?settings=providers", disabledUpdateStatus, {
       ok: false,
       kind: "entitlement",
-      message: "Not covered by your subscription plan.",
+      message: "Not covered by your subscription plan",
+      detail: "403 status code (no body)",
       modelId: "claude-sonnet-4",
     });
 
@@ -608,8 +610,55 @@ describe("Settings — provider connection test", () => {
     await user.click(within(anthropic).getByRole("button", { name: "Test connection" }));
 
     expect(
-      await within(anthropic).findByText("Failed · Not covered by your subscription plan."),
+      await within(anthropic).findByText("Failed · Not covered by your subscription plan"),
     ).toBeInTheDocument();
+    expect(within(anthropic).getByTitle("403 status code (no body)")).toBeInTheDocument();
+    expect(within(anthropic).getByText("403 status code (no body)")).toBeInTheDocument();
+  });
+
+  it("clears a verified probe when the API key is replaced", async () => {
+    const user = userEvent.setup();
+    renderSettings("/usage?settings=providers");
+    await user.click(await screen.findByRole("button", { name: "API Key" }));
+    const card = await screen.findByTestId("provider-api-key-anthropic");
+
+    await user.click(within(card).getByRole("button", { name: "Test connection" }));
+    expect(await within(card).findByText("Verified · claude-sonnet-4 · 42 ms")).toBeInTheDocument();
+
+    await user.type(within(card).getByPlaceholderText("Paste API key"), "sk-replaced");
+    await user.click(within(card).getByRole("button", { name: "Replace key" }));
+
+    expect(await within(card).findByText("Not tested")).toBeInTheDocument();
+    expect(within(card).queryByText("Verified · claude-sonnet-4 · 42 ms")).not.toBeInTheDocument();
+  });
+
+  it("does not show a probe that resolves after the credential changed", async () => {
+    const user = userEvent.setup();
+    let resolveProbe: (result: ProviderConnectionTestResult) => void = () => {};
+    const pending = new Promise<ProviderConnectionTestResult>((resolve) => {
+      resolveProbe = resolve;
+    });
+    renderSettings(
+      "/usage?settings=providers",
+      disabledUpdateStatus,
+      { ok: true, modelId: "claude-sonnet-4", latencyMs: 42 },
+      () => pending,
+    );
+    await user.click(await screen.findByRole("button", { name: "API Key" }));
+    const card = await screen.findByTestId("provider-api-key-anthropic");
+
+    await user.click(within(card).getByRole("button", { name: "Test connection" }));
+    expect(within(card).getByRole("button", { name: "Testing…" })).toBeDisabled();
+
+    await user.type(within(card).getByPlaceholderText("Paste API key"), "sk-replaced");
+    await user.click(within(card).getByRole("button", { name: "Replace key" }));
+    expect(await within(card).findByText("Not tested")).toBeInTheDocument();
+
+    resolveProbe({ ok: true, modelId: "claude-sonnet-4", latencyMs: 42 });
+    await waitFor(() => {
+      expect(within(card).queryByText(/Verified/)).not.toBeInTheDocument();
+    });
+    expect(within(card).getByText("Not tested")).toBeInTheDocument();
   });
 });
 

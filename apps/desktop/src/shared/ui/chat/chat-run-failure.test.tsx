@@ -40,7 +40,7 @@ describe("ChatRunFailure", () => {
     render(
       <ChatRunFailure error='403 {"error":{"message":"Your subscription plan does not include this model"}}' />,
     );
-    expect(screen.getByText("This model is not included in your subscription plan.")).toBeInTheDocument();
+    expect(screen.getByText("This model is not included in your subscription plan")).toBeInTheDocument();
     expect(screen.getByText(/Settings → Providers/)).toBeInTheDocument();
     expect(screen.queryByText("Run failed")).not.toBeInTheDocument();
   });

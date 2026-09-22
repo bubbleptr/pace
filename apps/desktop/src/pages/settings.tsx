@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
 import {
@@ -76,26 +76,44 @@ function statusSummary(provider: ProviderAuthStatusItem) {
   return "Configured";
 }
 
+function connectionEpochKey(providerId: string) {
+  return ["provider-connection-epoch", providerId] as const;
+}
+
+function bumpProviderConnectionEpoch(queryClient: QueryClient, providerId: string) {
+  queryClient.setQueryData<number>(connectionEpochKey(providerId), (current) => (current ?? 0) + 1);
+}
+
 function connectionChip(
   result: ProviderConnectionTestResult | undefined,
   testing: boolean,
   transportError?: string,
 ) {
-  if (testing) return { label: "Testing…", color: "blue" as const };
-  if (transportError) return { label: `Failed · ${transportError}`, color: "red" as const };
-  if (!result) return { label: "Not tested", color: "gray" as const };
+  if (testing) return { label: "Testing…", color: "blue" as const, detail: "" };
+  if (transportError) return { label: `Failed · ${transportError}`, color: "red" as const, detail: "" };
+  if (!result) return { label: "Not tested", color: "gray" as const, detail: "" };
   if (result.ok) {
     return {
       label: `Verified · ${result.modelId} · ${result.latencyMs} ms`,
       color: "green" as const,
+      detail: "",
     };
   }
-  return { label: `Failed · ${result.message}`, color: "red" as const };
+  return { label: `Failed · ${result.message}`, color: "red" as const, detail: result.detail };
 }
 
 function ProviderConnectionTest({ providerId }: { providerId: string }) {
+  const epochQuery = useQuery({
+    queryKey: connectionEpochKey(providerId),
+    queryFn: () => 0,
+    initialData: 0,
+    // Epoch only moves when a credential write bumps it. Do not refetch it back to 0.
+    enabled: false,
+    staleTime: Infinity,
+  });
+  const epoch = epochQuery.data ?? 0;
   const query = useQuery({
-    queryKey: ["provider-connection-test", providerId],
+    queryKey: ["provider-connection-test", providerId, epoch],
     queryFn: () =>
       invoke<ProviderConnectionTestResult>("test_provider_connection", {
         providerId,
@@ -109,7 +127,7 @@ function ProviderConnectionTest({ providerId }: { providerId: string }) {
     !query.isFetching && query.isError
       ? query.error instanceof Error
         ? query.error.message
-        : "Connection test failed."
+        : "Connection test failed"
       : undefined;
   const chip = connectionChip(query.data, query.isFetching, transportError);
 
@@ -123,7 +141,14 @@ function ProviderConnectionTest({ providerId }: { providerId: string }) {
           void query.refetch();
         }}
       />
-      <Token size="sm" color={chip.color} label={chip.label} />
+      <span title={chip.detail || undefined}>
+        <Token size="sm" color={chip.color} label={chip.label} />
+      </span>
+      {chip.detail ? (
+        <Text as="p" type="supporting" style={{ flexBasis: "100%", overflowWrap: "anywhere" }}>
+          {chip.detail}
+        </Text>
+      ) : null}
     </>
   );
 }
@@ -135,6 +160,7 @@ function ProviderApiKeyCard({
   provider: ProviderAuthStatusItem;
   onSaved: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const saveMutation = useMutation({
@@ -144,6 +170,7 @@ function ProviderApiKeyCard({
         apiKey,
       }),
     onSuccess: () => {
+      bumpProviderConnectionEpoch(queryClient, provider.id);
       setApiKey("");
       setError(null);
       onSaved();
@@ -158,6 +185,7 @@ function ProviderApiKeyCard({
         providerId: provider.id,
       }),
     onSuccess: () => {
+      bumpProviderConnectionEpoch(queryClient, provider.id);
       setError(null);
       onSaved();
     },
@@ -239,6 +267,7 @@ function ProviderSubscriptionCard({
   provider: ProviderAuthStatusItem;
   onSaved: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const loginMutation = useMutation({
     mutationFn: () =>
@@ -246,6 +275,7 @@ function ProviderSubscriptionCard({
         providerId: provider.id,
       }),
     onSuccess: () => {
+      bumpProviderConnectionEpoch(queryClient, provider.id);
       setError(null);
       onSaved();
     },
@@ -259,6 +289,7 @@ function ProviderSubscriptionCard({
         providerId: provider.id,
       }),
     onSuccess: () => {
+      bumpProviderConnectionEpoch(queryClient, provider.id);
       setError(null);
       onSaved();
     },

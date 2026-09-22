@@ -311,7 +311,8 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
       return Promise.resolve({
         ok: false,
         kind: "unknown",
-        message: "Connection tests run in the desktop app.",
+        message: "Connection tests run in the desktop app",
+        detail: "",
       } as T);
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);

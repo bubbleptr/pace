@@ -142,7 +142,7 @@ function pendPrompt(): Promise<string> {
 const CONNECTION_TEST_TIMEOUT_MS = 15_000;
 
 function timeoutMessage(timeoutMs: number): string {
-  return `Timed out after ${timeoutMs / 1000} seconds.`;
+  return `Timed out after ${timeoutMs / 1000} seconds`;
 }
 
 function selectProbeModel(
@@ -165,12 +165,14 @@ function selectProbeModel(
 function failureResult(
   kind: ProviderFailureKind,
   message: string,
+  detail: string,
   modelId?: string,
 ): ProviderConnectionTestResult {
   return {
     ok: false,
     kind,
     message,
+    detail,
     ...(modelId ? { modelId } : {}),
   };
 }
@@ -333,8 +335,9 @@ export function createProviderAuthService(
         return failureResult(
           "unknown",
           modelId
-            ? `Model "${modelId}" is not available for this provider.`
-            : "No model is available to test for this provider.",
+            ? `Model "${modelId}" is not available for this provider`
+            : "No model is available to test for this provider",
+          "",
           modelId,
         );
       }
@@ -360,12 +363,12 @@ export function createProviderAuthService(
         );
 
         if (response.stopReason === "aborted" || controller.signal.aborted) {
-          return failureResult("network", timeoutMessage(timeoutMs), model.id);
+          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
         }
 
         if (response.stopReason === "error") {
-          const failure = describeProviderFailure(response.errorMessage ?? "Connection test failed.");
-          return failureResult(failure.kind, failure.message, model.id);
+          const failure = describeProviderFailure(response.errorMessage ?? "Connection test failed");
+          return failureResult(failure.kind, failure.message, failure.detail, model.id);
         }
 
         return {
@@ -375,11 +378,11 @@ export function createProviderAuthService(
         };
       } catch (error) {
         if (controller.signal.aborted) {
-          return failureResult("network", timeoutMessage(timeoutMs), model.id);
+          return failureResult("network", timeoutMessage(timeoutMs), "", model.id);
         }
 
         const failure = describeProviderFailure(error);
-        return failureResult(failure.kind, failure.message, model.id);
+        return failureResult(failure.kind, failure.message, failure.detail, model.id);
       } finally {
         clearTimeout(timer);
       }
