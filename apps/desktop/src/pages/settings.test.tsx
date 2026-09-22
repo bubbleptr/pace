@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -9,7 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SettingsDialog } from "@/pages/settings";
+import { SettingsDialog, resetCatalogRefreshGate, startCatalogRefresh } from "@/pages/settings";
 import { AppFrame } from "@/app/app-shell";
 import {
   getVisibleModels,
@@ -18,7 +19,7 @@ import {
 import { resetUpdateStatusStore } from "@/entities/update/use-update-status";
 import type { PaceRendererApi } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type { ProviderConnectionTestResult } from "@pace/core";
+import type { ModelCatalogRefreshResult, ProviderConnectionTestResult } from "@pace/core";
 
 const providerAuthStatus = {
   agentDir: "/agent",
@@ -115,7 +116,17 @@ type RenderSettingsOptions = {
   connectionTestResult?: ProviderConnectionTestResult;
   probe?: () => Promise<ProviderConnectionTestResult>;
   catalogRefresh?: CatalogRefreshFixture;
+  catalogRefreshImpl?: (args?: Record<string, unknown>) => Promise<ModelCatalogRefreshResult>;
+  strict?: boolean;
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function renderSettings(
   path = "/usage?settings=models",
@@ -146,6 +157,10 @@ function renderSettings(
     }
 
     if (command === "refresh_model_catalog") {
+      if (options.catalogRefreshImpl) {
+        return options.catalogRefreshImpl(args);
+      }
+
       if ("offline" in catalogRefresh) {
         return { offline: true };
       }
@@ -219,12 +234,20 @@ function renderSettings(
     routeTree: rootRoute.addChildren([usageRoute]),
   });
 
-  return {
-    ...render(
-      <QueryClientProvider client={new QueryClient()}>
+  const tree = (
+    <QueryClientProvider client={new QueryClient()}>
+      {options.strict ? (
+        <StrictMode>
+          <RouterProvider router={router} />
+        </StrictMode>
+      ) : (
         <RouterProvider router={router} />
-      </QueryClientProvider>,
-    ),
+      )}
+    </QueryClientProvider>
+  );
+
+  return {
+    ...render(tree),
     router,
     emitUpdate: (status: UpdateStatus) => {
       act(() => {
@@ -242,6 +265,7 @@ async function findModelsSection() {
 
 beforeEach(() => {
   resetUpdateStatusStore();
+  resetCatalogRefreshGate();
 });
 
 describe("Settings — visible models", () => {
@@ -415,6 +439,71 @@ describe("Settings — visible models", () => {
 
     await waitFor(() => {
       expect(countCalls("refresh_model_catalog")).toBe(2);
+    });
+  });
+
+  it("reuses the in-flight refresh when Models is left and reopened", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<ModelCatalogRefreshResult>();
+    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => pending.promise,
+    });
+    const section = await findModelsSection();
+    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
+
+    await waitFor(() => expect(refreshButton()).toBeDisabled());
+    expect(countCalls("refresh_model_catalog")).toBe(1);
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
+
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    await user.click(screen.getByRole("button", { name: "Models" }));
+
+    expect(countCalls("refresh_model_catalog")).toBe(1);
+    expect(refreshButton()).toBeDisabled();
+
+    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await waitFor(() => expect(refreshButton()).toBeEnabled());
+  });
+
+  it("keeps Refresh models disabled when a later refresh settles before an earlier one", async () => {
+    const first = deferred<ModelCatalogRefreshResult>();
+    const second = deferred<ModelCatalogRefreshResult>();
+    renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => first.promise,
+    });
+    const section = await findModelsSection();
+    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
+    await waitFor(() => expect(refreshButton()).toBeDisabled());
+
+    act(() => {
+      startCatalogRefresh(true, () => second.promise);
+    });
+    expect(refreshButton()).toBeDisabled();
+
+    await act(async () => {
+      second.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+      await second.promise;
+    });
+    expect(refreshButton()).toBeDisabled();
+
+    first.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await waitFor(() => expect(refreshButton()).toBeEnabled());
+  });
+
+  it("fires one auto-refresh when Models mounts under StrictMode", async () => {
+    const pending = deferred<ModelCatalogRefreshResult>();
+    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
+      catalogRefreshImpl: () => pending.promise,
+      strict: true,
+    });
+
+    await findModelsSection();
+    await waitFor(() => expect(countCalls("refresh_model_catalog")).toBe(1));
+    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
+
+    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
+    await act(async () => {
+      await pending.promise;
     });
   });
 

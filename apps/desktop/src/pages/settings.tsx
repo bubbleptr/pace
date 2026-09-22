@@ -8,7 +8,7 @@ import {
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutPanel } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -51,6 +51,53 @@ import type {
 } from "@pace/core";
 
 const availableModelControlsQueryKey = ["available-model-controls"] as const;
+
+// TanStack's mutation isPending follows only the latest call. A refresh that
+// started earlier can still be running after that flag flips false, which
+// re-enables Refresh models on top of an open request. This list is the
+// disable signal: non-force callers join the request already in flight.
+let inFlightCatalogRefreshes: Array<{ promise: Promise<ModelCatalogRefreshResult> }> = [];
+const catalogRefreshListeners = new Set<() => void>();
+
+function notifyCatalogRefreshListeners() {
+  for (const listener of catalogRefreshListeners) listener();
+}
+
+function subscribeCatalogRefreshBusy(listener: () => void) {
+  catalogRefreshListeners.add(listener);
+  return () => {
+    catalogRefreshListeners.delete(listener);
+  };
+}
+
+function isCatalogRefreshBusy() {
+  return inFlightCatalogRefreshes.length > 0;
+}
+
+export function resetCatalogRefreshGate() {
+  inFlightCatalogRefreshes = [];
+  notifyCatalogRefreshListeners();
+}
+
+export function startCatalogRefresh(
+  force: boolean,
+  execute: () => Promise<ModelCatalogRefreshResult>,
+): Promise<ModelCatalogRefreshResult> {
+  if (!force) {
+    const current = inFlightCatalogRefreshes[0];
+    if (current) return current.promise;
+  }
+
+  const promise = execute().finally(() => {
+    inFlightCatalogRefreshes = inFlightCatalogRefreshes.filter(
+      (entry) => entry.promise !== promise,
+    );
+    notifyCatalogRefreshListeners();
+  });
+  inFlightCatalogRefreshes = [...inFlightCatalogRefreshes, { promise }];
+  notifyCatalogRefreshListeners();
+  return promise;
+}
 
 type AuthTab = "subscription" | "api_key";
 
@@ -777,32 +824,43 @@ function SettingsContent({
     queryFn: () =>
       invoke<RuntimeModelControls>("list_available_model_controls"),
   });
-  const catalogRefresh = useMutation({
-    mutationFn: (force: boolean) =>
-      invoke<ModelCatalogRefreshResult>("refresh_model_catalog", { force }),
-    onSuccess: (result) => {
-      if ("offline" in result) return;
-      // Draft composers keep this catalog in module state. Drop it so the
-      // next new Session paints the models the network refresh just stored.
-      invalidateCachedModelCatalog();
-      void queryClient.invalidateQueries({
-        queryKey: availableModelControlsQueryKey,
-      });
+  const [catalogResult, setCatalogResult] = useState<ModelCatalogRefreshResult>();
+  const [catalogRefreshError, setCatalogRefreshError] = useState<string>();
+  const catalogRefreshBusy = useSyncExternalStore(
+    subscribeCatalogRefreshBusy,
+    isCatalogRefreshBusy,
+    isCatalogRefreshBusy,
+  );
+  const runCatalogRefresh = useCallback(
+    (force: boolean) => {
+      const promise = startCatalogRefresh(force, () =>
+        invoke<ModelCatalogRefreshResult>("refresh_model_catalog", { force }),
+      );
+      void promise.then(
+        (result) => {
+          setCatalogRefreshError(undefined);
+          setCatalogResult(result);
+          if ("offline" in result) return;
+          // Draft composers keep this catalog in module state. Drop it so the
+          // next new Session paints the models the network refresh just stored.
+          invalidateCachedModelCatalog();
+          void queryClient.invalidateQueries({
+            queryKey: availableModelControlsQueryKey,
+          });
+        },
+        (error: unknown) => {
+          setCatalogRefreshError(
+            error instanceof Error ? error.message : "Could not refresh models.",
+          );
+        },
+      );
     },
-  });
-  const refreshedModelsSection = useRef(false);
+    [queryClient],
+  );
   useEffect(() => {
-    if (section !== "models") {
-      refreshedModelsSection.current = false;
-      return;
-    }
-    // One non-force refresh per visit. The ref survives StrictMode's
-    // double-invoked effect so opening Models does not fetch twice.
-    if (refreshedModelsSection.current) return;
-    refreshedModelsSection.current = true;
-    catalogRefresh.mutate(false);
-  }, [section, catalogRefresh.mutate]);
-  const catalogResult = catalogRefresh.data;
+    if (section !== "models") return;
+    runCatalogRefresh(false);
+  }, [section, runCatalogRefresh]);
   const catalogOffline = catalogResult !== undefined && "offline" in catalogResult;
   const modelCatalogError = !modelsQuery.isError
     ? undefined
@@ -1018,17 +1076,11 @@ function SettingsContent({
               catalogOffline={catalogOffline}
               errorMessage={modelCatalogError}
               isLoading={modelsQuery.isPending}
-              isRefreshing={catalogRefresh.isPending}
+              isRefreshing={catalogRefreshBusy}
               models={modelsQuery.data?.models ?? []}
-              onRefresh={() => catalogRefresh.mutate(true)}
+              onRefresh={() => runCatalogRefresh(true)}
               providerLabels={providerLabels}
-              refreshError={
-                catalogRefresh.isError
-                  ? catalogRefresh.error instanceof Error
-                    ? catalogRefresh.error.message
-                    : "Could not refresh models."
-                  : undefined
-              }
+              refreshError={catalogRefreshError}
               refreshedAt={
                 catalogResult && "refreshedAt" in catalogResult
                   ? catalogResult.refreshedAt
