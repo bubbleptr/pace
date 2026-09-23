@@ -15,6 +15,60 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.15",
+    date: "2026-09-23",
+    title: "Models you can actually use",
+    summary: "Pace now ships Pi 0.87.1, lists only the models your account or API key can use, checks provider connections from Settings, and keeps the model selector in step with the Models page.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.15",
+    changes: [
+      {
+        kind: "added",
+        title: "Check provider connections",
+        description: "Settings → Providers has a Check button on each configured card. It sends a one-token request and shows a single status: Working, Sign-in expired, API key rejected, Not covered by your plan, Can't reach provider or Check failed. An expired subscription sign-in offers Sign in again, and the raw provider error sits behind Details.",
+      },
+      {
+        kind: "added",
+        title: "Refresh models from Settings",
+        description: "Settings → Models refreshes the model catalog from pi.dev once per visit, and Refresh models forces it. New upstream models appear without waiting for a Pace update, open sessions pick them up without a restart, and the page shows the last refresh time and any per-provider errors.",
+      },
+      {
+        kind: "added",
+        title: "Select all per provider",
+        description: "Each provider card on the Models page has a Select all checkbox that selects or clears every model of that provider, and shows a partial state when only some are selected.",
+      },
+      {
+        kind: "improved",
+        title: "Only models your account can use",
+        description: "The ChatGPT subscription lists the models your plan offers, including ones Pi's catalog does not know yet, and drops retired ones such as gpt-5.3-codex-spark. OpenAI and Anthropic API keys list only the catalog models the key can access. If the account list cannot be fetched, Pace falls back to Pi's catalog.",
+      },
+      {
+        kind: "improved",
+        title: "Channel names in the model selector",
+        description: "When two providers serve the same model, such as the ChatGPT subscription and an OpenAI API key, each row names its channel so they no longer read as duplicates.",
+      },
+      {
+        kind: "improved",
+        title: "New sign-ins reach open sessions",
+        description: "Logging in to a provider or adding an API key in Settings updates the model list of sessions that are already open, instead of only new sessions.",
+      },
+      {
+        kind: "improved",
+        title: "Clearer plan errors",
+        description: "When a run fails because the model is not included in your subscription plan, the chat says so and points to Settings → Providers instead of showing a generic Run failed.",
+      },
+      {
+        kind: "improved",
+        title: "Bundled Pi 0.87.1",
+        description: "Adds Claude Opus 5.5 and GPT-6 Sol and Luna, makes Grok 4.7 the xAI default, adds per-model image input limits, and fixes compaction summaries that Claude Fable 5.1 refused.",
+      },
+      {
+        kind: "fixed",
+        title: "Model selector matches Settings",
+        description: "The selector in a live session listed models in a different order than Settings, and kept showing models you had just hidden until you navigated away. Both now use one order and update as soon as you save. Clearing every model now hides them all instead of silently showing every model again.",
+      },
+    ],
+  },
+  {
     version: "0.0.14",
     date: "2026-09-20",
     title: "Pi 0.86 and one composer",
