@@ -16,7 +16,7 @@
 
 ### 1. 一个 deep module：Model Catalog
 
-在 `packages/backend/src/workspace/model-catalog/` 建立 **Model Catalog** module，它是后端唯一拥有 Model 可用性的地方。它持有主进程内唯一的 Pace `ModelRuntime`（`createPaceModelRuntime` 对 Pi `ModelRuntime` 的包装，由组合根创建，同一实例注入 provider auth；每个 Session 进程仍按 ADR-0040 持有自己的实例），统一映射 capability，决定凭证变化后的刷新策略，并把刷新扇出到运行中的 Session。Settings、Session Draft composer、Live Session View 都只读它。
+在 `packages/backend/src/workspace/model-catalog.ts` 建立 **Model Catalog** module，它是后端唯一拥有 Model 可用性的地方。它持有主进程内唯一的 Pace `ModelRuntime`（`createPaceModelRuntime` 对 Pi `ModelRuntime` 的包装，由组合根创建，同一实例注入 provider auth；每个 Session 进程仍按 ADR-0040 持有自己的实例），统一映射 capability，决定凭证变化后的刷新策略，并把刷新扇出到运行中的 Session。Settings、Session Draft composer、Live Session View 都只读它。
 
 interface 只有四个入口：`list()`（懒建、缓存优先）、`refresh({ allowNetwork, force })`（联网重算 → 扇出 → 发信号）、`onCredentialChanged()`（统一策略，等价于联网 refresh）、`subscribe(listener)`。扇出超时是构造参数（默认 5 秒），超时只记日志不阻塞调用方，也不进 refresh 的 errors；errors 保持 provider 维度。启动时后台刷新是构造选项而不是 service 的旁路。
 
