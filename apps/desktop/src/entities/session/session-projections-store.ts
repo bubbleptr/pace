@@ -148,22 +148,18 @@ export function createSessionProjectionsStore(options: {
       const records = await options.listSessions();
       // Merge against the store as it is now: Sessions may have been created
       // or advanced while the backend list was in flight.
+      const liveOwned = (projection: SessionProjection) =>
+        isLiveOwned(projection, subscriptions.has(projection.id));
       const listed = new Set(records.map((record) => record.id));
       const merged = records.map((record) => {
         const current = get(record.id);
-        return current && isLiveOwned(current, subscriptions.has(current.id))
-          ? current
-          : record;
+        return current && liveOwned(current) ? current : record;
       });
-      // The backend has no record of a Session until creation binds a runtime.
-      const creating = projections.filter(
-        (projection) => !listed.has(projection.id) && projection.status === "creating",
+      // A Session being created has no backend record until its runtime is bound.
+      const unlisted = projections.filter(
+        (projection) => !listed.has(projection.id) && liveOwned(projection),
       );
-      const kept = new Set([...merged, ...creating].map((projection) => projection.id));
-      for (const sessionId of subscriptions.keys()) {
-        if (!kept.has(sessionId)) release(sessionId);
-      }
-      commit([...creating, ...merged]);
+      commit([...unlisted, ...merged]);
     },
     subscribe(listener) {
       listeners.add(listener);
