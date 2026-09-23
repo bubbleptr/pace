@@ -115,6 +115,16 @@ describe("Session process isolation", () => {
     expect((await driver.resumeSession(input)).cwd).toBe(cwd);
   });
 
+  it("ignores a message kind it does not know, even one carrying a pending request id", async () => {
+    const events: RuntimeGatewayDriverEvent[] = [];
+    driver.onEvent(event => events.push(event));
+    const a = await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
+    const accepted = await driver.sendPrompt({ piSessionId: a.piSessionId, prompt: "unknown-kind" });
+    expect(accepted).toMatchObject({ type: "status" });
+    expect(events).toEqual([expect.objectContaining({ type: "message_update" })]);
+    expect((await driver.getSnapshot(a.piSessionId)).runtimeId).toBe(a.runtimeId);
+  });
+
   it("returns the failed Session snapshot when the process exits during a snapshot query", async () => {
     const a = await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
     await driver.sendPrompt({ piSessionId: a.piSessionId, prompt: "hold-snapshot" });
