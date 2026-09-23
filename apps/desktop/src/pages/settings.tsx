@@ -777,12 +777,41 @@ function updateStatusText(status: UpdateStatus) {
   }
 }
 
+type RuntimeInfo = {
+  appVersion: string;
+  piVersion: string;
+  mode: "SDK";
+  platform: string;
+  arch: string;
+  electronVersion: string | null;
+  isDevDataDir: boolean;
+};
+
+// Plain text, one field per line, so it pastes cleanly into a GitHub issue.
+function formatDiagnostics(info: RuntimeInfo): string {
+  return [
+    `Pace ${info.appVersion}`,
+    `Pi SDK ${info.piVersion}`,
+    `Mode ${info.mode}`,
+    `Platform ${info.platform} ${info.arch}`,
+    `Electron ${info.electronVersion ?? "unknown"}`,
+    `Dev data dir ${info.isDevDataDir ? "yes" : "no"}`,
+  ].join("\n");
+}
+
 function AboutUpdatesSection() {
   const status = useUpdateStatus();
   const runtimeQuery = useQuery({
     queryKey: ["runtime-info"],
-    queryFn: () => invoke<{ appVersion: string; piVersion: string; mode: "SDK" }>("get_runtime_info"),
+    queryFn: () => invoke<RuntimeInfo>("get_runtime_info"),
   });
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
+  const copyDiagnostics = async () => {
+    if (!runtimeQuery.data) return;
+    await navigator.clipboard.writeText(formatDiagnostics(runtimeQuery.data));
+    setDiagnosticsCopied(true);
+    window.setTimeout(() => setDiagnosticsCopied(false), 1500);
+  };
   const checkMutation = useMutation({
     mutationFn: () => invoke("update:check"),
   });
@@ -848,6 +877,14 @@ function AboutUpdatesSection() {
               onClick={() => installMutation.mutate()}
             />
           ) : null}
+          <Button
+            variant="secondary"
+            label={diagnosticsCopied ? "Copied" : "Copy diagnostics"}
+            isDisabled={!runtimeQuery.data}
+            onClick={() => {
+              void copyDiagnostics();
+            }}
+          />
         </HStack>
       </Card>
     </VStack>

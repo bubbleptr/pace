@@ -185,7 +185,15 @@ function renderSettings(
     }
 
     if (command === "get_runtime_info") {
-      return { appVersion: "0.0.1", piVersion: "0.86.0", mode: "SDK" };
+      return {
+        appVersion: "0.0.1",
+        piVersion: "0.86.0",
+        mode: "SDK",
+        platform: "darwin",
+        arch: "arm64",
+        electronVersion: "38.0.0",
+        isDevDataDir: true,
+      };
     }
 
     if (command === "reveal_project_in_finder") {
@@ -724,6 +732,25 @@ describe("Settings — about and updates", () => {
     const section = await findAboutSection();
 
     expect(await within(section).findByText("Pi SDK 0.86.0")).toBeInTheDocument();
+  });
+
+  it("copies Pace and Pi versions as plain-text diagnostics", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderSettings();
+
+    const section = await findAboutSection();
+    const button = await within(section).findByRole("button", { name: "Copy diagnostics" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.click(button);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const text = writeText.mock.calls[0][0] as string;
+    expect(text).toContain("Pace 0.0.1");
+    expect(text).toContain("Pi SDK 0.86.0");
+    expect(text).toContain("darwin arm64");
+    expect(text).toContain("Electron 38.0.0");
+    expect(await within(section).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("shows the current version and a disabled check button when updates are disabled", async () => {
