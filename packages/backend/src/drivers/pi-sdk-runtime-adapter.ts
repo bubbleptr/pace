@@ -19,14 +19,19 @@ import type {
   RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
   RuntimeGatewayQueueMutationResult,
-  RuntimeModelCapability,
   RuntimeModelControls,
   RuntimeModelSelection,
   RuntimePromptImage,
   RuntimeThinkingLevel,
   RuntimeToolSchema,
 } from "@pace/core";
-import { compareModelCapabilities, toPiImageContent } from "@pace/core";
+import {
+  capabilityFromModel,
+  compareModelCapabilities,
+  thinkingLevelOrder,
+  thinkingLevelsForModel,
+  toPiImageContent,
+} from "@pace/core";
 import type {
   PiSdkRuntimeFactory,
   PiSdkRuntimeForker,
@@ -428,65 +433,8 @@ function modelId(model: unknown) {
   return maybeString(model.id) ?? maybeString(model.name);
 }
 
-const thinkingLevelOrder: RuntimeThinkingLevel[] = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-];
-
 function isThinkingLevel(value: unknown): value is RuntimeThinkingLevel {
   return thinkingLevelOrder.includes(value as RuntimeThinkingLevel);
-}
-
-function thinkingLevelsForModel(model: PublicPiSdkModel): RuntimeThinkingLevel[] {
-  if (!model.reasoning) {
-    return ["off"];
-  }
-
-  return thinkingLevelOrder.filter((level) => {
-    const mapped = model.thinkingLevelMap?.[level];
-
-    if (mapped === null) {
-      return false;
-    }
-
-    // xhigh/max are opt-in per model: only offered when explicitly mapped.
-    return (level !== "xhigh" && level !== "max") || mapped !== undefined;
-  });
-}
-
-function capabilityFromModel(model: PublicPiSdkModel): RuntimeModelCapability {
-  const capability: RuntimeModelCapability = {
-    provider: model.provider,
-    modelId: model.id,
-    name: model.name,
-    thinkingLevels: thinkingLevelsForModel(model),
-  };
-
-  if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
-    capability.contextWindow = model.contextWindow;
-  }
-
-  if (typeof model.maxTokens === "number" && model.maxTokens > 0) {
-    capability.maxTokens = model.maxTokens;
-  }
-
-  if (Array.isArray(model.input)) {
-    const modalities = model.input.filter(
-      (modality): modality is "text" | "image" =>
-        modality === "text" || modality === "image",
-    );
-
-    if (modalities.length > 0) {
-      capability.input = modalities;
-    }
-  }
-
-  return capability;
 }
 
 function availableModelsFromSession(

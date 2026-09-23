@@ -147,6 +147,14 @@ export {
 } from "./runtime-gateway";
 
 export {
+  thinkingLevelOrder,
+  thinkingLevelsForModel,
+  capabilityFromModel,
+  defaultSelection,
+  type CatalogModel,
+} from "./model-capabilities";
+
+export {
   formatBrowserAnnotationPrompt,
   type BrowserAnnotationElement,
   type BrowserAnnotationPayload,
