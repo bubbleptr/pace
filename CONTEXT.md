@@ -176,6 +176,10 @@ _Avoid_: AI Gateway, Pi SDK API, Pi RPC protocol, renderer bridge
 由 Pi Runtime 使用的底层 LLM 选择，可以跨 provider 切换并影响 reasoning、成本和上下文能力。它不是 Agent Runtime；Pace 支持多模型不等于支持多 agent。
 _Avoid_: Runtime, agent, workspace
 
+**Model Catalog**:
+Pace 后端唯一拥有「当前有哪些 Model 可用、各自的 capability（thinking 档位等）」这个事实的 module。它持有唯一的 Pi ModelRuntime，统一从 Pi 注册表映射 capability，决定凭证变化后的刷新策略，并把刷新扇出到运行中的 Session。Settings、Session Draft 的 composer 和 Live Session View 都只读它；capability 只即时发现不持久化（ADR-0024），变化以全局失效信号通知（同 ADR-0038 模式，ADR-0043）。
+_Avoid_: Model list, model registry (that is Pi's), provider status (that is provider auth's), per-session catalog
+
 **Agent Run**:
 Agent Workspace 中一次可运行、可停止、可观察的 Pi Runtime 实例。一个 workspace 可以同时拥有多个 Agent Run；每个 Agent Run 对应独立 Pi session 状态和 Session Trajectory；每个根 Session 的运行环境彼此隔离。它是 runtime 实例语义，不是一次 agent loop 执行；后者叫 Active Run。
 _Avoid_: Workspace, model, task label, active run, agent loop run
