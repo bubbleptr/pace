@@ -2335,11 +2335,13 @@ function SessionDraftComposer({
   const projectBranch = projectGit.summary?.branch ?? null;
   const projectBranches = projectGit.summary?.branches ?? [];
   // A pick the Project no longer lists (branch deleted since the draft was
-  // saved) is dropped rather than failing Session Creation.
+  // saved) is dropped rather than failing Session Creation. Before Git has
+  // answered there is no list to check, so the pick stands and the backend
+  // rejects it if it is gone — never a silent fall back to HEAD.
   const chosenBaseRef =
     selectedCheckoutMode === "worktree" &&
     draft.baseRef &&
-    projectBranches.includes(draft.baseRef)
+    (!projectGit.summary || projectBranches.includes(draft.baseRef))
       ? draft.baseRef
       : undefined;
   const { loading: providerAuthLoading, configured: providersConfigured } =

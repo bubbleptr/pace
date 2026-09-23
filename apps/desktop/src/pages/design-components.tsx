@@ -1665,6 +1665,7 @@ function ChatPromptInputGallery() {
               </span>
               <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
                 from main
+                <Icons.ChevronDown aria-hidden="true" className="size-4 shrink-0" />
               </span>
               <span className="ml-auto inline-flex shrink-0">
                 <ContextUsageMeter usage={null} />
