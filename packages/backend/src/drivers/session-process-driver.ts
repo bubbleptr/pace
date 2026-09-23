@@ -1,4 +1,5 @@
 import { fork } from "node:child_process";
+import { statSync } from "node:fs";
 import type { RuntimeGatewaySnapshot } from "@pace/core";
 import type {
   CreateRuntimeSessionInput, ForkRuntimeSessionInput, PiRuntimeDriver,
@@ -20,6 +21,11 @@ function startProcess(
   onEvent: (event: RuntimeGatewayDriverEvent) => void,
   onExit: (error: Error) => void,
 ) {
+  // fork reports a missing cwd as `spawn <executable> ENOENT`, which reads like
+  // a broken install; name the real cause (e.g. a deleted project) instead.
+  if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`Project directory does not exist: ${cwd}`);
+  }
   const child = fork(options.entryPath, [], {
     cwd,
     // Electron's bundled Node also works when no system Node is installed.
