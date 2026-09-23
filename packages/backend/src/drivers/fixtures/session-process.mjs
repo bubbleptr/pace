@@ -5,11 +5,12 @@ let snapshot;
 let starts = 0;
 let hangShutdown = false;
 let holdSnapshot = false;
-process.on("message", async ({ id, method, args }) => {
+process.on("message", async ({ type, id, method, args }) => {
+  if (type !== "request") return;
   if (method === "dispose") {
     if (hangShutdown) return;
     writeFileSync(join(process.cwd(), `closed-${process.pid}`), "closed");
-    process.send({ id, result: null }, () => process.exit(0));
+    process.send({ type: "response", id,result: null }, () => process.exit(0));
     return;
   }
   if (method === "createSession" || method === "resumeSession" || method === "forkSession") {
@@ -20,7 +21,7 @@ process.on("message", async ({ id, method, args }) => {
       runtimeId: String(process.pid), cwd: process.cwd(), status: "idle",
       sessionName: String(starts), events: [], updatedAt: new Date().toISOString(),
     };
-    process.send({ id, result: method === "forkSession" ? { snapshot } : snapshot });
+    process.send({ type: "response", id,result: method === "forkSession" ? { snapshot } : snapshot });
     return;
   }
   if (method === "sendPrompt") {
@@ -28,9 +29,10 @@ process.on("message", async ({ id, method, args }) => {
     if (args[0].prompt === "hold") return;
     if (args[0].prompt === "hang-shutdown") hangShutdown = true;
     if (args[0].prompt === "hold-snapshot") holdSnapshot = true;
+    if (args[0].prompt === "unknown-kind") process.send({ type: "chord_update", id, result: "not a reply" });
     process.send({ type: "event", event: { piSessionId: snapshot.piSessionId,
       type: "message_update", payload: { kind: "message", body: args[0].prompt } } });
-    process.send({ id, result: { piSessionId: snapshot.piSessionId,
+    process.send({ type: "response", id,result: { piSessionId: snapshot.piSessionId,
       type: "status", payload: { kind: "status", title: "Accepted" } } });
     return;
   }
@@ -50,8 +52,8 @@ process.on("message", async ({ id, method, args }) => {
         },
       },
     });
-    process.send({ id, result: null });
+    process.send({ type: "response", id,result: null });
     return;
   }
-  if (method === "getSnapshot" && !holdSnapshot) process.send({ id, result: snapshot });
+  if (method === "getSnapshot" && !holdSnapshot) process.send({ type: "response", id,result: snapshot });
 });

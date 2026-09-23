@@ -1,5 +1,5 @@
 import type { PiRuntimeDriver } from "../gateway/runtime-gateway";
-import type { SessionProcessMessage, SessionProcessRequest } from "./session-process-protocol";
+import type { SessionProcessMessage } from "./session-process-protocol";
 
 /** The channel carries the existing driver commands, never plugin objects. */
 export function serveSessionProcess(driver: PiRuntimeDriver) {
@@ -19,14 +19,15 @@ export function serveSessionProcess(driver: PiRuntimeDriver) {
     return shutdown;
   };
   driver.onEvent(event => send({ type: "event", event }));
-  process.on("message", async (request: SessionProcessRequest) => {
-    const { id, method, args } = request;
+  process.on("message", async (message: SessionProcessMessage) => {
+    if (message.type !== "request") return;
+    const { id, method, args } = message;
     if (method === "dispose") {
       try {
         await close();
-        send({ id, result: null }, () => process.exit(0));
+        send({ type: "response", id, result: null }, () => process.exit(0));
       } catch (error) {
-        send({ id, error: error instanceof Error ? error.message : String(error) }, () => process.exit(1));
+        send({ type: "response", id, error: error instanceof Error ? error.message : String(error) }, () => process.exit(1));
       }
       return;
     }
@@ -39,9 +40,9 @@ export function serveSessionProcess(driver: PiRuntimeDriver) {
       const handler = driver[method];
       if (!handler) throw new Error(`Unsupported Session command: ${method}`);
       const result: unknown = await Reflect.apply(handler, driver, args);
-      send({ id, result });
+      send({ type: "response", id, result });
     } catch (error) {
-      send({ id, error: error instanceof Error ? error.message : String(error) });
+      send({ type: "response", id, error: error instanceof Error ? error.message : String(error) });
     }
   });
   // A crashed backend must not leave its Sessions running without an owner.

@@ -69,10 +69,11 @@ function startProcess(
   child.once("error", finish);
   child.once("exit", (code, signal) => finish(new Error(`Session process exited (${signal ?? code}).`)));
   child.on("message", (message: SessionProcessMessage) => {
-    if ("type" in message) {
+    if (message.type === "event") {
       onEvent(message.event);
       return;
     }
+    if (message.type !== "response") return;
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
@@ -84,7 +85,7 @@ function startProcess(
     const id = ++sequence;
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve: value => resolve(value as SessionProcessResult<M>), reject });
-      child.send({ id, method, args }, error => {
+      child.send({ type: "request", id, method, args }, error => {
         if (!error) return;
         pending.delete(id);
         reject(error);
