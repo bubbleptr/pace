@@ -3,7 +3,7 @@ import { act, fireEvent, render as renderWithoutQuery, screen, waitFor, within }
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { useState, type ComponentProps } from "react";
+import { useLayoutEffect, useState, type ComponentProps } from "react";
 import {
   Outlet,
   RouterProvider,
@@ -1358,9 +1358,9 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
-    // Retry must issue a fresh history read. Do not pin the absolute count:
-    // under a loaded CI runner an unrelated read can land in the same window
-    // and the exact total is not the behaviour this test protects.
+    // Retry must issue a fresh history read. The exact count is protected by
+    // "retries a failed read once even when the projection refreshes in the
+    // same commit"; this end-to-end path only asserts the fresh read.
     await waitFor(() => {
       expect(snapshotReads()).toBeGreaterThan(readsBeforeRetry);
     });
@@ -4495,6 +4495,40 @@ describe("AgentWorkspaceSessionsPage", () => {
 
       await waitFor(() => expect(screen.queryByTestId("session-history-status")).toBeNull());
       expect(screen.getByTestId("runtime-fallback-banner")).toBeInTheDocument();
+    });
+
+    it("retries a failed read once even when the projection refreshes in the same commit", async () => {
+      const loadSession = vi.fn()
+        .mockRejectedValueOnce(new Error("Journal read failed"))
+        .mockResolvedValue(resumedState);
+      const runtimeBridge = { ...createInMemoryPiRuntimeBridge(), loadSession };
+      // Clicks Retry from a layout effect: that runs after the refreshed
+      // projection commits but before its passive history effect, the window
+      // a background projection refresh opens on a loaded runner.
+      function ClickRetryBeforePassiveEffects({ armed }: { armed: boolean }) {
+        useLayoutEffect(() => {
+          if (armed) screen.getByRole("button", { name: "Retry" }).click();
+        }, [armed]);
+        return null;
+      }
+      const view = (armed: boolean) => (
+        <>
+          <AgentWorkspaceSessionsView
+            projectId="pig-docs"
+            runtimeBridge={runtimeBridge}
+            sessionProjection={{ ...projection }}
+            showDraft={false}
+          />
+          <ClickRetryBeforePassiveEffects armed={armed} />
+        </>
+      );
+      const { rerender } = render(view(false));
+      await screen.findByRole("button", { name: "Retry" });
+
+      rerender(view(true));
+      await act(async () => {});
+
+      expect(loadSession).toHaveBeenCalledTimes(2);
     });
   });
 

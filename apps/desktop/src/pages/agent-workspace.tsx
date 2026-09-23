@@ -3747,13 +3747,9 @@ function LiveSessionColumn({
       return;
     }
 
-    const historyKey = historyKeyForProjection(liveProjection, historyRetryNonce);
-
-    if (historyKey) {
-      historyLoadedKeysRef.current.delete(historyKey);
-      historyFailedKeysRef.current.delete(historyKey);
-    }
-
+    // The new nonce alone yields a fresh history key. Keep the failed key
+    // marked: clearing it here lets a history effect still pending with the
+    // old nonce re-read it before the retry render commits.
     setHistoryRetryNonce((currentNonce) => currentNonce + 1);
   };
   const shouldTickLiveClock =
