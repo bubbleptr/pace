@@ -1882,6 +1882,31 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(loadProjectGitSummary).not.toHaveBeenCalled();
     });
 
+    it("says there is no branch when the Project is not a repository or its HEAD is detached", async () => {
+      const loadProjectGitSummary = projectGitLoader(null);
+      saveSessionDraft("pig-docs", "Draft outside a branch");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId="pig-docs"
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={docsWorkspace}
+        />,
+      );
+
+      await screen.findByTestId("session-draft-composer");
+      const footer = footerOf("session-draft-composer");
+
+      const placeholder = await within(footer).findByTestId("composer-branch-label");
+      expect(placeholder).toHaveTextContent("No branch");
+      // A placeholder, not a way to pick a branch that does not exist.
+      expect(placeholder.closest("button")).toBeNull();
+      expect(
+        within(footer).queryByTestId("git-branch-status-trigger"),
+      ).not.toBeInTheDocument();
+    });
+
     it("keeps the draft Location and branch while the Session is being created", async () => {
       const user = userEvent.setup();
       const projections = createInMemorySessionProjectionStore();

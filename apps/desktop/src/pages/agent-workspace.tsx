@@ -2452,8 +2452,16 @@ function SessionDraftComposer({
         )
       }
       branch={
-        chatTarget || !projectBranch ? undefined : selectedCheckoutMode ===
-          "worktree" ? (
+        chatTarget || !projectGit.summary ? undefined : !projectBranch ? (
+          // Git answered with no branch — not a repository, or a detached
+          // HEAD. Say so quietly rather than leave the slot looking unloaded.
+          <ComposerStaticChip
+            chrome="button"
+            icon={GitBranch}
+            label="No branch"
+            testId="composer-branch-label"
+          />
+        ) : selectedCheckoutMode === "worktree" ? (
           // A worktree is cut from this branch rather than moving onto it.
           <ComposerStaticChip
             chrome="button"
