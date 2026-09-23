@@ -1141,7 +1141,7 @@ describe("Runtime Gateway client", () => {
     ]);
   });
 
-  it.each(["workspace.invalidated", "terminal_output", "terminal_exit"])("ignores ephemeral %s before runtime state and deduplication", async (type) => {
+  it.each(["workspace.invalidated", "model_catalog.invalidated", "terminal_output", "terminal_exit"])("ignores ephemeral %s before runtime state and deduplication", async (type) => {
     let receive: ((event: BackendRpcEvent) => void) | undefined;
     const snapshot: RuntimeGatewaySnapshot = { sessionId: "session-1", runtimeId: "pi-sdk:session-1", piSessionId: "pi-session-1", projectId: "pig", cwd: "/repo", status: "idle", events: [], updatedAt: "2026-09-05T00:00:00.000Z" };
     const client = createRuntimeGatewayClient({
@@ -1306,6 +1306,42 @@ describe("Runtime Gateway client", () => {
       },
     });
     expect(observed).toEqual([]);
+  });
+
+  it("hands a Session's catalog refresh only to that Session's model-controls listeners", () => {
+    let receive: ((event: BackendRpcEvent) => void) | undefined;
+    const client = createRuntimeGatewayClient({
+      invoke: async () => {
+        throw new Error("unexpected invoke");
+      },
+      onBackendEvent: (handler) => {
+        receive = handler;
+        return vi.fn();
+      },
+    });
+    const modelControls = {
+      models: [{ provider: "openai", modelId: "gpt-4.1", name: "GPT-4.1", thinkingLevels: ["off" as const] }],
+      selected: { provider: "openai", modelId: "gpt-4.1", thinkingLevel: "off" as const },
+    };
+    const onX = vi.fn();
+    const onY = vi.fn();
+    client.subscribeToModelControls?.("pi-x", onX);
+    client.subscribeToModelControls?.("pi-y", onY);
+    receive?.({
+      type: "event",
+      event: {
+        id: "catalog",
+        seq: 3,
+        sessionId: "session-x",
+        piSessionId: "pi-x",
+        type: "model_catalog_changed",
+        ts: "2026-09-24T00:00:00Z",
+        payload: { type: "model_catalog_changed", modelControls },
+      },
+    });
+    expect(onX).toHaveBeenCalledWith(modelControls, "2026-09-24T00:00:00Z");
+    expect(onX).toHaveBeenCalledTimes(1);
+    expect(onY).not.toHaveBeenCalled();
   });
 
   it("keeps a catalog refresh that arrives during a snapshot read on the resolved state", async () => {

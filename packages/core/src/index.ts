@@ -124,6 +124,7 @@ export {
   type RuntimeGatewayRequest,
   type RuntimeGatewayResponse,
   type RuntimeGatewayEventPayload,
+  type ModelCatalogInvalidatedPayload,
   type WorkspaceInvalidatedPayload,
   type RuntimeGatewayEventEnvelope,
   type RuntimeGatewayEventInput,
@@ -145,6 +146,14 @@ export {
   type RuntimeGatewaySequencer,
   type RuntimeGatewaySequencerOptions,
 } from "./runtime-gateway";
+
+export {
+  thinkingLevelOrder,
+  thinkingLevelsForModel,
+  capabilityFromModel,
+  defaultSelection,
+  type CatalogModel,
+} from "./model-capabilities";
 
 export {
   formatBrowserAnnotationPrompt,

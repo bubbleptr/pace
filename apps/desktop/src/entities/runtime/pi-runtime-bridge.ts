@@ -278,6 +278,12 @@ export type PiRuntimeBridge = {
     piSessionId: string,
     listener: (entry: AgentRuntimeEventEntry) => void,
   ): () => void;
+  // A Session's catalog refresh carries its own `selected`, so it arrives per
+  // piSessionId rather than through the global invalidation signal (ADR-0043 §4).
+  subscribeToModelControls?(
+    piSessionId: string,
+    listener: (controls: RuntimeModelControls, occurredAt: string) => void,
+  ): () => void;
 };
 
 // Domain helpers shared by both adapters — pure operations on the contract types.

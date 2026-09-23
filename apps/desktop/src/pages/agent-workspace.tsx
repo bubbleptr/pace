@@ -65,6 +65,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -74,7 +75,6 @@ import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
 import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-state";
 import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-status";
-import { invoke, onBackendEvent } from "@/shared/runtime";
 import {
   Stop,
   ChatAdd,
@@ -123,7 +123,6 @@ import {
   type ExecutionCheckout,
   type PiRuntimeBridge,
   type PiSessionState,
-  type RuntimeModelControls,
   type RuntimeModelSelection,
 } from "@/entities/runtime/pi-runtime-bridge";
 import {
@@ -176,12 +175,7 @@ import {
   overlayPreferredModel,
   saveLastModelSelection,
 } from "@/entities/session/last-model-preference";
-import {
-  modelControlsFromUnknown,
-  readCachedModelCatalog,
-  rememberModelCatalog,
-  subscribeModelCatalogInvalidation,
-} from "@/entities/model/model-catalog-cache";
+import { useModelCatalog } from "@/entities/model/use-model-catalog";
 import { useVisibleModels } from "@/entities/model/visible-models";
 import {
   findSessionChangeTarget,
@@ -807,46 +801,22 @@ function FullChatComposer({
   // Settings owns this set (issue #102) and opens as a dialog over this page,
   // so read it live rather than once per mount.
   const visibleModels = useVisibleModels();
-  const [availableModels, setAvailableModels] =
-    useState<RuntimeModelControls["models"]>(readCachedModelCatalog);
-  const needsModelCatalog =
-    !projection?.modelControls?.models.length &&
-    Boolean(projection?.piSessionId || isCreating);
+  // A live Session's own catalog wins; the global list fills in while it has none.
+  const modelCatalog = useModelCatalog({ sessionProjection: projection });
   // Session Creation has no controls of its own yet, so the chip keeps showing
   // what the Draft was set to — the same selection this Session starts with.
+  // The fallback reads the unfiltered list because it swaps in its own
+  // selection; the selector filters it against that selection.
   const composerModelControls = projection?.modelControls?.models.length
-    ? projection.modelControls
-    : availableModels.length
+    ? modelCatalog.controls ?? undefined
+    : modelCatalog.catalog?.models.length
       ? {
-          models: availableModels,
+          models: modelCatalog.catalog.models,
           selected:
             projection?.modelControls?.selected ??
             (isCreating ? getLastModelSelection() : null),
         }
       : projection?.modelControls;
-
-  const [catalogVersion, setCatalogVersion] = useState(0);
-  const catalogRequest = useRef(0);
-  useEffect(() => subscribeModelCatalogInvalidation(() => {
-    setCatalogVersion((version) => version + 1);
-  }), []);
-  // One fetch for the initial read and every credential change. A live
-  // Session catalog arrives on its own event, so don't fetch over it.
-  // Only the latest request may write: an older auth.json read can finish last.
-  useEffect(() => {
-    if (projection?.modelControls?.models.length) return;
-    if (!needsModelCatalog && catalogVersion === 0) return;
-    const request = ++catalogRequest.current;
-    let active = true;
-    void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
-      if (!active || request !== catalogRequest.current) return;
-      rememberModelCatalog(controls.models);
-      setAvailableModels(controls.models);
-    }).catch(() => {
-      // An unavailable catalog must not prevent reading history or sending a prompt.
-    });
-    return () => { active = false; };
-  }, [catalogVersion, needsModelCatalog, projection?.modelControls?.models.length, sessionId]);
   const [draft, setDraft] = useState(() =>
     sessionId ? getFollowUpDraft(sessionId)?.message ?? "" : "",
   );
@@ -2346,15 +2316,9 @@ function SessionDraftComposer({
       : undefined;
   const { loading: providerAuthLoading, configured: providersConfigured } =
     useProviderAuthStatus();
-  const [draftModelControls, setDraftModelControls] =
-    useState<RuntimeModelControls | null>(null);
-  const [catalogVersion, setCatalogVersion] = useState(0);
-  useEffect(
-    () => subscribeModelCatalogInvalidation(() => {
-      setCatalogVersion((version) => version + 1);
-    }),
-    [],
-  );
+  const modelCatalog = useModelCatalog();
+  // Re-renders on a pick; the pick is also the stored last selection.
+  const [pickedModel, setPickedModel] = useState<RuntimeModelSelection | null>(null);
   const sessionProjectionsStore = useSessionProjectionsOptional();
   const recentSessionModel = mostRecentSessionModelSelection(
     sessionProjectionsStore?.sessionProjections ?? [],
@@ -2366,36 +2330,19 @@ function SessionDraftComposer({
   const catalog = useComposerInsertCatalog();
   const picker = useFilePicker(attachments.addFiles);
 
-  useEffect(() => {
-    if (providerAuthLoading || !providersConfigured) {
-      setDraftModelControls(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    void invoke<RuntimeModelControls>("list_available_model_controls")
-      .then((controls) => {
-        if (cancelled) return;
-        // Shared with the Live composer so the handoff keeps the same chip.
-        rememberModelCatalog(controls.models);
-        setDraftModelControls(
-          overlayPreferredModel(controls, [
-            getLastModelSelection(),
-            recentSessionModel,
-          ]),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDraftModelControls(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [catalogVersion, providerAuthLoading, providersConfigured, recentSessionModelKey]);
+  const draftCatalog =
+    providerAuthLoading || !providersConfigured ? null : modelCatalog.catalog;
+  // Unfiltered like the Live fallback: the preferred model may be one the user
+  // hid, and the selector marks it rather than dropping it.
+  const draftModelControls = useMemo(
+    () => draftCatalog && overlayPreferredModel(draftCatalog, [
+      pickedModel,
+      getLastModelSelection(),
+      recentSessionModel,
+    ]),
+    // recentSessionModel is a fresh object per render; its key is the identity.
+    [draftCatalog, pickedModel, recentSessionModelKey],
+  );
 
   const switchProjectBranch = async (branch: string) => {
     try {
@@ -2576,14 +2523,7 @@ function SessionDraftComposer({
                     onManageModels={onManageModels}
                     onChange={(selection) => {
                       saveLastModelSelection(selection);
-                      setDraftModelControls((current) =>
-                        current
-                          ? {
-                              ...current,
-                              selected: selection,
-                            }
-                          : current,
-                      );
+                      setPickedModel(selection);
                     }}
                   />
                 ) : null}
@@ -3714,22 +3654,21 @@ function LiveSessionColumn({
       },
     );
 
-    const unsubscribeCatalog = onBackendEvent((event) => {
-      if (event.type !== "event" || event.event.piSessionId !== piSessionId) return;
-      if (event.event.payload.type !== "model_catalog_changed") return;
-      const modelControls = modelControlsFromUnknown(event.event.payload.modelControls);
-      if (!modelControls) return;
-      applyLiveProjectionEvent({
-        type: "model-controls-changed",
-        modelControls,
-        occurredAt: event.event.ts,
-      });
-    });
+    const unsubscribeModelControls = bridge.subscribeToModelControls?.(
+      piSessionId,
+      (modelControls, occurredAt) => {
+        applyLiveProjectionEvent({
+          type: "model-controls-changed",
+          modelControls,
+          occurredAt,
+        });
+      },
+    );
 
     return () => {
       unsubscribeLegacyEvents();
       unsubscribeAgentEvents?.();
-      unsubscribeCatalog();
+      unsubscribeModelControls?.();
     };
   }, [getRuntimeBridge, liveProjection?.piSessionId, showDraft]);
 

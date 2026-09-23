@@ -31,7 +31,6 @@ import {
   type SessionReplayEntry,
 } from "@/entities/runtime/pi-runtime-bridge";
 import type { AgentRuntimeEvent } from "@pace/core";
-import { modelControlsFromUnknown } from "@/entities/model/model-catalog-cache";
 import { invoke as invokeRuntime, onBackendEvent as onRuntimeBackendEvent } from "@/shared/runtime";
 
 type InvokeGatewayMethod = <T>(
@@ -53,6 +52,13 @@ export type RuntimeGatewayClientOptions = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Ignore a catalog push that is not a model list. The backend owns the shape. */
+function modelControlsFromUnknown(value: unknown): RuntimeModelControls | null {
+  if (!isRecord(value) || !Array.isArray(value.models)) return null;
+  if (value.selected != null && !isRecord(value.selected)) return null;
+  return value as RuntimeModelControls;
 }
 
 function maybeString(value: unknown): string | null {
@@ -577,6 +583,10 @@ export function createRuntimeGatewayClient(
   const queuedMessages = new Map<string, PiQueuedMessage>();
   const listeners = new Map<string, Set<(event: PiRuntimeEvent) => void>>();
   const agentListeners = new Map<string, Set<(entry: AgentRuntimeEventEntry) => void>>();
+  const modelControlsListeners = new Map<
+    string,
+    Set<(controls: RuntimeModelControls, occurredAt: string) => void>
+  >();
   const seenEventIds = new Map<string, Set<string>>();
   const pendingEchoFingerprints = new Set<string>();
   const suppressedEnvelopeIds = new Set<string>();
@@ -645,7 +655,7 @@ export function createRuntimeGatewayClient(
       }
 
       // Ephemeral workspace and terminal signals never belong to runtime truth.
-      if (["workspace.invalidated", "terminal_output", "terminal_exit"].includes(event.event.type)) {
+      if (["workspace.invalidated", "model_catalog.invalidated", "terminal_output", "terminal_exit"].includes(event.event.type)) {
         return;
       }
 
@@ -668,7 +678,11 @@ export function createRuntimeGatewayClient(
       if (event.event.payload.type === "model_catalog_changed") {
         const controls = modelControlsFromUnknown(event.event.payload.modelControls);
         const state = states.get(event.event.piSessionId);
-        if (state && controls) state.modelControls = cloneModelControls(controls);
+        if (!controls) return;
+        if (state) state.modelControls = cloneModelControls(controls);
+        for (const listener of modelControlsListeners.get(event.event.piSessionId) ?? []) {
+          listener(cloneModelControls(controls), event.event.ts);
+        }
         return;
       }
 
@@ -710,7 +724,8 @@ export function createRuntimeGatewayClient(
     const hasListeners =
       snapshotReads.size > 0 ||
       [...listeners.values()].some((sessionListeners) => sessionListeners.size > 0) ||
-      [...agentListeners.values()].some((sessionListeners) => sessionListeners.size > 0);
+      [...agentListeners.values()].some((sessionListeners) => sessionListeners.size > 0) ||
+      [...modelControlsListeners.values()].some((sessionListeners) => sessionListeners.size > 0);
 
     if (hasListeners || !unsubscribeBackendEvent) {
       return;
@@ -1200,6 +1215,20 @@ export function createRuntimeGatewayClient(
 
       sessionListeners.add(listener);
       agentListeners.set(piSessionId, sessionListeners);
+
+      return () => {
+        sessionListeners.delete(listener);
+        releaseBackendSubscriptionIfIdle();
+      };
+    },
+
+    subscribeToModelControls(piSessionId, listener) {
+      ensureBackendSubscription();
+
+      const sessionListeners = modelControlsListeners.get(piSessionId) ?? new Set();
+
+      sessionListeners.add(listener);
+      modelControlsListeners.set(piSessionId, sessionListeners);
 
       return () => {
         sessionListeners.delete(listener);

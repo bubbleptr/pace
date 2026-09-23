@@ -156,6 +156,47 @@ describe("createPaceModelRuntime", () => {
     expect(JSON.parse(await readFile(join(dataDir, "account-models.json"), "utf8"))["openai-codex"].accountId).toBe(accountId);
   });
 
+  it("lets an offline refresh wait for an in-flight network refresh instead of aborting it", async () => {
+    const { agentDir, dataDir } = await setup();
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      fetchStarted = resolve;
+    });
+    let answer!: (response: Response) => void;
+    const fetch = vi.fn(() => {
+      fetchStarted();
+      return new Promise<Response>((resolve) => {
+        answer = resolve;
+      });
+    });
+    const runtime = await createPaceModelRuntime({ agentDir, dataDir, fetch });
+    const order: string[] = [];
+
+    const network = runtime
+      .refresh({ allowNetwork: true, providers: ["openai-codex"] })
+      .then((result) => {
+        order.push("network");
+        return result;
+      });
+    await started;
+    // Settings mounts both at once: the catalog's network refresh and the
+    // provider status read's offline one.
+    const offline = runtime.refresh({ allowNetwork: false }).then(() => {
+      order.push("offline");
+    });
+    answer(codexModelsResponse([{ slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list" }]));
+
+    const result = await network;
+    await offline;
+    expect(result).toMatchObject({ aborted: false });
+    expect(result.errors.size).toBe(0);
+    expect(order).toEqual(["network", "offline"]);
+    expect(codexIds(runtime)).toEqual(["gpt-5.5"]);
+    expect(
+      JSON.parse(await readFile(join(dataDir, "account-models.json"), "utf8"))["openai-codex"].models,
+    ).toEqual([expect.objectContaining({ id: "gpt-5.5" })]);
+  });
+
   it("does not refetch a fresh account list unless forced", async () => {
     const { agentDir, dataDir } = await setup({
       cache: cacheFor([{ id: "gpt-5.5", name: "GPT-5.5" }]),

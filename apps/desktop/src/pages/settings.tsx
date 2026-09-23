@@ -11,7 +11,7 @@ import {
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
-import { useCallback, useEffect, type ReactNode, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutPanel } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -34,7 +34,7 @@ import {
 import { ChangelogSection } from "@/pages/settings-changelog";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
-import { invalidateCachedModelCatalog } from "@/entities/model/model-catalog-cache";
+import { useModelCatalog } from "@/entities/model/use-model-catalog";
 import { formatTimestamp } from "@/entities/session/sessions";
 import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import {
@@ -46,64 +46,13 @@ import { isModelVisible } from "@/shared/ui/model-selector/model-selector-logic"
 import { invoke, revealProjectInFinder } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
 import type {
-  ModelCatalogRefreshResult,
   ProviderAuthId,
   ProviderAuthStatusItem,
   ProviderAuthStatusReport,
   ProviderConnectionTestResult,
   ProviderFailureKind,
   RuntimeModelCapability,
-  RuntimeModelControls,
 } from "@pace/core";
-
-const availableModelControlsQueryKey = ["available-model-controls"] as const;
-
-// TanStack's mutation isPending follows only the latest call. A refresh that
-// started earlier can still be running after that flag flips false, which
-// re-enables Refresh models on top of an open request. This list is the
-// disable signal: non-force callers join the request already in flight.
-let inFlightCatalogRefreshes: Array<{ promise: Promise<ModelCatalogRefreshResult> }> = [];
-const catalogRefreshListeners = new Set<() => void>();
-
-function notifyCatalogRefreshListeners() {
-  for (const listener of catalogRefreshListeners) listener();
-}
-
-function subscribeCatalogRefreshBusy(listener: () => void) {
-  catalogRefreshListeners.add(listener);
-  return () => {
-    catalogRefreshListeners.delete(listener);
-  };
-}
-
-function isCatalogRefreshBusy() {
-  return inFlightCatalogRefreshes.length > 0;
-}
-
-export function resetCatalogRefreshGate() {
-  inFlightCatalogRefreshes = [];
-  notifyCatalogRefreshListeners();
-}
-
-export function startCatalogRefresh(
-  force: boolean,
-  execute: () => Promise<ModelCatalogRefreshResult>,
-): Promise<ModelCatalogRefreshResult> {
-  if (!force) {
-    const current = inFlightCatalogRefreshes[0];
-    if (current) return current.promise;
-  }
-
-  const promise = execute().finally(() => {
-    inFlightCatalogRefreshes = inFlightCatalogRefreshes.filter(
-      (entry) => entry.promise !== promise,
-    );
-    notifyCatalogRefreshListeners();
-  });
-  inFlightCatalogRefreshes = [...inFlightCatalogRefreshes, { promise }];
-  notifyCatalogRefreshListeners();
-  return promise;
-}
 
 type AuthTab = "subscription" | "api_key";
 
@@ -563,28 +512,44 @@ function groupModelsByProvider(models: RuntimeModelCapability[]) {
  * and lists everything, while an empty set hides every model.
  */
 function ModelVisibilitySection({
-  models,
-  isLoading,
-  errorMessage,
+  active,
   providerLabels,
-  catalogOffline,
-  refreshedAt,
-  catalogErrors,
-  refreshError,
-  isRefreshing,
-  onRefresh,
 }: {
-  models: RuntimeModelCapability[];
-  isLoading: boolean;
-  errorMessage?: string;
+  /** Entering the Models page asks for a network refresh. */
+  active: boolean;
   providerLabels: Record<string, string>;
-  catalogOffline: boolean;
-  refreshedAt?: string;
-  catalogErrors: Record<string, string>;
-  refreshError?: string;
-  isRefreshing: boolean;
-  onRefresh: () => void;
 }) {
+  const modelCatalog = useModelCatalog();
+  const [refreshError, setRefreshError] = useState<string>();
+  const { refresh: refreshCatalog } = modelCatalog;
+  const runRefresh = useCallback(
+    (force: boolean) => {
+      refreshCatalog({ force }).then(
+        () => setRefreshError(undefined),
+        (error: unknown) => {
+          setRefreshError(
+            error instanceof Error ? error.message : "Could not refresh models.",
+          );
+        },
+      );
+    },
+    [refreshCatalog],
+  );
+  useEffect(() => {
+    if (active) runRefresh(false);
+  }, [active, runRefresh]);
+  const models = modelCatalog.catalog?.models ?? [];
+  const isLoading = modelCatalog.status === "loading";
+  const isRefreshing = modelCatalog.refreshing;
+  const lastRefresh = modelCatalog.lastRefresh;
+  const catalogOffline = lastRefresh !== null && "offline" in lastRefresh;
+  const refreshedAt = lastRefresh && "refreshedAt" in lastRefresh ? lastRefresh.refreshedAt : undefined;
+  const catalogErrors = lastRefresh && "errors" in lastRefresh ? lastRefresh.errors : {};
+  const errorMessage = modelCatalog.status !== "error"
+    ? undefined
+    : modelCatalog.error instanceof Error
+      ? modelCatalog.error.message
+      : "Could not load the model catalog.";
   const [visibleModels, setVisibleModels] = useState(getVisibleModels);
 
   // The checkboxes show what the selector will actually list, so they run
@@ -628,7 +593,7 @@ function ModelVisibilitySection({
             variant="secondary"
             label="Refresh models"
             isDisabled={catalogOffline || isRefreshing}
-            onClick={onRefresh}
+            onClick={() => runRefresh(true)}
           />
           {refreshedAt ? (
             <Text as="p" type="supporting">
@@ -1001,68 +966,12 @@ function SettingsContent({
       ),
     [providers],
   );
-  const modelsQuery = useQuery({
-    queryKey: availableModelControlsQueryKey,
-    queryFn: () =>
-      invoke<RuntimeModelControls>("list_available_model_controls"),
-  });
-  const [catalogResult, setCatalogResult] = useState<ModelCatalogRefreshResult>();
-  const [catalogRefreshError, setCatalogRefreshError] = useState<string>();
-  const catalogRefreshBusy = useSyncExternalStore(
-    subscribeCatalogRefreshBusy,
-    isCatalogRefreshBusy,
-    isCatalogRefreshBusy,
-  );
-  const runCatalogRefresh = useCallback(
-    (force: boolean) => {
-      const promise = startCatalogRefresh(force, () =>
-        invoke<ModelCatalogRefreshResult>("refresh_model_catalog", { force }),
-      );
-      void promise.then(
-        (result) => {
-          setCatalogRefreshError(undefined);
-          setCatalogResult(result);
-          if ("offline" in result) return;
-          // Draft composers keep this catalog in module state. Drop it so the
-          // next new Session paints the models the network refresh just stored.
-          invalidateCachedModelCatalog();
-          void queryClient.invalidateQueries({
-            queryKey: availableModelControlsQueryKey,
-          });
-        },
-        (error: unknown) => {
-          setCatalogRefreshError(
-            error instanceof Error ? error.message : "Could not refresh models.",
-          );
-        },
-      );
-    },
-    [queryClient],
-  );
-  useEffect(() => {
-    if (section !== "models") return;
-    runCatalogRefresh(false);
-  }, [section, runCatalogRefresh]);
-  const catalogOffline = catalogResult !== undefined && "offline" in catalogResult;
-  const modelCatalogError = !modelsQuery.isError
-    ? undefined
-    : modelsQuery.error instanceof Error
-      ? modelsQuery.error.message
-      : "Could not load the model catalog.";
-
   const refresh = () => {
-    // Draft composers keep this catalog in module state. Drop it before the
-    // queries refetch, or the next new Session still paints the old models.
-    invalidateCachedModelCatalog();
     void queryClient.invalidateQueries({
       queryKey: providerAuthStatusQueryKey,
     });
     void queryClient.invalidateQueries({
       queryKey: ["environment-preflight-report"],
-    });
-    // New credentials change which models Pi offers, so refresh the catalog too.
-    void queryClient.invalidateQueries({
-      queryKey: availableModelControlsQueryKey,
     });
   };
 
@@ -1251,22 +1160,8 @@ function SettingsContent({
             style={{ display: section === "models" ? undefined : "none" }}
           >
             <ModelVisibilitySection
-              catalogErrors={
-                catalogResult && "errors" in catalogResult ? catalogResult.errors : {}
-              }
-              catalogOffline={catalogOffline}
-              errorMessage={modelCatalogError}
-              isLoading={modelsQuery.isPending}
-              isRefreshing={catalogRefreshBusy}
-              models={modelsQuery.data?.models ?? []}
-              onRefresh={() => runCatalogRefresh(true)}
+              active={section === "models"}
               providerLabels={providerLabels}
-              refreshError={catalogRefreshError}
-              refreshedAt={
-                catalogResult && "refreshedAt" in catalogResult
-                  ? catalogResult.refreshedAt
-                  : undefined
-              }
             />
           </VStack>
           <VStack

@@ -6,6 +6,7 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import type {
   ExecutionCheckoutGitClient,
+  ModelCatalogInvalidatedPayload,
   ProviderAuthId,
   SetResourceEnabledInput,
   RuntimeGatewayEventEnvelope,
@@ -31,10 +32,8 @@ import {
   createProviderAuthService,
   type ProviderAuthService,
 } from "./workspace/provider-auth";
-import {
-  listAvailableModelControls,
-  refreshAvailableModelCatalog,
-} from "./workspace/available-model-controls";
+import { createModelCatalog, type ModelCatalog } from "./workspace/model-catalog";
+import { readSettingsPreferredModel } from "./workspace/pi-settings";
 import { createNodeExecutionCheckoutGitClient } from "./workspace/execution-checkout";
 import { accountModelProviderIds, createPaceModelRuntime } from "./workspace/account-models";
 import {
@@ -126,6 +125,7 @@ export type BackendServiceOptions = {
   piSessionListAll?: () => Promise<PiSessionListItem[]>;
   environmentPreflight?: EnvironmentPreflightReader;
   providerAuth?: ProviderAuthService;
+  modelCatalog?: ModelCatalog;
   terminalManager?: TerminalManager;
   /** Fetch the signed-in accounts' model lists once at startup (the app sets this; tests do not). */
   refreshAccountModelsOnStart?: boolean;
@@ -205,11 +205,16 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
       agentDir,
       dataDir,
     });
+  // The main process's one Pace ModelRuntime (ADR-0043), created on first
+  // use so a backend that never touches models never builds one. Session
+  // processes still own theirs (ADR-0040).
+  let modelRuntime: ReturnType<typeof createPaceModelRuntime> | undefined;
+  const getModelRuntime = () => (modelRuntime ??= createPaceModelRuntime({ agentDir, dataDir }));
   const providerAuth =
     options.providerAuth ??
     createProviderAuthService({
       agentDir,
-      dataDir,
+      runtime: getModelRuntime,
     });
   const piSessionListAll =
     options.piSessionListAll ??
@@ -249,12 +254,33 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     journal: runtimeJournal,
     dataDir,
   });
+  const modelCatalog = options.modelCatalog ?? createModelCatalog({
+    runtime: getModelRuntime,
+    liveSessions: runtimeDriver,
+    readPreferredModel: () => readSettingsPreferredModel(agentDir),
+    providers: accountModelProviderIds,
+    refreshOnStart: options.refreshAccountModelsOnStart,
+  });
+  // Like workspace.invalidated: a global "re-read the catalog" hint for Drafts
+  // and Settings, never journaled or sequenced. Live Sessions get their own
+  // model_catalog_changed through the Gateway (ADR-0043 §4).
+  const unsubscribeModelCatalog = modelCatalog.subscribe(() => {
+    for (const listener of listeners) {
+      listener({
+        type: "event",
+        event: {
+          id: `evt-${crypto.randomUUID()}`,
+          seq: 0,
+          sessionId: "",
+          piSessionId: "",
+          type: "model_catalog.invalidated",
+          ts: new Date().toISOString(),
+          payload: {} satisfies ModelCatalogInvalidatedPayload,
+        },
+      });
+    }
+  });
   const terminalManager = options.terminalManager ?? createTerminalManager();
-  if (options.refreshAccountModelsOnStart) {
-    // Background: startup must not wait on chatgpt.com. Freshness is cached,
-    // so frequent restarts do not refetch.
-    void refreshAccountModels({ agentDir, dataDir, runtimeDriver });
-  }
 
   runtimeGateway.onEvent((event) => {
     const { payload } = event.event;
@@ -303,6 +329,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
           await runtimeJournal.flush?.();
           terminalManager.disposeAll();
           gitWatchers.dispose();
+          unsubscribeModelCatalog();
           invalidation.dispose();
           listeners.clear();
         }
@@ -328,7 +355,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             providerAuth,
             piSessionListAll,
             runtimeGateway,
-            runtimeDriver,
+            modelCatalog,
             runtimeJournal,
             terminalManager,
             invalidation,
@@ -353,66 +380,6 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   };
 }
 
-const liveCatalogRefreshTimeoutMs = 5_000;
-
-async function refreshLiveSessionModelCatalogs(driver: PiRuntimeDriver) {
-  if (!driver.refreshModelCatalog) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    // One unresponsive session process must not hold the Settings request.
-    // Healthy roots still finish; this only stops waiting.
-    await Promise.race([
-      driver.refreshModelCatalog(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error("Live session model catalog refresh timed out."));
-        }, liveCatalogRefreshTimeoutMs);
-      }),
-    ]);
-  } catch (error) {
-    // The credential write already succeeded. A live session that cannot
-    // re-read auth.json must not fail the Settings request.
-    console.error("Pace could not refresh live session model catalogs.", error);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-async function refreshAccountModels(input: {
-  agentDir: string;
-  dataDir: string;
-  runtimeDriver: PiRuntimeDriver;
-}) {
-  try {
-    const result = await refreshAvailableModelCatalog({
-      agentDir: input.agentDir,
-      dataDir: input.dataDir,
-      providers: accountModelProviderIds,
-    });
-    if ("offline" in result) return;
-    for (const [providerId, message] of Object.entries(result.errors)) {
-      console.error(`Pace could not refresh the ${providerId} account model list: ${message}`);
-    }
-    await refreshLiveSessionModelCatalogs(input.runtimeDriver);
-  } catch (error) {
-    // The Pi catalog stays usable; the next refresh tries again.
-    console.error("Pace could not refresh account model lists.", error);
-  }
-}
-
-async function refreshAfterCredentialChange(
-  input: { agentDir: string; dataDir: string; runtimeDriver: PiRuntimeDriver },
-  providerId: string,
-) {
-  if (accountModelProviderIds.includes(providerId)) {
-    // A new account or key has no cached model list yet; fetch it before
-    // Settings re-reads the catalog so an unusable model never flashes in.
-    await refreshAccountModels(input);
-  } else {
-    await refreshLiveSessionModelCatalogs(input.runtimeDriver);
-  }
-}
-
 async function dispatchRequest(input: {
   request: BackendRpcRequest;
   agentDir: string;
@@ -426,7 +393,7 @@ async function dispatchRequest(input: {
   providerAuth: ProviderAuthService;
   piSessionListAll: () => Promise<PiSessionListItem[]>;
   runtimeGateway: RuntimeGatewayService;
-  runtimeDriver: PiRuntimeDriver;
+  modelCatalog: ModelCatalog;
   runtimeJournal: SessionEventJournal;
   terminalManager: TerminalManager;
   invalidation: ReturnType<typeof createWorkspaceInvalidation>;
@@ -550,32 +517,32 @@ async function dispatchRequest(input: {
     case "list_provider_auth_status":
       return input.providerAuth.listStatus();
     case "set_provider_api_key": {
-      const providerId = requiredString(params.providerId, "providerId") as ProviderAuthId;
       const report = await input.providerAuth.setApiKey(
-        providerId,
+        requiredString(params.providerId, "providerId") as ProviderAuthId,
         requiredString(params.apiKey, "apiKey"),
       );
-      await refreshAfterCredentialChange(input, providerId);
+      await input.modelCatalog.onCredentialChanged();
       return report;
     }
     case "remove_provider_auth": {
       const report = await input.providerAuth.remove(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
       );
-      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      await input.modelCatalog.onCredentialChanged();
       return report;
     }
     case "login_provider_oauth": {
-      const providerId = requiredString(params.providerId, "providerId") as ProviderAuthId;
-      const report = await input.providerAuth.loginOAuth(providerId);
-      await refreshAfterCredentialChange(input, providerId);
+      const report = await input.providerAuth.loginOAuth(
+        requiredString(params.providerId, "providerId") as ProviderAuthId,
+      );
+      await input.modelCatalog.onCredentialChanged();
       return report;
     }
     case "logout_provider_auth": {
       const report = await input.providerAuth.logout(
         requiredString(params.providerId, "providerId") as ProviderAuthId,
       );
-      await refreshLiveSessionModelCatalogs(input.runtimeDriver);
+      await input.modelCatalog.onCredentialChanged();
       return report;
     }
     case "test_provider_connection":
@@ -584,22 +551,12 @@ async function dispatchRequest(input: {
         optionalString(params.modelId),
       );
     case "list_available_model_controls":
-      return listAvailableModelControls({ agentDir: input.agentDir, dataDir: input.dataDir });
-    case "refresh_model_catalog": {
+      return input.modelCatalog.list();
+    case "refresh_model_catalog":
       if (params.force !== undefined && typeof params.force !== "boolean") {
         throw new Error("force must be a boolean");
       }
-      const result = await refreshAvailableModelCatalog({
-        agentDir: input.agentDir,
-        dataDir: input.dataDir,
-        force: params.force === true,
-      });
-      // Offline skipped the network, so live sessions already have this catalog.
-      if (!("offline" in result)) {
-        await refreshLiveSessionModelCatalogs(input.runtimeDriver);
-      }
-      return result;
-    }
+      return input.modelCatalog.refresh({ allowNetwork: true, force: params.force === true });
     case "check_project_directories": {
       const roots = params.roots;
       if (!Array.isArray(roots) || !roots.every((root) => typeof root === "string")) {

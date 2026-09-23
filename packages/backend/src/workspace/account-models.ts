@@ -339,5 +339,22 @@ export async function createPaceModelRuntime(input: {
     // The timeout only guards against a refresh that never reaches providers.
     await Promise.race([firstRefreshTimeout(), Promise.all(firstRefreshes)]);
   }
+  serializeRefreshes(runtime);
   return runtime;
+}
+
+/**
+ * Pi aborts a provider's in-flight refresh when another one starts, so an
+ * offline re-read (a Settings status read) would silently cancel a network
+ * fetch on the same runtime. Queue refreshes instead of overlapping them.
+ * Trade-off: a status read may wait for an in-flight fetch instead of racing it.
+ */
+function serializeRefreshes(runtime: PaceModelRuntime) {
+  const refresh = runtime.refresh.bind(runtime);
+  let tail: Promise<unknown> = Promise.resolve();
+  runtime.refresh = (options) => {
+    const next = tail.then(() => refresh(options));
+    tail = next.catch(() => {});
+    return next;
+  };
 }

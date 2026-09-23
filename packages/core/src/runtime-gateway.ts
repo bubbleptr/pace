@@ -25,6 +25,10 @@ export type WorkspaceInvalidatedPayload = {
   source: "tool" | "git-watch" | "focus" | "reconnect";
 };
 
+// Carries no data: it only tells readers to re-fetch the Model Catalog
+// (ADR-0043 §4). The catalog does not expose why it changed.
+export type ModelCatalogInvalidatedPayload = Record<string, never>;
+
 export type RuntimeGatewayEventEnvelope = {
   id: string;
   seq: number;
