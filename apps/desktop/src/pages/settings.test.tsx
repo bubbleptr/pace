@@ -347,6 +347,72 @@ describe("Settings — visible models", () => {
     });
   });
 
+  it("clears and restores every model of one provider from its Select all row", async () => {
+    const user = userEvent.setup();
+
+    renderSettings();
+
+    const section = await findModelsSection();
+    const card = within(section).getByTestId("model-visibility-xai");
+    const group = within(card).getByRole("group", { name: "Grok (xAI) models" });
+    const selectAll = () => within(card).getByRole("checkbox", { name: "Select all" });
+
+    // The control sits in the card header, not among the model rows.
+    expect(within(group).queryByRole("checkbox", { name: "Select all" })).toBeNull();
+
+    expect(selectAll()).toBeChecked();
+
+    await user.click(selectAll());
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([
+        { provider: "anthropic", modelId: "claude-sonnet-4" },
+        { provider: "moonshot", modelId: "kimi-k3" },
+      ]);
+    });
+    expect(within(group).getByRole("checkbox", { name: "Grok 4" })).not.toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Grok 4 Fast" })).not.toBeChecked();
+    expect(selectAll()).not.toBeChecked();
+
+    // A partial selection shows as indeterminate, never as "all checked".
+    await user.click(within(group).getByRole("checkbox", { name: "Grok 4" }));
+    await waitFor(() => {
+      expect(selectAll()).toBePartiallyChecked();
+    });
+
+    await user.click(selectAll());
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([
+        { provider: "anthropic", modelId: "claude-sonnet-4" },
+        { provider: "moonshot", modelId: "kimi-k3" },
+        { provider: "xai", modelId: "grok-4" },
+        { provider: "xai", modelId: "grok-4-fast" },
+      ]);
+    });
+    expect(selectAll()).toBeChecked();
+  });
+
+  it("keeps every model hidden after the last provider is cleared", async () => {
+    const user = userEvent.setup();
+
+    renderSettings();
+
+    const section = await findModelsSection();
+
+    for (const provider of ["anthropic", "xai", "moonshot"]) {
+      const card = within(section).getByTestId(`model-visibility-${provider}`);
+      await user.click(within(card).getByRole("checkbox", { name: "Select all" }));
+    }
+
+    await waitFor(() => {
+      expect(getVisibleModels()).toEqual([]);
+    });
+    for (const checkbox of within(section).getAllByRole("checkbox")) {
+      expect(checkbox).not.toBeChecked();
+    }
+  });
+
   it("refetches the model catalog after provider credentials change", async () => {
     const user = userEvent.setup();
     const { countCalls } = renderSettings();
@@ -404,7 +470,6 @@ describe("Settings — visible models", () => {
     expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(section).getByRole("button", { name: "Refresh models" })).toBeEnabled();
     expect(within(section).getByText(/Last refreshed/)).toBeInTheDocument();
-    expect(within(section).getByText("/agent/models.json")).toBeInTheDocument();
 
     await user.click(within(section).getByRole("button", { name: "Refresh models" }));
 

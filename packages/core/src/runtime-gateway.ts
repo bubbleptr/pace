@@ -93,6 +93,21 @@ export type RuntimeModelSelection = {
   thinkingLevel: RuntimeThinkingLevel;
 };
 
+/**
+ * The one order every model list is shown in — Settings, the draft composer
+ * and a live session's selector. Pi's own snapshot is composition order, so
+ * each producer sorts before the list leaves the backend.
+ */
+export function compareModelCapabilities(
+  left: Pick<RuntimeModelCapability, "provider" | "name">,
+  right: Pick<RuntimeModelCapability, "provider" | "name">,
+): number {
+  return (
+    left.provider.localeCompare(right.provider) ||
+    left.name.localeCompare(right.name)
+  );
+}
+
 export type RuntimeModelControls = {
   models: RuntimeModelCapability[];
   selected: RuntimeModelSelection | null;

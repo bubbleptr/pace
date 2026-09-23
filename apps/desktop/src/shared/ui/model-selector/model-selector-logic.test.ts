@@ -85,7 +85,12 @@ describe("model visibility", () => {
   const onlySonnet = [{ provider: "anthropic", modelId: "claude-sonnet-4" }];
 
   it("shows the whole catalog while nothing is configured", () => {
-    expect(visibleModelsOf(models, [], null)).toEqual(models);
+    expect(visibleModelsOf(models, null, null)).toEqual(models);
+  });
+
+  it("shows nothing once the user cleared every model, except the current selection", () => {
+    expect(visibleModelsOf(models, [], null)).toEqual([]);
+    expect(visibleModelsOf(models, [], grok)).toEqual([grok]);
   });
 
   it("keeps only the models the user made visible", () => {

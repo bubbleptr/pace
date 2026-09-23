@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import {
@@ -558,19 +559,14 @@ function groupModelsByProvider(models: RuntimeModelCapability[]) {
 
 /**
  * Which catalog models the composer selector may offer (issue #102). Stored
- * per install, read by the selector; an empty set means "not configured" and
- * lists everything, which is also what unchecking the last model falls back to.
+ * per install, read by the selector; nothing stored means "not configured"
+ * and lists everything, while an empty set hides every model.
  */
-function modelsJsonPath(agentDir: string) {
-  return `${agentDir.replace(/[\\/]+$/, "")}/models.json`;
-}
-
 function ModelVisibilitySection({
   models,
   isLoading,
   errorMessage,
   providerLabels,
-  agentDir,
   catalogOffline,
   refreshedAt,
   catalogErrors,
@@ -582,7 +578,6 @@ function ModelVisibilitySection({
   isLoading: boolean;
   errorMessage?: string;
   providerLabels: Record<string, string>;
-  agentDir?: string;
   catalogOffline: boolean;
   refreshedAt?: string;
   catalogErrors: Record<string, string>;
@@ -626,8 +621,7 @@ function ModelVisibilitySection({
           Models
         </Heading>
         <Text as="p" type="supporting">
-          Choose which models the composer model selector offers. With none
-          selected, every available model is shown.
+          Choose which models the composer model selector offers.
         </Text>
         <HStack gap={3} vAlign="center" wrap="wrap">
           <Button
@@ -693,6 +687,9 @@ function ModelVisibilitySection({
 
       {groupModelsByProvider(models).map((group) => {
         const label = providerLabels[group.provider] ?? group.provider;
+        const checkedIds = group.models
+          .filter((model) => isModelVisible(model, visibleModels))
+          .map((model) => model.modelId);
 
         return (
           <Card
@@ -702,6 +699,24 @@ function ModelVisibilitySection({
             <HStack gap={3} vAlign="center">
               <ProviderIcon providerId={group.provider} label={label} />
               <Heading level={3}>{label}</Heading>
+              <CheckboxInput
+                label="Select all"
+                size="sm"
+                style={{ marginInlineStart: "auto" }}
+                value={
+                  checkedIds.length === group.models.length
+                    ? true
+                    : checkedIds.length === 0
+                      ? false
+                      : "indeterminate"
+                }
+                onChange={(checked) =>
+                  replaceProviderSelection(
+                    group.provider,
+                    checked ? group.models.map((model) => model.modelId) : [],
+                  )
+                }
+              />
             </HStack>
             <VStack style={{ marginBlockStart: "var(--spacing-4)" }}>
               <CheckboxList
@@ -709,21 +724,23 @@ function ModelVisibilitySection({
                 isLabelHidden
                 label={`${label} models`}
                 width="100%"
-                value={group.models
-                  .filter((model) => isModelVisible(model, visibleModels))
-                  .map((model) => model.modelId)}
-                onChange={(modelIds) =>
-                  replaceProviderSelection(group.provider, modelIds)
-                }
               >
                 {group.models.map((model) => (
                   <CheckboxListItem
                     description={model.modelId}
+                    isChecked={checkedIds.includes(model.modelId)}
                     key={model.modelId}
                     label={model.name}
                     // The checkbox conveys visibility; a row fill implies navigation selection.
                     style={{ backgroundColor: "transparent" }}
-                    value={model.modelId}
+                    onCheck={(checked) =>
+                      replaceProviderSelection(
+                        group.provider,
+                        checked
+                          ? [...checkedIds, model.modelId]
+                          : checkedIds.filter((modelId) => modelId !== model.modelId),
+                      )
+                    }
                   />
                 ))}
               </CheckboxList>
@@ -731,11 +748,6 @@ function ModelVisibilitySection({
           </Card>
         );
       })}
-      {agentDir ? (
-        <Text as="p" type="supporting">
-          Custom models can be written to <code>{modelsJsonPath(agentDir)}</code>.
-        </Text>
-      ) : null}
     </VStack>
   );
 }
@@ -1202,7 +1214,6 @@ function SettingsContent({
             style={{ display: section === "models" ? undefined : "none" }}
           >
             <ModelVisibilitySection
-              agentDir={statusQuery.data?.agentDir}
               catalogErrors={
                 catalogResult && "errors" in catalogResult ? catalogResult.errors : {}
               }

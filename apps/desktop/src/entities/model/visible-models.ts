@@ -6,10 +6,11 @@
 // Known boundary: this is an explicit allowlist (the Cursor semantics the
 // issue asks for), not a denylist. The first time a user unchecks anything,
 // the models visible at that moment are written out in full, so models Pi
-// adds later are hidden until the user checks them in Settings. Only the
-// empty set — nothing configured, or everything unchecked — keeps listing
-// the whole catalog.
+// adds later are hidden until the user checks them in Settings. Only a
+// never-configured install (nothing stored) lists the whole catalog; an
+// empty set is the user's choice and hides everything.
 
+import { useSyncExternalStore } from "react";
 import type { ModelRef } from "@/shared/ui/model-selector/model-selector-logic";
 
 export const visibleModelsStorageKey = "pigui.visibleModels.v1";
@@ -31,12 +32,12 @@ function isModelRef(value: unknown): value is ModelRef {
   );
 }
 
-/** Empty means "not configured yet": the selector then shows every model. */
-export function getVisibleModels(): ModelRef[] {
+/** `null` means "not configured yet": the selector then shows every model. */
+export function getVisibleModels(): ModelRef[] | null {
   const raw = getStorage()?.getItem(visibleModelsStorageKey);
 
   if (!raw) {
-    return [];
+    return null;
   }
 
   try {
@@ -44,11 +45,13 @@ export function getVisibleModels(): ModelRef[] {
 
     return Array.isArray(parsed) && parsed.every(isModelRef)
       ? parsed.map(({ provider, modelId }) => ({ provider, modelId }))
-      : [];
+      : null;
   } catch {
-    return [];
+    return null;
   }
 }
+
+const listeners = new Set<() => void>();
 
 export function saveVisibleModels(models: ModelRef[]) {
   getStorage()?.setItem(
@@ -56,5 +59,43 @@ export function saveVisibleModels(models: ModelRef[]) {
     JSON.stringify(
       models.map(({ provider, modelId }) => ({ provider, modelId })),
     ),
+  );
+  for (const listener of listeners) listener();
+}
+
+function subscribeVisibleModels(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+// useSyncExternalStore compares snapshots by identity, so the parsed array is
+// reused until the stored string changes; a fresh array per read would
+// re-render forever.
+let snapshotRaw: string | null | undefined;
+let snapshot: ModelRef[] | null = null;
+
+function readVisibleModelsSnapshot(): ModelRef[] | null {
+  const raw = getStorage()?.getItem(visibleModelsStorageKey) ?? null;
+
+  if (raw !== snapshotRaw) {
+    snapshotRaw = raw;
+    snapshot = getVisibleModels();
+  }
+
+  return snapshot;
+}
+
+/**
+ * Settings opens as a dialog over the workspace, so a composer reading the
+ * set once on mount would keep listing the old models until the next
+ * navigation. This follows every save made in the same window.
+ */
+export function useVisibleModels(): ModelRef[] | null {
+  return useSyncExternalStore(
+    subscribeVisibleModels,
+    readVisibleModelsSnapshot,
+    readVisibleModelsSnapshot,
   );
 }

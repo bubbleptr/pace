@@ -377,7 +377,7 @@ type ModelSelectorControlOwnProps = {
   controls: RuntimeModelControls;
   isDisabled: boolean;
   /** Settings-managed allowlist; empty lists the whole catalog (issue #102). */
-  visibleModels?: ModelRef[];
+  visibleModels?: ModelRef[] | null;
   onChange: (selection: RuntimeModelSelection) => Promise<void> | void;
   onManageModels?: () => void;
 };
@@ -391,7 +391,7 @@ export type ModelSelectorControlProps = Omit<
 export function ModelSelectorControl({
   controls,
   isDisabled,
-  visibleModels = [],
+  visibleModels = null,
   onChange,
   onManageModels,
   className,
@@ -597,7 +597,9 @@ export function ModelSelectorControl({
               </List>
             ) : (
               <p className="px-2 py-3 text-xs text-muted">
-                No models match “{query}”.
+                {query
+                  ? `No models match “${query}”.`
+                  : "No models are visible. Add them in Settings."}
               </p>
             )}
 

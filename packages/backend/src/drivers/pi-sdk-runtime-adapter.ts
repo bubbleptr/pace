@@ -26,7 +26,7 @@ import type {
   RuntimeThinkingLevel,
   RuntimeToolSchema,
 } from "@pace/core";
-import { toPiImageContent } from "@pace/core";
+import { compareModelCapabilities, toPiImageContent } from "@pace/core";
 import type {
   PiSdkRuntimeFactory,
   PiSdkRuntimeForker,
@@ -522,7 +522,7 @@ function modelControlsFromSession(
   }
 
   return {
-    models: availableModels.map(capabilityFromModel),
+    models: availableModels.map(capabilityFromModel).sort(compareModelCapabilities),
     selected:
       currentProvider &&
       currentModelId &&

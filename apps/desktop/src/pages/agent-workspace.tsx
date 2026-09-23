@@ -181,7 +181,7 @@ import {
   rememberModelCatalog,
   subscribeModelCatalogInvalidation,
 } from "@/entities/model/model-catalog-cache";
-import { getVisibleModels } from "@/entities/model/visible-models";
+import { useVisibleModels } from "@/entities/model/visible-models";
 import {
   findSessionChangeTarget,
   parseSessionChangeLink,
@@ -801,9 +801,9 @@ function FullChatComposer({
   onManageModels?: () => void;
 }) {
   const sessionId = projection?.id ?? null;
-  // Read once per mount: Settings owns this set and the composer only remounts
-  // after leaving that page (issue #102).
-  const [visibleModels] = useState(getVisibleModels);
+  // Settings owns this set (issue #102) and opens as a dialog over this page,
+  // so read it live rather than once per mount.
+  const visibleModels = useVisibleModels();
   const [availableModels, setAvailableModels] =
     useState<RuntimeModelControls["models"]>(readCachedModelCatalog);
   const needsModelCatalog =
@@ -2322,7 +2322,7 @@ function SessionDraftComposer({
   const [targetValidationRequested, setTargetValidationRequested] = useState(false);
   const targetError = targetValidationRequested && !draft.projectId;
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [visibleModels] = useState(getVisibleModels);
+  const visibleModels = useVisibleModels();
   const selectedCheckoutMode = draft.checkoutMode ?? recommendedCheckoutMode;
   const { loading: providerAuthLoading, configured: providersConfigured } =
     useProviderAuthStatus();
@@ -3187,6 +3187,8 @@ function LiveSessionColumn({
   onOpenProviderSettings?: () => void;
   runtimeGeneration: number;
 }) {
+  // The retry control under a failed run reads the same live set as the composer.
+  const visibleModels = useVisibleModels();
   const [registryProjects, setRegistryProjects] = useState(() =>
     getVisibleProjectRegistry(),
   );
@@ -4308,7 +4310,7 @@ function LiveSessionColumn({
                       onRetry={message.id === latestFailure?.id && canRetryRequest ? retryFailedRequest : undefined}
                       modelControl={message.id === latestFailure?.id && canRetryRequest && liveProjection?.modelControls ? (
                         <ModelSelectorControl controls={liveProjection.modelControls} isDisabled={queueMode}
-                          visibleModels={getVisibleModels()} onManageModels={onManageModels} onChange={handleModelConfigChange} />
+                          visibleModels={visibleModels} onManageModels={onManageModels} onChange={handleModelConfigChange} />
                       ) : undefined} />
                   ) : undefined}
                   onForkMessage={

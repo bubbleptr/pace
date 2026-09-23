@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { compareModelCapabilities } from "@pace/core";
 import type {
   ModelCatalogRefreshResult,
   RuntimeModelCapability,
@@ -199,14 +200,7 @@ export async function listAvailableModelControls(input: {
         input: (model as { input?: string[] }).input,
       }),
     )
-    .sort((left, right) => {
-      const providerCompare = left.provider.localeCompare(right.provider);
-      if (providerCompare !== 0) {
-        return providerCompare;
-      }
-
-      return left.name.localeCompare(right.name);
-    });
+    .sort(compareModelCapabilities);
 
   const preferred = await readSettingsPreferredModel(input.agentDir);
 
