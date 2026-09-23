@@ -124,6 +124,7 @@ export {
   type RuntimeGatewayRequest,
   type RuntimeGatewayResponse,
   type RuntimeGatewayEventPayload,
+  type ModelCatalogInvalidatedPayload,
   type WorkspaceInvalidatedPayload,
   type RuntimeGatewayEventEnvelope,
   type RuntimeGatewayEventInput,

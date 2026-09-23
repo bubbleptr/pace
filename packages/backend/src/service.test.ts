@@ -1797,6 +1797,57 @@ describe("backend service", () => {
   });
 });
 
+describe("model catalog invalidation delivery", () => {
+  it("delivers one global signal per catalog change without journaling it", async () => {
+    const catalogListeners = new Set<() => void>();
+    const modelCatalog = {
+      list: vi.fn(async () => ({ models: [], selected: null })),
+      refresh: vi.fn(async () => ({ offline: true as const })),
+      onCredentialChanged: vi.fn(async () => {
+        for (const listener of catalogListeners) listener();
+      }),
+      subscribe: vi.fn((listener: () => void) => {
+        catalogListeners.add(listener);
+        return () => { catalogListeners.delete(listener); };
+      }),
+    };
+    const report = { agentDir: "/tmp/agent", authPath: "/tmp/agent/auth.json", providers: [], configuredCount: 1 };
+    const journal = createInMemorySessionEventJournal();
+    const append = vi.spyOn(journal, "append");
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      providerAuth: {
+        listStatus: vi.fn(async () => report),
+        setApiKey: vi.fn(async () => report),
+        remove: vi.fn(async () => report),
+        loginOAuth: vi.fn(async () => report),
+        logout: vi.fn(async () => report),
+        testConnection: vi.fn(async () => ({ ok: true as const, modelId: "gpt-5.5", latencyMs: 1 })),
+      },
+      modelCatalog,
+      runtimeJournal: journal,
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+    const events: import("./service").BackendRpcEvent[] = [];
+    service.onEvent((event) => events.push(event));
+
+    await service.handleRequest({
+      id: "key",
+      method: "set_provider_api_key",
+      params: { providerId: "openai", apiKey: "sk-test" },
+    });
+
+    expect(events).toEqual([expect.objectContaining({ type: "event", event: expect.objectContaining({
+      type: "model_catalog.invalidated", seq: 0, sessionId: "", piSessionId: "", payload: {},
+    }) })]);
+    expect(append).not.toHaveBeenCalled();
+
+    // A disposed service stops forwarding catalog changes.
+    await service.dispose();
+    expect(catalogListeners.size).toBe(0);
+  });
+});
+
 describe("workspace invalidation delivery", () => {
   afterEach(() => vi.useRealTimers());
 

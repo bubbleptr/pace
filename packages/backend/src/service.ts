@@ -6,6 +6,7 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import type {
   ExecutionCheckoutGitClient,
+  ModelCatalogInvalidatedPayload,
   ProviderAuthId,
   SetResourceEnabledInput,
   RuntimeGatewayEventEnvelope,
@@ -260,6 +261,25 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     providers: accountModelProviderIds,
     refreshOnStart: options.refreshAccountModelsOnStart,
   });
+  // Like workspace.invalidated: a global "re-read the catalog" hint for Drafts
+  // and Settings, never journaled or sequenced. Live Sessions get their own
+  // model_catalog_changed through the Gateway (ADR-0043 §4).
+  const unsubscribeModelCatalog = modelCatalog.subscribe(() => {
+    for (const listener of listeners) {
+      listener({
+        type: "event",
+        event: {
+          id: `evt-${crypto.randomUUID()}`,
+          seq: 0,
+          sessionId: "",
+          piSessionId: "",
+          type: "model_catalog.invalidated",
+          ts: new Date().toISOString(),
+          payload: {} satisfies ModelCatalogInvalidatedPayload,
+        },
+      });
+    }
+  });
   const terminalManager = options.terminalManager ?? createTerminalManager();
 
   runtimeGateway.onEvent((event) => {
@@ -309,6 +329,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
           await runtimeJournal.flush?.();
           terminalManager.disposeAll();
           gitWatchers.dispose();
+          unsubscribeModelCatalog();
           invalidation.dispose();
           listeners.clear();
         }
