@@ -518,6 +518,26 @@ describe("Session Projections store", () => {
       expect(store.historyState("reconnected")).toBe("loading");
     });
 
+    it("reads a viewed archived Session's history without following it, so rehydrate still replaces it", async () => {
+      const fake = createFakeBridge();
+      const archived = () => coldSession("archived", {
+        status: "archived",
+        archivedAt: "2026-09-24T08:30:00.000Z",
+      });
+      const store = createStore(fake, async () => [{ ...archived(), title: "From backend" }]);
+      store.insert(archived());
+
+      store.ensureHistory("archived", { runtimeGeneration: 0 });
+      expect(fake.loads).toHaveLength(1);
+      expect(fake.listenerCounts("pi:archived")).toEqual({ legacy: 0, agent: 0, modelControls: 0 });
+
+      fake.loads[0]!.settle.resolve(loadedState("pi:archived"));
+      await settle();
+      await store.rehydrate();
+
+      expect(store.get("archived")?.title).toBe("From backend");
+    });
+
     it("follows a viewed historical Session on one subscription per stream until it is removed", () => {
       const fake = createFakeBridge();
       const store = createStore(fake);

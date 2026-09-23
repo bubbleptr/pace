@@ -1,6 +1,7 @@
 import type { PiRuntimeBridge } from "@/entities/runtime/pi-runtime-bridge";
 import {
   applySessionProjectionEvent,
+  isSessionProjectionArchived,
   type SessionProjection,
   type SessionProjectionEvent,
 } from "@/entities/session/session-projection";
@@ -56,6 +57,8 @@ export function createSessionProjectionsStore(options: {
   listSessions: () => Promise<SessionProjection[]>;
 }): SessionProjectionsStore {
   const { bridge } = options;
+  // Bridges without history reads (in-memory, browser fixtures) never load.
+  const loadSession = bridge.loadSession?.bind(bridge);
   // Replaced on every mutation so `list()` is a stable useSyncExternalStore snapshot.
   let projections: SessionProjection[] = [];
   const listeners = new Set<() => void>();
@@ -130,15 +133,19 @@ export function createSessionProjectionsStore(options: {
     return next;
   }
 
-  const loadHistory = (sessionId: string, piSessionId: string, key: string) => {
-    const loadSession = bridge.loadSession!;
+  const loadHistory = (
+    load: NonNullable<typeof loadSession>,
+    sessionId: string,
+    piSessionId: string,
+    key: string,
+  ) => {
     const current = () => history.get(sessionId)?.key === key;
 
     history.set(sessionId, { key, piSessionId, state: "loading" });
     notify();
 
     // A read superseded by a newer key (or a removed Session) lands nowhere.
-    void loadSession({ sessionId, piSessionId })
+    void load({ sessionId, piSessionId })
       .then((state) => {
         const base = get(sessionId);
         if (!current() || !base) return;
@@ -190,17 +197,22 @@ export function createSessionProjectionsStore(options: {
       // `runtime-bound`; its history is what the creator is writing.
       if (!projection?.piSessionId || projection.creationStage !== "accepted") return;
 
-      // Viewing a Session makes it live in this process (ADR-0044 §2).
-      subscribe(sessionId, projection.piSessionId);
-      if (!bridge.loadSession) return;
+      // Viewing a Session makes it live in this process (ADR-0044 §2). An
+      // archived one stays a read-only record that rehydrate may replace.
+      if (!isSessionProjectionArchived(projection)) {
+        subscribe(sessionId, projection.piSessionId);
+      }
+      if (!loadSession) return;
 
       const key = [projection.piSessionId, projection.sessionFile, runtimeGeneration].join("\u0000");
       if (history.get(sessionId)?.key === key) return;
-      loadHistory(sessionId, projection.piSessionId, key);
+      loadHistory(loadSession, sessionId, projection.piSessionId, key);
     },
     retryHistory(sessionId) {
       const entry = history.get(sessionId);
-      if (entry?.state === "failed") loadHistory(sessionId, entry.piSessionId, entry.key);
+      if (entry?.state === "failed" && loadSession) {
+        loadHistory(loadSession, sessionId, entry.piSessionId, entry.key);
+      }
     },
     historyState: (sessionId) => history.get(sessionId)?.state ?? "idle",
     rename(sessionId, name) {
