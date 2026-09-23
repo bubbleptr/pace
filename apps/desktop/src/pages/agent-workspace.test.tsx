@@ -61,6 +61,7 @@ import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
 import * as sessionsApi from "@/entities/session/sessions";
+import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 
 function render(ui: Parameters<typeof renderWithoutQuery>[0]) {
@@ -1849,9 +1850,65 @@ describe("AgentWorkspaceSessionsPage", () => {
       await user.click(within(footer).getByTestId("checkout-strategy-trigger"));
       await user.click(await screen.findByRole("option", { name: /Git worktree/ }));
 
-      expect(within(footer).getByTestId("composer-branch-label")).toHaveTextContent(
+      expect(within(footer).getByTestId("git-branch-status-trigger")).toHaveTextContent(
         "from main",
       );
+    });
+
+    it("cuts a worktree from the chosen base branch without moving the Project folder", async () => {
+      const user = userEvent.setup();
+      const invokeSpy = vi.spyOn(runtimeModule, "invoke");
+      onTestFinished(() => invokeSpy.mockRestore());
+      const sessionCreator = vi.fn(
+        async (input: Parameters<NonNullable<ComponentProps<typeof AgentWorkspaceSessionsView>["sessionCreator"]>>[0]) =>
+          createSessionFromDraft({
+            ...input,
+            bridge: createInMemoryPiRuntimeBridge({
+              now: () => "2026-06-26T08:00:03.000Z",
+            }),
+            projections: createInMemorySessionProjectionStore(),
+            idFactory: () => "session-base-branch",
+            now: () => "2026-06-26T08:00:00.000Z",
+          }),
+      );
+      saveSessionDraft("pig-docs", "Start from the feature branch");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId="pig-docs"
+          showDraft
+          loadProjectGitSummary={projectGitLoader("main", ["main", "feat/location-row"])}
+          workspace={docsWorkspace}
+          sessionCreator={sessionCreator}
+        />,
+      );
+
+      await screen.findByTestId("session-draft-composer");
+      const footer = footerOf("session-draft-composer");
+      await within(footer).findByTestId("git-branch-status-trigger");
+      await user.click(within(footer).getByTestId("checkout-strategy-trigger"));
+      await user.click(await screen.findByRole("option", { name: /Git worktree/ }));
+      await user.click(within(footer).getByTestId("git-branch-status-trigger"));
+      await user.click(await screen.findByRole("option", { name: "feat/location-row" }));
+
+      expect(within(footer).getByTestId("git-branch-status-trigger")).toHaveTextContent(
+        "from feat/location-row",
+      );
+      expect(getSessionDraft()?.baseRef).toBe("feat/location-row");
+      // Picking a base only sets the draft; the Project folder stays put.
+      expect(invokeSpy).not.toHaveBeenCalledWith(
+        "checkout_project_branch",
+        expect.anything(),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      await waitFor(() => expect(sessionCreator).toHaveBeenCalled());
+      expect(sessionCreator.mock.calls[0]?.[0].draft.baseRef).toBe("feat/location-row");
+      const liveFooter = await waitFor(() => footerOf("full-chat-composer"));
+      expect(
+        within(liveFooter).getByTestId("composer-branch-label"),
+      ).toHaveTextContent("from feat/location-row");
     });
 
     it("shows the Chat workspace as a Location without asking Git for a branch", async () => {
@@ -1982,6 +2039,47 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(
         await within(footer).findByTestId("git-branch-status-trigger"),
       ).toHaveTextContent("study/main");
+    });
+
+    it("forgets the chosen base branch when the Session Draft changes Project", async () => {
+      const user = userEvent.setup();
+      addProjectToRegistry(pigProjectPath, { now: () => "2026-06-30T08:00:00.000Z" });
+      addProjectToRegistry(studyProjectPath, { now: () => "2026-06-30T09:00:00.000Z" });
+      const loadProjectGitSummary = vi.fn(async (projectRoot: string) => ({
+        projectRoot,
+        branch: "main",
+        branches: projectRoot === studyProjectPath ? ["main"] : ["main", "feature"],
+      }));
+      saveSessionDraft(pigProjectPath, "Retarget the base branch");
+
+      render(
+        <AgentWorkspaceSessionsView
+          projectId={pigProjectPath}
+          showDraft
+          loadProjectGitSummary={loadProjectGitSummary}
+          workspace={{ ...docsWorkspace, id: pigProjectPath, projectRoot: pigProjectPath }}
+        />,
+      );
+
+      const footer = footerOf("session-draft-composer");
+      await within(footer).findByTestId("git-branch-status-trigger");
+      await user.click(within(footer).getByTestId("checkout-strategy-trigger"));
+      await user.click(await screen.findByRole("option", { name: /Git worktree/ }));
+      await user.click(within(footer).getByTestId("git-branch-status-trigger"));
+      await user.click(await screen.findByRole("option", { name: "feature" }));
+      expect(within(footer).getByTestId("git-branch-status-trigger")).toHaveTextContent(
+        "from feature",
+      );
+
+      await chooseProjectFromPicker(user, "study");
+
+      await waitFor(() =>
+        expect(loadProjectGitSummary).toHaveBeenCalledWith(studyProjectPath),
+      );
+      expect(
+        await within(footer).findByTestId("git-branch-status-trigger"),
+      ).toHaveTextContent("from main");
+      expect(getSessionDraft()?.baseRef).toBeUndefined();
     });
   });
 

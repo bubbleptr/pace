@@ -7,5 +7,7 @@ export type ExecutionCheckoutGitClient = {
     repoRoot: string;
     checkoutRoot: string;
     sessionId: string;
+    /** Branch the worktree starts from; the repository's HEAD when absent. */
+    baseRef?: string;
   }): Promise<void>;
 };

@@ -186,6 +186,7 @@ export async function createSessionFromDraft(
           input.executionMode === "background" ? "background-managed" : "foreground-local",
         project: input.project,
         now,
+        baseRef: input.draft.baseRef,
       }));
 
     commit(

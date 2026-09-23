@@ -6,6 +6,8 @@ export type SessionDraft = {
   projectId: string | null;
   prompt: string;
   checkoutMode?: SessionDraftCheckoutMode;
+  /** Branch a Git worktree starts from; the Project's HEAD when absent. */
+  baseRef?: string;
   updatedAt: string;
 };
 
@@ -30,6 +32,7 @@ function getStorage() {
 
 function isSessionDraft(value: unknown): value is SessionDraft {
   const checkoutMode = (value as { checkoutMode?: unknown } | null)?.checkoutMode;
+  const baseRef = (value as { baseRef?: unknown } | null)?.baseRef;
 
   return (
     typeof value === "object" &&
@@ -40,6 +43,7 @@ function isSessionDraft(value: unknown): value is SessionDraft {
     (checkoutMode === undefined ||
       checkoutMode === "local" ||
       checkoutMode === "worktree") &&
+    (baseRef === undefined || typeof baseRef === "string") &&
     typeof (value as { updatedAt?: unknown }).updatedAt === "string"
   );
 }
@@ -89,6 +93,13 @@ function emitDraftsChanged(projectId: string | null) {
   window.dispatchEvent(new CustomEvent(draftsChangedEvent, { detail: { projectId } }));
 }
 
+// A base branch only names something inside the Project it was picked in.
+function baseRefFor(existingDraft: SessionDraft | null, projectId: string | null) {
+  return existingDraft?.baseRef && existingDraft.projectId === projectId
+    ? { baseRef: existingDraft.baseRef }
+    : {};
+}
+
 function clearMissingTarget(
   draft: SessionDraft,
   options: GetSessionDraftOptions | undefined,
@@ -103,8 +114,9 @@ function clearMissingTarget(
     return draft;
   }
 
+  const { baseRef: _baseRef, ...rest } = draft;
   const nextDraft = {
-    ...draft,
+    ...rest,
     projectId: null,
     updatedAt: nowIso(),
   };
@@ -139,6 +151,7 @@ export function ensureSessionDraft(projectId: string | null = null) {
     projectId,
     prompt: existingDraft?.prompt ?? "",
     checkoutMode: existingDraft?.checkoutMode,
+    ...baseRefFor(existingDraft, projectId),
     updatedAt: nowIso(),
   };
 
@@ -154,6 +167,7 @@ export function saveSessionDraft(projectId: string | null, prompt: string) {
     projectId,
     prompt,
     checkoutMode: existingDraft?.checkoutMode,
+    ...baseRefFor(existingDraft, projectId),
     updatedAt: nowIso(),
   };
 
@@ -169,6 +183,7 @@ export function setSessionDraftTarget(projectId: string | null) {
     projectId,
     prompt: existingDraft?.prompt ?? "",
     checkoutMode: existingDraft?.checkoutMode,
+    ...baseRefFor(existingDraft, projectId),
     updatedAt: nowIso(),
   };
 
@@ -184,6 +199,23 @@ export function setSessionDraftCheckoutMode(checkoutMode: SessionDraftCheckoutMo
     projectId: existingDraft?.projectId ?? null,
     prompt: existingDraft?.prompt ?? "",
     checkoutMode,
+    ...baseRefFor(existingDraft, existingDraft?.projectId ?? null),
+    updatedAt: nowIso(),
+  };
+
+  writeDraft(draft);
+  emitDraftsChanged(draft.projectId);
+
+  return draft;
+}
+
+export function setSessionDraftBaseRef(baseRef: string) {
+  const existingDraft = getSessionDraft();
+  const draft: SessionDraft = {
+    projectId: existingDraft?.projectId ?? null,
+    prompt: existingDraft?.prompt ?? "",
+    checkoutMode: existingDraft?.checkoutMode,
+    baseRef,
     updatedAt: nowIso(),
   };
 

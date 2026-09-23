@@ -150,6 +150,7 @@ import {
   ensureSessionDraft,
   getSessionDraft,
   saveSessionDraft,
+  setSessionDraftBaseRef,
   setSessionDraftCheckoutMode,
   setSessionDraftTarget,
   subscribeSessionDrafts,
@@ -279,6 +280,8 @@ export type SessionDraftSubmitEvent = {
   projectId: string;
   prompt: string;
   checkoutMode: SessionDraftCheckoutMode;
+  /** Branch a Git worktree starts from; absent means the Project's HEAD. */
+  baseRef?: string;
   modelSelection?: RuntimeModelSelection;
   images?: RuntimePromptImage[];
 };
@@ -1987,11 +1990,14 @@ function GitBranchPicker({
   branch,
   branches,
   occupiedBranches,
+  triggerLabel = branch,
   onBranchChange,
 }: {
   branch: string;
   branches: string[];
   occupiedBranches: Array<{ branch: string; path: string }>;
+  /** What the chip reads; a worktree's base says "from <branch>". */
+  triggerLabel?: string;
   onBranchChange: (branch: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -2088,7 +2094,7 @@ function GitBranchPicker({
               className="size-4 shrink-0"
               data-testid="git-branch-status-icon"
             />
-            <span className="truncate">{branch}</span>
+            <span className="truncate">{triggerLabel}</span>
             <ChevronDown aria-hidden="true" className="size-4 shrink-0" />
           </span>
         </Button>
@@ -2303,6 +2309,7 @@ function SessionDraftComposer({
   projectGit,
   onDraftChange,
   onDraftCheckoutModeChange,
+  onDraftBaseRefChange,
   onDraftTargetChange,
   onDraftSubmit,
   onManageModels,
@@ -2315,6 +2322,7 @@ function SessionDraftComposer({
   projectGit: ProjectGitView;
   onDraftChange: (prompt: string) => void;
   onDraftCheckoutModeChange: (checkoutMode: SessionDraftCheckoutMode) => void;
+  onDraftBaseRefChange: (baseRef: string) => void;
   onDraftTargetChange: (projectId: string | null) => void;
   onDraftSubmit: (event: SessionDraftSubmitEvent) => void;
   onManageModels?: () => void;
@@ -2324,6 +2332,16 @@ function SessionDraftComposer({
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const visibleModels = useVisibleModels();
   const selectedCheckoutMode = draft.checkoutMode ?? recommendedCheckoutMode;
+  const projectBranch = projectGit.summary?.branch ?? null;
+  const projectBranches = projectGit.summary?.branches ?? [];
+  // A pick the Project no longer lists (branch deleted since the draft was
+  // saved) is dropped rather than failing Session Creation.
+  const chosenBaseRef =
+    selectedCheckoutMode === "worktree" &&
+    draft.baseRef &&
+    projectBranches.includes(draft.baseRef)
+      ? draft.baseRef
+      : undefined;
   const { loading: providerAuthLoading, configured: providersConfigured } =
     useProviderAuthStatus();
   const [draftModelControls, setDraftModelControls] =
@@ -2422,6 +2440,7 @@ function SessionDraftComposer({
       projectId: draft.projectId,
       prompt: built.prompt,
       checkoutMode: selectedCheckoutMode,
+      ...(chosenBaseRef ? { baseRef: chosenBaseRef } : {}),
       ...(built.images.length ? { images: built.images } : {}),
       ...(draftModelControls?.selected
         ? { modelSelection: draftModelControls.selected }
@@ -2431,7 +2450,6 @@ function SessionDraftComposer({
   };
 
   const chatTarget = isChatProjectId(draft.projectId);
-  const projectBranch = projectGit.summary?.branch ?? null;
   // The Location row the Live composer will keep: where this Session runs,
   // which branch it starts from, and the context ring waiting to be filled.
   const draftLocationRow = (
@@ -2462,17 +2480,19 @@ function SessionDraftComposer({
             testId="composer-branch-label"
           />
         ) : selectedCheckoutMode === "worktree" ? (
-          // A worktree is cut from this branch rather than moving onto it.
-          <ComposerStaticChip
-            chrome="button"
-            icon={GitBranch}
-            label={`from ${projectBranch}`}
-            testId="composer-branch-label"
+          // A worktree is cut from the chosen base rather than moving the
+          // Project folder onto it, so picking only records it on the draft.
+          <GitBranchPicker
+            branch={chosenBaseRef ?? projectBranch}
+            branches={projectBranches}
+            occupiedBranches={[]}
+            triggerLabel={`from ${chosenBaseRef ?? projectBranch}`}
+            onBranchChange={onDraftBaseRefChange}
           />
         ) : (
           <GitBranchPicker
             branch={projectBranch}
-            branches={projectGit.summary?.branches ?? []}
+            branches={projectBranches}
             occupiedBranches={[]}
             onBranchChange={(next) => void switchProjectBranch(next)}
           />
@@ -3505,6 +3525,9 @@ function LiveSessionColumn({
   ) => {
     setSessionDraft(setSessionDraftCheckoutMode(checkoutMode));
   };
+  const handleDraftBaseRefChange = (baseRef: string) => {
+    setSessionDraft(setSessionDraftBaseRef(baseRef));
+  };
   const handleDraftTargetChange = (targetProjectId: string | null) => {
     setSessionDraft(setSessionDraftTarget(targetProjectId));
   };
@@ -3524,7 +3547,7 @@ function LiveSessionColumn({
       return;
     }
 
-    const draftBranch = projectGit.summary?.branch ?? null;
+    const draftBranch = event.baseRef ?? projectGit.summary?.branch ?? null;
     const draftBranchLabel = draftBranch
       ? event.checkoutMode === "worktree"
         ? `from ${draftBranch}`
@@ -3558,6 +3581,8 @@ function LiveSessionColumn({
       draft: {
         ...draft,
         prompt: event.prompt,
+        // The composer already dropped a pick the Project no longer lists.
+        baseRef: event.baseRef,
       },
       project: {
         id: targetProject.id,
@@ -4251,6 +4276,7 @@ function LiveSessionColumn({
           projectGit={projectGit}
           onDraftChange={handleDraftChange}
           onDraftCheckoutModeChange={handleDraftCheckoutModeChange}
+          onDraftBaseRefChange={handleDraftBaseRefChange}
           onDraftTargetChange={handleDraftTargetChange}
           onDraftSubmit={(event) => void handleDraftSubmit(event)}
           onManageModels={onManageModels}
