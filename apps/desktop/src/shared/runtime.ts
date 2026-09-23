@@ -150,6 +150,10 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
         appVersion: "development",
         piVersion: "development",
         mode: "SDK",
+        platform: "browser",
+        arch: "unknown",
+        electronVersion: null,
+        isDevDataDir: true,
       } as T);
     case "list_session_projections":
       return Promise.resolve([] as T);

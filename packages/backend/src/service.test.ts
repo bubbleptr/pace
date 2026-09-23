@@ -1916,6 +1916,10 @@ describe("backend service", () => {
         appVersion: "development",
         piVersion: VERSION,
         mode: "SDK",
+        platform: process.platform,
+        arch: process.arch,
+        electronVersion: null,
+        isDevDataDir: false,
       },
     });
   });
