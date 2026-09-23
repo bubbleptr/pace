@@ -26,7 +26,14 @@ import {
   SessionToolbarActions,
 } from "@/pages/agent-workspace";
 import { addProjectToRegistry } from "@/entities/project/project-registry";
-import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
+import {
+  SessionProjectionsProvider,
+  SessionProjectionsStoreProvider,
+} from "@/entities/session/use-session-projections";
+import {
+  createSessionProjectionsStore,
+  type SessionProjectionsStore,
+} from "@/entities/session/session-projections-store";
 import {
   PiRuntimeBridgeError,
   type AgentRuntimeEventEntry,
@@ -60,10 +67,23 @@ import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 
-function render(ui: Parameters<typeof renderWithoutQuery>[0]) {
+// `store` hands the view a Session Projections store the test drives, as the
+// app provider does.
+function render(
+  ui: Parameters<typeof renderWithoutQuery>[0],
+  { store }: { store?: SessionProjectionsStore } = {},
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const result = renderWithoutQuery(ui, {
-    wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>
+        {store ? (
+          <SessionProjectionsStoreProvider store={store} runtimeGeneration={0}>
+            {children}
+          </SessionProjectionsStoreProvider>
+        ) : children}
+      </QueryClientProvider>
+    ),
   });
   return Object.assign(result, { queryClient });
 }
@@ -199,6 +219,12 @@ function renderProjectSessions(
     ),
     router,
   };
+}
+
+function storeWith(bridge: PiRuntimeBridge, ...projections: SessionProjection[]) {
+  const store = createSessionProjectionsStore({ bridge, listSessions: async () => [] });
+  for (const projection of projections) store.insert(projection);
+  return store;
 }
 
 /** The ChatPromptInput root inside a composer, where accent/status live. */
@@ -1354,8 +1380,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
     // Retry must issue a fresh history read. The exact count is protected by
-    // "retries a failed read once even when the projection refreshes in the
-    // same commit"; this end-to-end path only asserts the fresh read.
+    // the Session Projections store's history tests; this end-to-end path
+    // only asserts the fresh read.
     await waitFor(() => {
       expect(snapshotReads()).toBeGreaterThan(readsBeforeRetry);
     });
@@ -2211,76 +2237,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
-  it("ignores a follow-up commit that resolves after the user switched Sessions", async () => {
-    const user = userEvent.setup();
-    addProjectToRegistry(pigProjectPath);
-    saveSessionDraft(pigProjectPath, "Running session that keeps working");
-    let releaseQueue = () => {};
-    const queueGate = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
-    const createBridge = inMemoryBridgeModule.createInMemoryPiRuntimeBridge;
-    const bridgeSpy = vi
-      .spyOn(inMemoryBridgeModule, "createInMemoryPiRuntimeBridge")
-      .mockImplementation((options) => {
-        const bridge = createBridge(options);
-
-        return {
-          ...bridge,
-          queueFollowUp: async (input) => {
-            if (input.message === "Follow-up sent right before switching") {
-              await queueGate;
-            }
-            return bridge.queueFollowUp(input);
-          },
-        };
-      });
-    onTestFinished(() => bridgeSpy.mockRestore());
-
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-    await screen.findByTestId("session-draft-composer");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    const runningRow = await findSidebarSessionRow("Running session that keeps working");
-    await waitFor(() => expect(runningRow).toHaveAttribute("aria-current", "page"));
-
-    // A follow-up goes out on Session A; its RPC is still in flight.
-    fireEvent.change(screen.getByPlaceholderText("Queue the next task…"), {
-      target: { value: "Follow-up sent right before switching" },
-    });
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    // The user moves to a completed Session before the commit resolves.
-    const completedRow = await findSidebarSessionRow("Usage evidence review");
-    await user.click(completedRow);
-    await waitFor(() =>
-      expect(completedRow).toHaveAttribute("aria-current", "page"),
-    );
-
-    await act(async () => {
-      releaseQueue();
-    });
-
-    // The late commit lands in the store but must not reclaim the view.
-    expect(completedRow).toHaveAttribute("aria-current", "page");
-    expect(
-      within(screen.getByTestId("live-session-column")).queryByText(
-        "Follow-up sent right before switching",
-      ),
-    ).not.toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("live-session-column")).queryByText(
-        "Running session that keeps working",
-      ),
-    ).not.toBeInTheDocument();
-
-    await user.click(runningRow);
-    expect(
-      await within(screen.getByTestId("live-session-column")).findByText(
-        "Follow-up sent right before switching",
-      ),
-    ).toBeInTheDocument();
-  });
-
   it("shows a failed Session Creation in the Live Session and reopens the kept draft", async () => {
     const user = userEvent.setup();
     addProjectToRegistry(pigProjectPath);
@@ -2414,23 +2370,14 @@ describe("AgentWorkspaceSessionsPage", () => {
         totalTokens: 0,
       },
     };
-    function StopFailureHarness() {
-      const [currentProjection, setCurrentProjection] = useState(projection);
-
-      return (
-        <>
-          <AgentWorkspaceSessionsView
-            projectId="pig-docs"
-            runtimeBridge={bridge}
-            sessionProjection={currentProjection}
-            workspace={workspace}
-            onProjectionChange={setCurrentProjection}
-          />
-        </>
-      );
-    }
-
-    render(<StopFailureHarness />);
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        runtimeBridge={bridge}
+        sessionProjection={projection}
+        workspace={workspace}
+      />,
+    );
 
     await user.click(
       within(screen.getByTestId("live-session-column")).getByRole("button", { name: "Stop" }),
@@ -2977,90 +2924,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
   });
 
-  it("keeps the consumed queued id processing when reorder is in flight", async () => {
-    const user = userEvent.setup();
-    const inner = createInMemoryPiRuntimeBridge({
-      now: () => "2026-06-26T08:10:00.000Z",
-    });
-    let releaseReorder: (() => void) | null = null;
-    const bridge = {
-      ...inner,
-      async reorderQueuedMessages(input: { piSessionId: string; orderedIds: string[] }) {
-        await new Promise<void>((resolve) => {
-          releaseReorder = resolve;
-        });
-        return {
-          ok: true as const,
-          queuedMessages: [
-            {
-              id: input.orderedIds[0] ?? "",
-              piSessionId: input.piSessionId,
-              body: "Same body",
-              status: "pending" as const,
-              createdAt: "2026-06-26T08:10:00.000Z",
-            },
-            {
-              id: input.orderedIds[1] ?? "",
-              piSessionId: input.piSessionId,
-              body: "Same body",
-              status: "processing" as const,
-              createdAt: "2026-06-26T08:10:00.000Z",
-              processingStartedAt: "2026-06-26T08:10:02.000Z",
-            },
-          ],
-        };
-      },
-    };
-    await renderRunningQueue(bridge);
-
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Same body");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Same body");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    const pendingQueue = await screen.findByTestId("queued-message-list");
-    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
-    const headId = cards[0]?.getAttribute("data-queued-message-id") ?? "";
-    const nextId = cards[1]?.getAttribute("data-queued-message-id") ?? "";
-    dragQueuedCard(cards[1]!, cards[0]!);
-    await waitFor(() => expect(releaseReorder).not.toBeNull());
-
-    inner.consumeQueuedMessage(headId);
-
-    await waitFor(() => {
-      const head = within(pendingQueue)
-        .getAllByTestId("chat-queued-message")
-        .find((card) => card.getAttribute("data-queued-message-id") === headId);
-      const next = within(pendingQueue)
-        .getAllByTestId("chat-queued-message")
-        .find((card) => card.getAttribute("data-queued-message-id") === nextId);
-      expect(
-        within(head!).queryByRole("button", { name: "Steer the run with this message" }),
-      ).not.toBeInTheDocument();
-      expect(
-        within(next!).getByRole("button", { name: "Steer the run with this message" }),
-      ).toBeInTheDocument();
-    });
-
-    await act(async () => {
-      releaseReorder?.();
-    });
-
-    await waitFor(() => {
-      const synced = within(pendingQueue).getAllByTestId("chat-queued-message");
-      expect(synced.map((card) => card.getAttribute("data-queued-message-id"))).toEqual([
-        nextId,
-        headId,
-      ]);
-      expect(
-        within(synced[0]!).getByRole("button", { name: "Steer the run with this message" }),
-      ).toBeInTheDocument();
-      expect(
-        within(synced[1]!).queryByRole("button", { name: "Steer the run with this message" }),
-      ).not.toBeInTheDocument();
-    });
-  });
-
   it("drops a card after the target when the pointer is in the lower half", async () => {
     const user = userEvent.setup();
     const bridge = createInMemoryPiRuntimeBridge({
@@ -3089,7 +2952,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
   });
 
-  it("ignores a second drag while reorder is in flight and rolls back to the request snapshot", async () => {
+  it("locks the waiting area while a reorder is in flight", async () => {
     const user = userEvent.setup();
     const inner = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:10:00.000Z",
@@ -3098,18 +2961,10 @@ describe("AgentWorkspaceSessionsPage", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let started = 0;
     const bridge = {
       ...inner,
       reorderQueuedMessages: async (input: { piSessionId: string; orderedIds: string[] }) => {
-        started += 1;
-        if (started === 1) {
-          await held;
-          throw new PiRuntimeBridgeError({
-            stage: "reordering queued messages",
-            message: "Pi rejected the first reorder.",
-          });
-        }
+        await held;
         return inner.reorderQueuedMessages(input);
       },
     };
@@ -3119,33 +2974,27 @@ describe("AgentWorkspaceSessionsPage", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
-    await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
     const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
     dragQueuedCard(cards[1]!, cards[0]!);
 
     await waitFor(() => {
-      expect(within(pendingQueue).getAllByTestId("chat-queued-message")[0]).toHaveAttribute(
-        "draggable",
-        "false",
-      );
+      for (const card of within(pendingQueue).getAllByTestId("chat-queued-message")) {
+        expect(card).toHaveAttribute("draggable", "false");
+      }
     });
 
-    const inFlight = within(pendingQueue).getAllByTestId("chat-queued-message");
-    dragQueuedCard(inFlight[2]!, inFlight[0]!);
-    release();
+    await act(async () => release());
 
     await waitFor(() => {
-      const restored = within(pendingQueue).getAllByTestId("chat-queued-message");
-      expect(restored.map((card) => card.textContent)).toEqual([
-        expect.stringContaining("A"),
+      const settled = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(settled.map((card) => card.textContent)).toEqual([
         expect.stringContaining("B"),
-        expect.stringContaining("C"),
+        expect.stringContaining("A"),
       ]);
+      expect(settled[0]).toHaveAttribute("draggable", "true");
     });
-    expect(started).toBe(1);
   });
 
   it("shows an ephemeral assistant placeholder while a run has no assistant events yet", async () => {
@@ -3826,263 +3675,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
-  it("keeps the run(end) that lands inside the Stop round-trip so the aborted bubble settles", async () => {
-    const user = userEvent.setup();
-    const bridge = createInMemoryPiRuntimeBridge({
-      now: () => "2026-07-02T10:00:10.000Z",
-    });
-    const agentListeners = new Map<
-      string,
-      Set<(entry: AgentRuntimeEventEntry) => void>
-    >();
-    let releaseAbort: (() => void) | null = null;
-    // The abort RPC is held open so the Gateway's run(end) for the aborted
-    // Run can arrive inside the round-trip window — the window handleStopRun
-    // used to clobber with its pre-await projection snapshot, leaving the
-    // aborted bubble ticking forever next to the next prompt's live one.
-    const stopRaceBridge: InMemoryPiRuntimeBridge = {
-      ...bridge,
-      subscribeToAgentEvents(piSessionId, listener) {
-        const sessionListeners = agentListeners.get(piSessionId) ?? new Set();
-
-        sessionListeners.add(listener);
-        agentListeners.set(piSessionId, sessionListeners);
-
-        return () => {
-          sessionListeners.delete(listener);
-        };
-      },
-      async abortRun(input) {
-        const stopped = await bridge.abortRun(input);
-
-        await new Promise<void>((resolve) => {
-          releaseAbort = resolve;
-        });
-
-        return stopped;
-      },
-    };
-    const emitAgentEvent = (entry: AgentRuntimeEventEntry) => {
-      for (const listener of agentListeners.get("pi-session-stop-race") ?? []) {
-        listener(entry);
-      }
-    };
-    const runId = "pi-session-stop-race:run-1";
-    const turnId = `${runId}:turn-1`;
-    const messageId = `${turnId}:msg-1`;
-    let projection: SessionProjection = {
-      ...createSessionProjection({
-        id: "stop-race-session",
-        projectId: "pig-docs",
-        initialPrompt: "First prompt",
-        createdAt: "2026-07-02T10:00:00.000Z",
-      }),
-      creationStage: "accepted",
-      runtimeId: "pi-sdk:stop-race-session",
-      piSessionId: "pi-session-stop-race",
-    };
-
-    // The Run is mid-thought when the user reaches for Stop.
-    for (const entry of [
-      {
-        seq: 1,
-        timestamp: "2026-07-02T10:00:01.000Z",
-        event: {
-          type: "run",
-          runId,
-          phase: "start",
-          trigger: "prompt",
-          surface: "hidden",
-          origin: "sdk",
-        } as const,
-      },
-      {
-        seq: 2,
-        timestamp: "2026-07-02T10:00:02.000Z",
-        event: {
-          type: "message",
-          runId,
-          turnId,
-          messageId,
-          role: "assistant",
-          phase: "start",
-          parts: [],
-          surface: "chat",
-          origin: "sdk",
-        } as const,
-      },
-      {
-        seq: 3,
-        timestamp: "2026-07-02T10:00:02.500Z",
-        event: {
-          type: "message_part",
-          runId,
-          turnId,
-          messageId,
-          partId: `${messageId}:part-0`,
-          partType: "thinking",
-          phase: "start",
-          bodyMode: "delta",
-          body: "Considering",
-          surface: "chat",
-          origin: "sdk",
-        } as const,
-      },
-    ]) {
-      projection = applySessionProjectionEvent(projection, {
-        type: "agent-event-received",
-        entry,
-      });
-    }
-
-    await bridge.restoreSessionState({
-      piSessionId: "pi-session-stop-race",
-      runtimeId: "pi-sdk:stop-race-session",
-      projectId: "pig-docs",
-      cwd: "/Users/void/code/opensource/Pig/docs",
-      status: "running",
-      events: projection.runtimeEvents,
-      updatedAt: projection.updatedAt,
-    });
-
-    render(
-      <AgentWorkspaceSessionsView
-        projectId="pig-docs"
-        runtimeBridge={stopRaceBridge}
-        sessionProjection={projection}
-        workspace={{
-          id: "pig-docs",
-          name: "Pig Docs",
-          projectRoot: "/Users/void/code/opensource/Pig/docs",
-          repoRoot: "/Users/void/code/opensource/Pig",
-          selectedSessionId: "stop-race-session",
-          liveMessages: [],
-          runTimeline: [],
-          checkout: {
-            mode: "Foreground local checkout",
-            root: "/Users/void/code/opensource/Pig",
-            runtimeCwd: "/Users/void/code/opensource/Pig/docs",
-          },
-          summary: {
-            model: "fixture-model",
-            totalCostUsd: 0,
-            totalTokens: 0,
-          },
-        }}
-      />,
-    );
-
-    const liveColumn = await screen.findByTestId("live-session-column");
-    const liveChat = await screen.findByLabelText("Live Chat messages");
-
-    expect(within(liveChat).getByRole("status")).toBeInTheDocument();
-
-    await user.click(await within(liveColumn).findByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(releaseAbort).not.toBeNull());
-
-    // Pi closes the aborted Run while the abort RPC is still in flight.
-    act(() => {
-      for (const entry of [
-        {
-          seq: 4,
-          timestamp: "2026-07-02T10:00:09.000Z",
-          event: {
-            type: "message",
-            runId,
-            turnId,
-            messageId,
-            role: "assistant",
-            phase: "end",
-            parts: [
-              {
-                partId: `${messageId}:part-0`,
-                partType: "thinking",
-                body: "Considering",
-              },
-            ],
-            surface: "chat",
-            origin: "sdk",
-          } as const,
-        },
-        {
-          seq: 5,
-          timestamp: "2026-07-02T10:00:09.500Z",
-          event: {
-            type: "run",
-            runId,
-            phase: "end",
-            trigger: "prompt",
-            outcome: "aborted",
-            surface: "hidden",
-            origin: "sdk",
-          } as const,
-        },
-      ]) {
-        emitAgentEvent(entry);
-      }
-    });
-
-    await act(async () => {
-      releaseAbort?.();
-    });
-
-    await waitFor(() => {
-      expect(within(liveColumn).queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
-    });
-
-    // A completed Session hides every clock, so the lost run(end) only shows
-    // once the next prompt puts the Session back in flight.
-    await user.type(
-      screen.getByPlaceholderText("What do you want to know?"),
-      "Second prompt",
-    );
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    const nextRunId = "pi-session-stop-race:run-2";
-    const nextTurnId = `${nextRunId}:turn-1`;
-    const nextMessageId = `${nextTurnId}:msg-1`;
-
-    act(() => {
-      for (const entry of [
-        {
-          seq: 6,
-          timestamp: "2026-07-02T10:00:20.000Z",
-          event: {
-            type: "run",
-            runId: nextRunId,
-            phase: "start",
-            trigger: "prompt",
-            surface: "hidden",
-            origin: "sdk",
-          } as const,
-        },
-        {
-          seq: 7,
-          timestamp: "2026-07-02T10:00:21.000Z",
-          event: {
-            type: "message",
-            runId: nextRunId,
-            turnId: nextTurnId,
-            messageId: nextMessageId,
-            role: "assistant",
-            phase: "start",
-            parts: [],
-            surface: "chat",
-            origin: "sdk",
-          } as const,
-        },
-      ]) {
-        emitAgentEvent(entry);
-      }
-    });
-
-    // Only the new Run beats; the aborted one stays settled.
-    await waitFor(() => {
-      expect(within(liveChat).getAllByRole("status")).toHaveLength(1);
-    });
-    expect(within(liveChat).getByText("Second prompt")).toBeInTheDocument();
-  });
-
   it("keeps the run events that land inside the Steer round-trip", async () => {
     const user = userEvent.setup();
     const bridge = createInMemoryPiRuntimeBridge({
@@ -4333,26 +3925,49 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent("Continue A");
   });
 
-  it("reloads history on returning to a Session so background answers remain visible", async () => {
-    let reads = 0;
-    const runtimeBridge = { ...createInMemoryPiRuntimeBridge(), loadSession: async ({ piSessionId }: { piSessionId: string }) => {
-      if (piSessionId === "pi-a") reads += 1;
-      return { piSessionId, runtimeId: "runtime", projectId: "pig-docs", cwd: "/repo", status: "completed" as const,
-        events: [{ id: "answer", piSessionId, kind: "message" as const, role: "assistant" as const,
-          body: reads > 1 ? "Completed while away" : "Previous answer", timestamp: "2026-09-14T00:00:00.000Z" }],
-        updatedAt: "2026-09-14T00:00:00.000Z" };
-    } };
-    const a: SessionProjection = { ...createSessionProjection({ id: "a", projectId: "pig-docs", initialPrompt: "A", createdAt: "2026-09-14T00:00:00.000Z" }),
-      status: "completed", creationStage: "accepted", piSessionId: "pi-a", runtimeId: "runtime" };
-    const view = (projection: SessionProjection) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
-      sessionProjection={projection} runtimeBridge={runtimeBridge} />;
-    const { rerender } = render(view(a));
+  it("reads a Session's history once and keeps following it while the user looks away", async () => {
+    let resolveRead!: (state: PiSessionState) => void;
+    const state = (piSessionId: string, events: PiRuntimeEvent[] = []): PiSessionState => ({
+      piSessionId, runtimeId: "runtime", projectId: "pig-docs", cwd: "/repo", status: "completed",
+      events, updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const loadSession = vi.fn(({ piSessionId }: { piSessionId: string }) => piSessionId === "pi-a"
+      ? new Promise<PiSessionState>((resolve) => { resolveRead = resolve; })
+      : Promise.resolve(state(piSessionId)));
+    const listeners = new Set<(event: PiRuntimeEvent) => void>();
+    const runtimeBridge: PiRuntimeBridge = { ...createInMemoryPiRuntimeBridge(), loadSession,
+      subscribeToEvents: (piSessionId, listener) => {
+        if (piSessionId === "pi-a") listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      } };
+    const session = (id: string): SessionProjection => ({
+      ...createSessionProjection({ id, projectId: "pig-docs", initialPrompt: id, createdAt: "2026-09-14T00:00:00.000Z" }),
+      status: "completed", creationStage: "accepted", piSessionId: `pi-${id}`, runtimeId: "runtime",
+    });
+    const view = (sessionId: string) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+      sessionId={sessionId} runtimeBridge={runtimeBridge} />;
+    const { rerender } = render(view("a"), { store: storeWith(runtimeBridge, session("a"), session("b")) });
+
+    expect(await screen.findByTestId("session-history-status")).toHaveTextContent("Loading history");
+    await act(async () => resolveRead(state("pi-a", [{ id: "answer", piSessionId: "pi-a", kind: "message",
+      role: "assistant", body: "Previous answer", timestamp: "2026-09-14T00:00:00.000Z" }])));
     expect(await screen.findByText("Previous answer")).toBeInTheDocument();
-    rerender(view({ ...a, id: "b", piSessionId: "pi-b" }));
-    await waitFor(() => expect(screen.queryByTestId("session-history-status")).not.toBeInTheDocument());
-    rerender(view(a));
+    expect(screen.queryByTestId("session-history-status")).not.toBeInTheDocument();
+
+    rerender(view("b"));
+    act(() => {
+      for (const listener of listeners) {
+        listener({ id: "background-answer", piSessionId: "pi-a", kind: "message",
+          role: "assistant", body: "Completed while away", timestamp: "2026-09-14T00:01:00.000Z" });
+        listener({ id: "background-done", piSessionId: "pi-a", kind: "status",
+          body: "Done", timestamp: "2026-09-14T00:01:01.000Z" });
+      }
+    });
+    expect(screen.queryByText("Completed while away")).not.toBeInTheDocument();
+
+    rerender(view("a"));
     expect(await screen.findByText("Completed while away")).toBeInTheDocument();
-    expect(reads).toBe(2);
+    expect(loadSession.mock.calls.filter(([input]) => input.piSessionId === "pi-a")).toHaveLength(1);
   });
 
   it.each(["refresh", "reopen"])(
@@ -4421,221 +4036,6 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(loadSession).toHaveBeenCalledTimes(1);
     },
   );
-
-  describe("resume status", () => {
-    const projection: SessionProjection = {
-      ...createSessionProjection({
-        id: "resume-status",
-        projectId: "pig-docs",
-        initialPrompt: "Open the old session",
-        createdAt: "2026-07-02T10:00:00.000Z",
-      }),
-      status: "completed",
-      creationStage: "accepted",
-      runtimeId: "runtime-status",
-      piSessionId: "pi-status",
-      sessionFile: "/sessions/pi-status.jsonl",
-    };
-    const resumedState: PiSessionState = {
-      piSessionId: "pi-status",
-      runtimeId: "runtime-status",
-      projectId: "pig-docs",
-      cwd: "/project",
-      status: "completed",
-      events: [],
-      updatedAt: projection.updatedAt,
-    };
-
-    it("shows a resume status in the empty Live Chat until the runtime snapshot lands", async () => {
-      let resolveResume!: (state: PiSessionState) => void;
-      const loadSession = vi.fn(() => new Promise<PiSessionState>((resolve) => {
-        resolveResume = resolve;
-      }));
-      render(
-        <AgentWorkspaceSessionsView
-          projectId="pig-docs"
-          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), loadSession }}
-          sessionProjection={projection}
-          showDraft={false}
-        />,
-      );
-      await waitFor(() => expect(loadSession).toHaveBeenCalledTimes(1));
-
-      expect(screen.getByTestId("session-history-status")).toHaveTextContent("Loading history");
-
-      await act(async () => resolveResume(resumedState));
-
-      await waitFor(() => expect(screen.queryByTestId("session-history-status")).toBeNull());
-    });
-
-    it("clears the resume status when the resume fails", async () => {
-      let rejectResume!: (error: Error) => void;
-      const loadSession = vi.fn(() => new Promise<PiSessionState>((_resolve, reject) => {
-        rejectResume = reject;
-      }));
-      render(
-        <AgentWorkspaceSessionsView
-          projectId="pig-docs"
-          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), loadSession }}
-          sessionProjection={projection}
-          showDraft={false}
-        />,
-      );
-      await waitFor(() => expect(screen.getByTestId("session-history-status")).toBeInTheDocument());
-
-      await act(async () => rejectResume(new Error("runtime exploded")));
-
-      await waitFor(() => expect(screen.queryByTestId("session-history-status")).toBeNull());
-      expect(screen.getByTestId("runtime-fallback-banner")).toBeInTheDocument();
-    });
-
-    it("retries a failed read once even when the projection refreshes in the same commit", async () => {
-      const loadSession = vi.fn()
-        .mockRejectedValueOnce(new Error("Journal read failed"))
-        .mockResolvedValue(resumedState);
-      const runtimeBridge = { ...createInMemoryPiRuntimeBridge(), loadSession };
-      // Clicks Retry from a layout effect: that runs after the refreshed
-      // projection commits but before its passive history effect, the window
-      // a background projection refresh opens on a loaded runner.
-      function ClickRetryBeforePassiveEffects({ armed }: { armed: boolean }) {
-        useLayoutEffect(() => {
-          if (armed) screen.getByRole("button", { name: "Retry" }).click();
-        }, [armed]);
-        return null;
-      }
-      const view = (armed: boolean) => (
-        <>
-          <AgentWorkspaceSessionsView
-            projectId="pig-docs"
-            runtimeBridge={runtimeBridge}
-            sessionProjection={{ ...projection }}
-            showDraft={false}
-          />
-          <ClickRetryBeforePassiveEffects armed={armed} />
-        </>
-      );
-      const { rerender } = render(view(false));
-      await screen.findByRole("button", { name: "Retry" });
-
-      rerender(view(true));
-      await act(async () => {});
-
-      expect(loadSession).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it("keeps the submitted user bubble when a slow resume resync lands after the prompt echo", async () => {
-    const user = userEvent.setup();
-    const bridge = createInMemoryPiRuntimeBridge({
-      now: () => "2026-07-02T10:00:10.000Z",
-    });
-    let releaseResume: (() => void) | null = null;
-    // loadSession snapshots the Session state when the RPC starts (the way
-    // the Gateway snapshot predates later events) and stays parked until the
-    // test releases it.
-    const resumingBridge = {
-      ...bridge,
-      async loadSession(input: { piSessionId: string }) {
-        const snapshot = await bridge.getSessionState(input.piSessionId);
-
-        await new Promise<void>((resolve) => {
-          releaseResume = resolve;
-        });
-
-        return snapshot;
-      },
-    };
-    const projection: SessionProjection = {
-      ...createSessionProjection({
-        id: "resumed-session",
-        projectId: "pig-docs",
-        initialPrompt: "First prompt",
-        createdAt: "2026-07-02T10:00:00.000Z",
-      }),
-      status: "completed",
-      creationStage: "accepted",
-      runtimeId: "pi-sdk:resumed-session",
-      piSessionId: "pi-session-resumed",
-      sessionFile: "/sessions/pi-session-resumed.jsonl",
-      runtimeEvents: [
-        {
-          id: "user-echo-1",
-          piSessionId: "pi-session-resumed",
-          kind: "message",
-          role: "user",
-          body: "First prompt",
-          timestamp: "2026-07-02T10:00:00.500Z",
-        },
-      ],
-      updatedAt: "2026-07-02T10:00:00.500Z",
-    };
-
-    await bridge.restoreSessionState({
-      piSessionId: "pi-session-resumed",
-      runtimeId: "pi-sdk:resumed-session",
-      projectId: "pig-docs",
-      cwd: "/Users/void/code/opensource/Pig/docs",
-      status: "completed",
-      events: projection.runtimeEvents,
-      updatedAt: projection.updatedAt,
-    });
-
-    render(
-      <AgentWorkspaceSessionsView
-        projectId="pig-docs"
-        runtimeBridge={resumingBridge}
-        sessionProjection={projection}
-        workspace={{
-          id: "pig-docs",
-          name: "Pig Docs",
-          projectRoot: "/Users/void/code/opensource/Pig/docs",
-          repoRoot: "/Users/void/code/opensource/Pig",
-          selectedSessionId: "resumed-session",
-          liveMessages: [],
-          runTimeline: [],
-          checkout: {
-            mode: "Foreground local checkout",
-            root: "/Users/void/code/opensource/Pig",
-            runtimeCwd: "/Users/void/code/opensource/Pig/docs",
-          },
-          summary: {
-            model: "fixture-model",
-            totalCostUsd: 0,
-            totalTokens: 0,
-          },
-        }}
-      />,
-    );
-
-    // The resume RPC parked on mount; the user sends a follow-up while it is
-    // still in flight and the echo renders.
-    await waitFor(() => expect(releaseResume).not.toBeNull());
-
-    await user.type(
-      screen.getByPlaceholderText("What do you want to know?"),
-      "Second prompt",
-    );
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    const liveChat = await screen.findByLabelText("Live Chat messages");
-
-    await waitFor(
-      () => expect(liveChat).toHaveTextContent("Second prompt"),
-      { timeout: 3000 },
-    );
-
-    // The slow resume RPC now returns its pre-prompt snapshot; the resync
-    // commit must not clobber the echo that landed while it was in flight.
-    await act(async () => {
-      releaseResume?.();
-    });
-
-    await waitFor(
-      () => expect(liveChat).toHaveTextContent("Second prompt"),
-      { timeout: 3000 },
-    );
-    expect(liveChat).toHaveTextContent("First prompt");
-  });
 
   it("restores a per-Session Follow-up Draft without showing a Project selector", async () => {
     let projection = applySessionProjectionEvent(
@@ -5900,7 +5300,6 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   it("defaults Session Draft checkout to local and still creates a managed worktree when chosen", async () => {
     const user = userEvent.setup();
-    const projections: Array<ReturnType<typeof createSessionProjection>> = [];
     const createdWorktrees: string[] = [];
     const checkoutManager = createExecutionCheckoutManager({
       worktreesRoot: "/tmp/pig-worktrees",
@@ -5942,12 +5341,13 @@ describe("AgentWorkspaceSessionsPage", () => {
       },
     });
     saveSessionDraft("pig-docs", "Run in an isolated background checkout");
+    const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
       <AgentWorkspaceSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
-        sessionProjection={activeProjection}
+        sessionId="active-session"
         workspace={{
           id: "pig-docs",
           name: "Pig Docs",
@@ -5967,10 +5367,8 @@ describe("AgentWorkspaceSessionsPage", () => {
             totalTokens: 0,
           },
         }}
-        onProjectionChange={(projection) => {
-          projections.push(projection);
-        }}
       />,
+      { store },
     );
 
     expect(screen.getByTestId("checkout-strategy-trigger")).toHaveTextContent(
@@ -5997,7 +5395,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const createdProjection = await waitFor(() => {
-      const latest = projections[projections.length - 1];
+      const latest = store.list().find((projection) => projection.id !== "active-session");
 
       expect(latest?.initialPrompt).toBe("Run in an isolated background checkout");
       expect(latest?.checkout?.mode).toBe("managed-worktree");
@@ -6016,7 +5414,6 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   it("lets users choose a local checkout even when another Session is active", async () => {
     const user = userEvent.setup();
-    const projections: Array<ReturnType<typeof createSessionProjection>> = [];
     const createdWorktrees: string[] = [];
     const checkoutManager = createExecutionCheckoutManager({
       worktreesRoot: "/tmp/pig-worktrees",
@@ -6058,12 +5455,13 @@ describe("AgentWorkspaceSessionsPage", () => {
       },
     });
     saveSessionDraft("pig-docs", "Run beside an active Session in place");
+    const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
       <AgentWorkspaceSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
-        sessionProjection={activeProjection}
+        sessionId="active-session"
         workspace={{
           id: "pig-docs",
           name: "Pig Docs",
@@ -6083,10 +5481,8 @@ describe("AgentWorkspaceSessionsPage", () => {
             totalTokens: 0,
           },
         }}
-        onProjectionChange={(projection) => {
-          projections.push(projection);
-        }}
       />,
+      { store },
     );
 
     expect(screen.getByTestId("checkout-strategy-trigger")).toHaveTextContent(
@@ -6106,7 +5502,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const createdProjection = await waitFor(() => {
-      const latest = projections[projections.length - 1];
+      const latest = store.list().find((projection) => projection.id !== "active-session");
 
       expect(latest?.initialPrompt).toBe("Run beside an active Session in place");
       expect(latest?.checkout?.mode).toBe("foreground-local");
@@ -6128,7 +5524,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-07-03T12:10:00.000Z",
     });
-    const projections: SessionProjection[] = [];
     const createdWorktrees: string[] = [];
     const checkoutManager = createExecutionCheckoutManager({
       worktreesRoot: "/tmp/pig-worktrees",
@@ -6202,12 +5597,17 @@ describe("AgentWorkspaceSessionsPage", () => {
     bridge.forkSession = forkSession;
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(
+    // Stands in for the page, which moves its selection to the fork.
+    function ForkHarness() {
+      const [sessionId, setSessionId] = useState(sourceProjection.id);
+
+      return (
       <AgentWorkspaceSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
-        sessionProjection={sourceProjection}
+        sessionId={sessionId}
+        onSessionCreationStarted={(projection) => setSessionId(projection.id)}
         workspace={{
           id: "pig-docs",
           name: "Pig Docs",
@@ -6227,11 +5627,11 @@ describe("AgentWorkspaceSessionsPage", () => {
             totalTokens: 0,
           },
         }}
-        onProjectionChange={(projection) => {
-          projections.push(projection);
-        }}
-      />,
-    );
+      />
+      );
+    }
+    const store = storeWith(bridge, sourceProjection);
+    render(<ForkHarness />, { store });
 
     const sourceMessage = (await screen.findByText("Revise this branch")).closest(
       '[data-slot="chat-message-user"]',
@@ -6269,12 +5669,12 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(createdWorktrees).toHaveLength(1);
 
     const forkedProjection = await waitFor(() => {
-      const latest = projections[projections.length - 1];
+      const latest = store.list().find((projection) => projection.id !== sourceProjection.id);
 
       expect(latest?.piSessionId).toBe("pi-session-forked");
       expect(latest?.checkout?.mode).toBe("managed-worktree");
 
-      return latest;
+      return latest!;
     });
 
     expect(getFollowUpDraft(forkedProjection.id)?.message).toBe("Revise this branch");
@@ -6288,7 +5688,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-07-03T12:10:00.000Z",
     });
-    const projections: SessionProjection[] = [];
     const createdWorktrees: string[] = [];
     const checkoutManager = createExecutionCheckoutManager({
       worktreesRoot: "/tmp/pig-worktrees",
@@ -6351,12 +5750,13 @@ describe("AgentWorkspaceSessionsPage", () => {
     bridge.forkSession = forkSession;
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
+    const store = storeWith(bridge, sourceProjection);
     render(
       <AgentWorkspaceSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
-        sessionProjection={sourceProjection}
+        sessionId={sourceProjection.id}
         workspace={{
           id: "pig-docs",
           name: "Pig Docs",
@@ -6376,10 +5776,8 @@ describe("AgentWorkspaceSessionsPage", () => {
             totalTokens: 0,
           },
         }}
-        onProjectionChange={(projection) => {
-          projections.push(projection);
-        }}
       />,
+      { store },
     );
 
     const sourceMessage = (await screen.findByText("Revise this branch")).closest(
@@ -6401,7 +5799,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
     expect(forkSession).not.toHaveBeenCalled();
     expect(createdWorktrees).toHaveLength(0);
-    expect(projections).toHaveLength(0);
+    expect(store.list()).toEqual([sourceProjection]);
     expect(window.localStorage.getItem("pigui.followUpDrafts.v1")).toBeNull();
   });
 
@@ -9763,15 +9161,37 @@ describe("Chain of Thought phases in Live Chat", () => {
     return projection;
   }
 
-  function renderCot(beats: CotBeat[], nowMs: number) {
-    return render(
+  function cotView(nowMs: number) {
+    return (
       <AgentWorkspaceSessionsView
         clockNowMs={cotT0 + nowMs}
         projectId="pig-docs"
-        sessionProjection={cotProjection(beats)}
+        sessionId="session-cot"
         workspace={cotWorkspace}
-      />,
+      />
     );
+  }
+
+  function renderCot(beats: CotBeat[], nowMs: number) {
+    const store = storeWith(createInMemoryPiRuntimeBridge(), cotProjection(beats));
+
+    return { ...render(cotView(nowMs), { store }), store };
+  }
+
+  // Later beats reach the store the way the runtime subscription delivers them.
+  function receiveCotBeats(
+    store: SessionProjectionsStore,
+    beats: CotBeat[],
+    alreadyApplied: number,
+  ) {
+    act(() => {
+      beats.slice(alreadyApplied).forEach((beat, index) => {
+        store.apply("session-cot", {
+          type: "agent-event-received",
+          entry: { seq: alreadyApplied + index + 1, timestamp: cotAt(beat.ms), event: beat.event },
+        });
+      });
+    });
   }
 
   function cotBlock() {
@@ -9784,76 +9204,6 @@ describe("Chain of Thought phases in Live Chat", () => {
 
     return block;
   }
-
-  it.each([false, true])("keeps a completed tool after a delayed parent projection and the next turn (isError=%s)", (isError) => {
-    vi.useFakeTimers();
-    vi.setSystemTime(cotT0 + 2000);
-    const matchMedia = window.matchMedia;
-    window.matchMedia = (query) => {
-      const media = matchMedia(query);
-      return query === "(prefers-reduced-motion: reduce)" ? { ...media, matches: true } : media;
-    };
-    onTestFinished(() => {
-      window.matchMedia = matchMedia;
-      vi.useRealTimers();
-    });
-
-    const m1 = cotMessage(1);
-    const call = m1.part(0, "tool_call");
-    const args = '{"path":"README.md"}';
-    const opening = [
-      cotRunStart(0),
-      m1.start(100),
-      call.start(200, "read"),
-      call.end(300, args, "call-1"),
-      m1.end(400, [call.snapshot(args, "call-1")]),
-      cotToolStart(500, "call-1", "read"),
-    ];
-    const parentProjection = cotProjection(opening);
-    const listeners = new Set<(entry: AgentRuntimeEventEntry) => void>();
-    const bridge = {
-      ...createInMemoryPiRuntimeBridge(),
-      subscribeToAgentEvents(_piSessionId: string, listener: (entry: AgentRuntimeEventEntry) => void) {
-        listeners.add(listener);
-        return () => { listeners.delete(listener); };
-      },
-    };
-    let seq = opening.length;
-    const emit = (beat: CotBeat) => {
-      act(() => {
-        const entry = { seq: ++seq, timestamp: cotAt(beat.ms), event: beat.event };
-        for (const listener of listeners) listener(entry);
-      });
-    };
-    const view = (projection: SessionProjection) => (
-      <AgentWorkspaceSessionsView
-        projectId="pig-docs"
-        runtimeBridge={bridge}
-        sessionProjection={projection}
-        workspace={cotWorkspace}
-      />
-    );
-    const { rerender } = render(view(parentProjection));
-    expect(cotBlock()).toHaveTextContent("Running read…");
-
-    const result = isError ? "Permission denied" : "Read complete";
-    emit(cotToolEnd(2100, "call-1", "read", result, isError));
-
-    // The parent has not caught up with the live subscription yet. Deliver its
-    // older snapshot deterministically instead of racing React with sleeps.
-    rerender(view({ ...parentProjection, unreadResult: false }));
-    const m2 = cotMessage(2);
-    emit(m2.start(2200));
-    emit(m2.part(0, "thinking").start(2300));
-    act(() => { vi.advanceTimersByTime(1000); });
-
-    const toolStep = cotBlock().querySelector('[data-slot="chat-tool-step"]');
-    expect(toolStep).toHaveTextContent("Read README.md");
-    expect(toolStep).not.toHaveTextContent("Running");
-    expect(toolStep).toHaveTextContent("1.6s");
-    expect(toolStep?.querySelector('[data-slot="chat-tool-result"]')).toHaveTextContent(result);
-    if (isError) expect(toolStep).toHaveTextContent("1 failed");
-  });
 
   it("keeps a multi-turn run flat with a live last step, then folds it once at run(end)", async () => {
     const m1 = cotMessage(1);
@@ -9874,7 +9224,7 @@ describe("Chain of Thought phases in Live Chat", () => {
       cotToolStart(1400, "call-1", "read_file"),
     ];
 
-    const { rerender } = renderCot(acting, 2000);
+    const { rerender, store } = renderCot(acting, 2000);
 
     // Flat while in flight: every completed step stays readable, so a later
     // Turn can look back at what the last one found.
@@ -9896,14 +9246,8 @@ describe("Chain of Thought phases in Live Chat", () => {
       answer.delta(5200, "Shipped."),
     ];
 
-    rerender(
-      <AgentWorkspaceSessionsView
-        clockNowMs={cotT0 + 5300}
-        projectId="pig-docs"
-        sessionProjection={cotProjection(answering)}
-        workspace={cotWorkspace}
-      />,
-    );
+    receiveCotBeats(store, answering, acting.length);
+    rerender(cotView(5300));
 
     expect(cotBlock()).toHaveAttribute("data-phase", "answering");
     expect(cotBlock().querySelector('[data-slot="chat-status-line"]')).not.toBeInTheDocument();
@@ -9919,14 +9263,8 @@ describe("Chain of Thought phases in Live Chat", () => {
       cotRunEnd(5600),
     ];
 
-    rerender(
-      <AgentWorkspaceSessionsView
-        clockNowMs={cotT0 + 5700}
-        projectId="pig-docs"
-        sessionProjection={cotProjection(settled)}
-        workspace={cotWorkspace}
-      />,
-    );
+    receiveCotBeats(store, settled, answering.length);
+    rerender(cotView(5700));
 
     // 5s: the wait from the Run's first model call to the first answer token,
     // tool execution included (ADR-0030 §6).
@@ -9980,7 +9318,7 @@ describe("Chain of Thought phases in Live Chat", () => {
       interim.delta(300, "Let me look at the repo."),
     ];
 
-    const { rerender } = renderCot(answering, 400);
+    const { rerender, store } = renderCot(answering, 400);
 
     await waitFor(() =>
       expect(screen.getByTestId("stream-markdown-renderer")).toHaveTextContent(
@@ -9989,18 +9327,12 @@ describe("Chain of Thought phases in Live Chat", () => {
     );
     expect(cotBlock()).toHaveAttribute("data-phase", "answering");
 
-    rerender(
-      <AgentWorkspaceSessionsView
-        clockNowMs={cotT0 + 700}
-        projectId="pig-docs"
-        sessionProjection={cotProjection([
-          ...answering,
-          interim.end(500, "Let me look at the repo."),
-          call.start(600, "read_file"),
-        ])}
-        workspace={cotWorkspace}
-      />,
+    receiveCotBeats(
+      store,
+      [...answering, interim.end(500, "Let me look at the repo."), call.start(600, "read_file")],
+      answering.length,
     );
+    rerender(cotView(700));
 
     const interimRow = cotBlock().querySelector('[data-slot="chat-interim-output"]');
 

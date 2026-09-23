@@ -4,6 +4,7 @@ import type {
   AgentRuntimeEventEntry,
   PiRuntimeBridge,
   PiRuntimeEvent,
+  PiSessionState,
   RuntimeModelControls,
 } from "@/entities/runtime/pi-runtime-bridge";
 import { createSessionFromDraft } from "@/entities/session/session-creation";
@@ -22,8 +23,13 @@ import {
 type Listener<T extends unknown[]> = (...args: T) => void;
 
 // Counts live listeners per stream and piSessionId so a test can see who is
-// still attached after a Session's lifecycle ends.
+// still attached after a Session's lifecycle ends. History reads stay pending
+// until the test settles them.
 function createFakeBridge() {
+  const loads: Array<{
+    input: { sessionId: string; piSessionId: string };
+    settle: ReturnType<typeof deferred<PiSessionState>>;
+  }> = [];
   const streams = {
     legacy: new Map<string, Set<Listener<[PiRuntimeEvent]>>>(),
     agent: new Map<string, Set<Listener<[AgentRuntimeEventEntry]>>>(),
@@ -87,10 +93,16 @@ function createFakeBridge() {
     subscribeToAgentEvents: (piSessionId, listener) => add(streams.agent, piSessionId, listener),
     subscribeToModelControls: (piSessionId, listener) =>
       add(streams.modelControls, piSessionId, listener),
+    loadSession(input) {
+      const settle = deferred<PiSessionState>();
+      loads.push({ input, settle });
+      return settle.promise;
+    },
   };
 
   return {
     bridge,
+    loads,
     listenerCounts(piSessionId: string) {
       return {
         legacy: streams.legacy.get(piSessionId)?.size ?? 0,
@@ -109,10 +121,12 @@ function createFakeBridge() {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((settle, fail) => {
     resolve = settle;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function boundSession(id: string, piSessionId = `pi:${id}`): SessionProjection {
@@ -307,8 +321,12 @@ describe("Session Projections store", () => {
       piSessionId: "pi:bound",
       occurredAt: "2026-09-24T09:00:01.000Z",
     });
-    const accepted = { ...bound, creationStage: "accepted" as const };
-    store.save(accepted);
+    const accepted = store.apply("bound", {
+      type: "creation-accepted",
+      initialPrompt: "Forked text",
+      occurredAt: "2026-09-24T09:00:02.000Z",
+    });
+    expect(bound.runtimeModel.lastSeq).toBe(0);
 
     await store.rehydrate();
 
@@ -376,17 +394,142 @@ describe("Session Projections store", () => {
     expect(store.get("removed")).toBeUndefined();
   });
 
-  // Transitional (ADR-0044 PR ②): LiveSessionColumn still writes whole projections.
-  it("saves a whole projection by id, inserting unknown Sessions first", () => {
-    const store = createStore();
-    store.insert(coldSession("older"));
-    store.insert(coldSession("newer"));
+  describe("history", () => {
+    const loadedState = (
+      piSessionId: string,
+      overrides: Partial<PiSessionState> = {},
+    ): PiSessionState => ({
+      piSessionId,
+      runtimeId: `runtime:${piSessionId}`,
+      projectId: "pig",
+      cwd: "/repo",
+      status: "idle",
+      events: [],
+      updatedAt: "2026-09-24T10:00:00.000Z",
+      ...overrides,
+    });
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const replaced = coldSession("older", { title: "Replaced" });
-    store.save(replaced);
-    store.save(coldSession("newest"));
+    it("shares one read between concurrent views and resyncs onto the projection as it is when the read lands", async () => {
+      const fake = createFakeBridge();
+      const store = createStore(fake);
+      store.insert(coldSession("viewed"));
 
-    expect(store.list().map((projection) => projection.id)).toEqual(["newest", "newer", "older"]);
-    expect(store.get("older")).toBe(replaced);
+      store.ensureHistory("viewed", { runtimeGeneration: 0 });
+      store.ensureHistory("viewed", { runtimeGeneration: 0 });
+      expect(fake.loads).toHaveLength(1);
+      expect(store.historyState("viewed")).toBe("loading");
+
+      // A run starts while the snapshot is in flight; the snapshot predates it.
+      fake.emitAgent("pi:viewed", runStart(1, "run-1"));
+      fake.loads[0]!.settle.resolve(loadedState("pi:viewed", { sessionName: "From history" }));
+      await settle();
+
+      const viewed = store.get("viewed")!;
+      expect(store.historyState("viewed")).toBe("loaded");
+      expect(viewed.sessionName).toBe("From history");
+      expect(viewed.runtimeModel.lastSeq).toBe(1);
+      expect(viewed.status).toBe("running");
+    });
+
+    it("keeps a failed read failed through projection changes until an explicit retry reads once", async () => {
+      const fake = createFakeBridge();
+      const store = createStore(fake);
+      store.insert(coldSession("broken"));
+
+      store.ensureHistory("broken", { runtimeGeneration: 0 });
+      fake.loads[0]!.settle.reject(new Error("journal unreadable"));
+      await settle();
+
+      expect(store.historyState("broken")).toBe("failed");
+      expect(store.get("broken")?.stale).toBe(true);
+      expect(store.get("broken")?.staleReason).toBe("journal unreadable");
+
+      // A refresh of the same Session (a live event, a re-render) is not a retry.
+      fake.emitAgent("pi:broken", runStart(1, "run-1"));
+      store.ensureHistory("broken", { runtimeGeneration: 0 });
+      expect(fake.loads).toHaveLength(1);
+
+      store.retryHistory("broken");
+      store.retryHistory("broken");
+      store.ensureHistory("broken", { runtimeGeneration: 0 });
+      expect(fake.loads).toHaveLength(2);
+      expect(store.historyState("broken")).toBe("loading");
+
+      fake.loads[1]!.settle.resolve(loadedState("pi:broken"));
+      await settle();
+      expect(store.historyState("broken")).toBe("loaded");
+      store.retryHistory("broken");
+      expect(fake.loads).toHaveLength(2);
+    });
+
+    it.each([
+      ["a legacy snapshot keeps", undefined, ["history-answer", "echo-during-read"]],
+      ["a Gateway replay drops", [], ["history-answer"]],
+    ] as const)(
+      "%s echoes the snapshot does not carry",
+      async (_label, replay, expectedIds) => {
+        const fake = createFakeBridge();
+        const store = createStore(fake);
+        store.insert(coldSession("echoed"));
+
+        store.ensureHistory("echoed", { runtimeGeneration: 0 });
+        fake.emitLegacy({
+          id: "echo-during-read",
+          piSessionId: "pi:echoed",
+          kind: "message",
+          role: "user",
+          body: "Sent while history loads",
+          timestamp: "2026-09-24T10:00:01.000Z",
+        });
+        fake.loads[0]!.settle.resolve(
+          loadedState("pi:echoed", {
+            ...(replay ? { replay: [...replay] } : {}),
+            events: [{
+              id: "history-answer",
+              piSessionId: "pi:echoed",
+              kind: "message",
+              role: "assistant",
+              body: "From the journal",
+              timestamp: "2026-09-24T09:59:00.000Z",
+            }],
+          }),
+        );
+        await settle();
+
+        expect(store.get("echoed")?.runtimeEvents.map((event) => event.id)).toEqual(expectedIds);
+      },
+    );
+
+    it("reads again once after the backend runtime generation changes", async () => {
+      const fake = createFakeBridge();
+      const store = createStore(fake);
+      store.insert(coldSession("reconnected"));
+
+      store.ensureHistory("reconnected", { runtimeGeneration: 0 });
+      fake.loads[0]!.settle.resolve(loadedState("pi:reconnected"));
+      await settle();
+      store.ensureHistory("reconnected", { runtimeGeneration: 0 });
+      expect(fake.loads).toHaveLength(1);
+
+      store.ensureHistory("reconnected", { runtimeGeneration: 1 });
+      store.ensureHistory("reconnected", { runtimeGeneration: 1 });
+      expect(fake.loads).toHaveLength(2);
+      expect(store.historyState("reconnected")).toBe("loading");
+    });
+
+    it("follows a viewed historical Session on one subscription per stream until it is removed", () => {
+      const fake = createFakeBridge();
+      const store = createStore(fake);
+      store.insert(coldSession("historical"));
+      expect(fake.listenerCounts("pi:historical")).toEqual({ legacy: 0, agent: 0, modelControls: 0 });
+
+      store.ensureHistory("historical", { runtimeGeneration: 0 });
+      store.ensureHistory("historical", { runtimeGeneration: 1 });
+      expect(fake.listenerCounts("pi:historical")).toEqual({ legacy: 1, agent: 1, modelControls: 1 });
+
+      store.remove("historical");
+      expect(fake.listenerCounts("pi:historical")).toEqual({ legacy: 0, agent: 0, modelControls: 0 });
+    });
   });
 });

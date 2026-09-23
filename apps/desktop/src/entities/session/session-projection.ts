@@ -88,6 +88,13 @@ export type SessionProjectionEvent =
       occurredAt: string;
     }
   | {
+      // Creation that ends without a prompt echo (a fork): the Session is
+      // named after the text it was forked from.
+      type: "creation-accepted";
+      initialPrompt: string;
+      occurredAt: string;
+    }
+  | {
       type: "checkout-selected";
       stage: "preparing checkout";
       checkout: ExecutionCheckout;
@@ -511,6 +518,13 @@ export function applySessionProjectionEvent(
       return {
         ...projection,
         creationStage: event.stage,
+        updatedAt: event.occurredAt,
+      };
+    case "creation-accepted":
+      return {
+        ...projection,
+        creationStage: "accepted",
+        initialPrompt: event.initialPrompt,
         updatedAt: event.occurredAt,
       };
     case "checkout-selected":

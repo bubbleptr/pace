@@ -7,8 +7,10 @@ import {
 
 type SessionProjectionsBridge = Pick<
   PiRuntimeBridge,
-  "subscribeToEvents" | "subscribeToAgentEvents" | "subscribeToModelControls"
+  "subscribeToEvents" | "subscribeToAgentEvents" | "subscribeToModelControls" | "loadSession"
 >;
+
+export type SessionHistoryState = "idle" | "loading" | "loaded" | "failed";
 
 export type SessionProjectionsStore = {
   get(sessionId: string): SessionProjection | undefined;
@@ -17,10 +19,13 @@ export type SessionProjectionsStore = {
   insert(projection: SessionProjection): SessionProjection;
   apply(sessionId: string, event: SessionProjectionEvent): SessionProjection;
   /**
-   * @deprecated transitional (ADR-0044 PR ②): LiveSessionColumn still commits
-   * whole projections through `onProjectionChange`. PR ② deletes this.
+   * Reads a viewed Session's history once per (piSessionId, sessionFile,
+   * runtimeGeneration) and follows its runtime from then on. Concurrent calls
+   * share the read; a failed read waits for `retryHistory`.
    */
-  save(projection: SessionProjection): void;
+  ensureHistory(sessionId: string, input: { runtimeGeneration: number }): void;
+  retryHistory(sessionId: string): void;
+  historyState(sessionId: string): SessionHistoryState;
   rename(
     sessionId: string,
     name: { title: string } | { sessionName: string },
@@ -55,10 +60,17 @@ export function createSessionProjectionsStore(options: {
   let projections: SessionProjection[] = [];
   const listeners = new Set<() => void>();
   const subscriptions = new Map<string, { piSessionId: string; release: () => void }>();
+  const history = new Map<
+    string,
+    { key: string; piSessionId: string; state: Exclude<SessionHistoryState, "idle"> }
+  >();
 
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
   const commit = (next: SessionProjection[]) => {
     projections = next;
-    for (const listener of listeners) listener();
+    notify();
   };
   const get = (sessionId: string) =>
     projections.find((projection) => projection.id === sessionId);
@@ -118,6 +130,49 @@ export function createSessionProjectionsStore(options: {
     return next;
   }
 
+  const loadHistory = (sessionId: string, piSessionId: string, key: string) => {
+    const loadSession = bridge.loadSession!;
+    const current = () => history.get(sessionId)?.key === key;
+
+    history.set(sessionId, { key, piSessionId, state: "loading" });
+    notify();
+
+    // A read superseded by a newer key (or a removed Session) lands nowhere.
+    void loadSession({ sessionId, piSessionId })
+      .then((state) => {
+        const base = get(sessionId);
+        if (!current() || !base) return;
+
+        // The snapshot predates whatever the subscription applied while it
+        // was in flight, so it resyncs onto the projection as it is now.
+        let next = applySessionProjectionEvent(base, { type: "runtime-state-resynced", state });
+        const snapshotEventIds = new Set(state.events.map((event) => event.id));
+        // Gateway reads already merge concurrent events in sequence. Only
+        // legacy bridges need to retain echoes absent from their snapshots.
+        for (const event of state.replay ? [] : base.runtimeEvents) {
+          if (!snapshotEventIds.has(event.id)) {
+            next = applySessionProjectionEvent(next, { type: "runtime-event-received", event });
+          }
+        }
+        history.set(sessionId, { key, piSessionId, state: "loaded" });
+        replace(next);
+      })
+      .catch((error: unknown) => {
+        if (!current()) return;
+
+        history.set(sessionId, { key, piSessionId, state: "failed" });
+        const base = get(sessionId);
+        if (!base) return notify();
+        replace(
+          applySessionProjectionEvent(base, {
+            type: "projection-marked-stale",
+            reason: error instanceof Error ? error.message : "Pace could not load session history.",
+            occurredAt: new Date().toISOString(),
+          }),
+        );
+      });
+  };
+
   return {
     get,
     list: () => projections,
@@ -129,19 +184,32 @@ export function createSessionProjectionsStore(options: {
       return projection;
     },
     apply,
-    save(projection) {
-      if (get(projection.id)) {
-        replace(projection);
-      } else {
-        commit([projection, ...projections]);
-      }
+    ensureHistory(sessionId, { runtimeGeneration }) {
+      const projection = get(sessionId);
+      // A Session still being created is already followed from
+      // `runtime-bound`; its history is what the creator is writing.
+      if (!projection?.piSessionId || projection.creationStage !== "accepted") return;
+
+      // Viewing a Session makes it live in this process (ADR-0044 §2).
+      subscribe(sessionId, projection.piSessionId);
+      if (!bridge.loadSession) return;
+
+      const key = [projection.piSessionId, projection.sessionFile, runtimeGeneration].join("\u0000");
+      if (history.get(sessionId)?.key === key) return;
+      loadHistory(sessionId, projection.piSessionId, key);
     },
+    retryHistory(sessionId) {
+      const entry = history.get(sessionId);
+      if (entry?.state === "failed") loadHistory(sessionId, entry.piSessionId, entry.key);
+    },
+    historyState: (sessionId) => history.get(sessionId)?.state ?? "idle",
     rename(sessionId, name) {
       const current = get(sessionId);
       if (current) replace({ ...current, ...name });
     },
     remove(sessionId) {
       release(sessionId);
+      history.delete(sessionId);
       commit(projections.filter((projection) => projection.id !== sessionId));
     },
     async rehydrate() {

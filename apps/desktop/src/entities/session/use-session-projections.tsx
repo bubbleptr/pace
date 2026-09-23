@@ -109,9 +109,35 @@ const SessionProjectionsContext = createContext<SessionProjectionsContextValue |
   null,
 );
 
-// The store never changes identity, so readers of one Session subscribe
+// Changes only on backend reconnect, so readers of one Session subscribe
 // through this context without re-rendering on every list change.
-const SessionProjectionsStoreContext = createContext<SessionProjectionsStore | null>(null);
+const SessionProjectionsStoreContext = createContext<{
+  store: SessionProjectionsStore;
+  runtimeGeneration: number;
+} | null>(null);
+
+/**
+ * Hands one store to `useLiveSession`. The app provider uses it; a Sessions
+ * view rendered without the app provider wraps its own store in it.
+ */
+export function SessionProjectionsStoreProvider({
+  store,
+  runtimeGeneration,
+  children,
+}: {
+  store: SessionProjectionsStore;
+  /** Bumps on backend reconnect; a new generation re-reads viewed history. */
+  runtimeGeneration: number;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => ({ store, runtimeGeneration }), [runtimeGeneration, store]);
+
+  return (
+    <SessionProjectionsStoreContext.Provider value={value}>
+      {children}
+    </SessionProjectionsStoreContext.Provider>
+  );
+}
 
 const retryDelaysMs = [0, 150, 300, 600, 1200, 2000, 3000, 4000];
 
@@ -211,11 +237,11 @@ export function SessionProjectionsProvider({
   );
 
   return (
-    <SessionProjectionsStoreContext.Provider value={store}>
+    <SessionProjectionsStoreProvider store={store} runtimeGeneration={backendGeneration}>
       <SessionProjectionsContext.Provider value={value}>
         {children}
       </SessionProjectionsContext.Provider>
-    </SessionProjectionsStoreContext.Provider>
+    </SessionProjectionsStoreProvider>
   );
 }
 
@@ -234,22 +260,47 @@ export function useSessionProjectionsOptional(): SessionProjectionsContextValue 
   return useContext(SessionProjectionsContext);
 }
 
-/**
- * One Session's projection. Selecting by id keeps other Sessions' events from
- * re-rendering the Live Session View.
- */
-export function useLiveSession(sessionId: string) {
-  const store = useContext(SessionProjectionsStoreContext);
+/** The store `useLiveSession` reads, when one is provided. */
+export function useSessionProjectionsStoreOptional() {
+  return useContext(SessionProjectionsStoreContext);
+}
 
-  if (!store) {
+/**
+ * One Session's projection, read and written through the store. Selecting by
+ * id keeps other Sessions' events from re-rendering the Live Session View.
+ * Viewing a Session loads its history and follows its runtime.
+ */
+export function useLiveSession(sessionId: string | null) {
+  const context = useContext(SessionProjectionsStoreContext);
+
+  if (!context) {
     throw new Error("useLiveSession requires SessionProjectionsProvider");
   }
 
-  const projection = useSyncExternalStore(store.subscribe, () => store.get(sessionId));
-  const apply = useCallback(
-    (event: SessionProjectionEvent) => store.apply(sessionId, event),
-    [sessionId, store],
+  const { store, runtimeGeneration } = context;
+  const projection = useSyncExternalStore(store.subscribe, () =>
+    sessionId ? store.get(sessionId) : undefined,
+  );
+  const history = useSyncExternalStore(store.subscribe, () =>
+    sessionId ? store.historyState(sessionId) : "idle",
   );
 
-  return { projection, apply };
+  // Re-runs on every projection change: the history key follows the
+  // projection's runtime identity, and the store makes repeats free.
+  useEffect(() => {
+    if (sessionId) store.ensureHistory(sessionId, { runtimeGeneration });
+  }, [projection, runtimeGeneration, sessionId, store]);
+
+  const apply = useCallback(
+    (event: SessionProjectionEvent) => {
+      if (!sessionId) throw new Error("No Session is on screen.");
+      return store.apply(sessionId, event);
+    },
+    [sessionId, store],
+  );
+  const retryHistory = useCallback(() => {
+    if (sessionId) store.retryHistory(sessionId);
+  }, [sessionId, store]);
+
+  return { projection, history, apply, retryHistory };
 }
