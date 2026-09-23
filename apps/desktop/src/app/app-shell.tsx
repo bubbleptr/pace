@@ -72,10 +72,7 @@ import {
   formatSessionListTime,
   renameSessionProjection,
 } from "@/entities/session/sessions";
-import {
-  sessionProjectionFromPersistedProjection,
-  useSessionProjectionsOptional,
-} from "@/entities/session/use-session-projections";
+import { useSessionProjectionsOptional } from "@/entities/session/use-session-projections";
 import { useUpdateStatus } from "@/entities/update/use-update-status";
 import {
   browserDevelopmentProjectId,
@@ -1614,13 +1611,7 @@ export function AppFrame({
       await renameSessionProjection(sessionId, trimmedTitle);
       // Patch the title in place instead of rehydrating from the persisted
       // record: a full replace would drop live runtime state mid-session.
-      sessionProjectionsStore?.setSessionProjections((projections) =>
-        projections.map((projection) =>
-          projection.id === sessionId
-            ? { ...projection, title: trimmedTitle }
-            : projection,
-        ),
-      );
+      sessionProjectionsStore?.store.rename(sessionId, { title: trimmedTitle });
     } catch (error) {
       window.alert(
         error instanceof Error
@@ -1637,15 +1628,16 @@ export function AppFrame({
     }
 
     try {
-      const archived = sessionProjectionFromPersistedProjection(
-        await archiveSessionProjection(sessionId),
-      );
+      const archived = await archiveSessionProjection(sessionId);
 
-      sessionProjectionsStore?.setSessionProjections((projections) =>
-        projections.map((projection) =>
-          projection.id === archived.id ? archived : projection,
-        ),
-      );
+      // Archive on the live projection instead of replacing it with the
+      // persisted record: `archivedAt` alone hides it from the sidebar and
+      // makes the Live Session View read-only, and the store releases the
+      // Session's runtime subscription.
+      sessionProjectionsStore?.store.apply(sessionId, {
+        type: "session-archived",
+        occurredAt: archived.archivedAt ?? archived.updatedAt,
+      });
       clearRemovedSessionSelection(sessionId, session.projection.projectId);
     } catch (error) {
       window.alert(
@@ -1677,9 +1669,7 @@ export function AppFrame({
 
     try {
       await deleteSessionProjection(sessionId);
-      sessionProjectionsStore?.setSessionProjections((projections) =>
-        projections.filter((projection) => projection.id !== sessionId),
-      );
+      sessionProjectionsStore?.store.remove(sessionId);
       clearRemovedSessionSelection(sessionId, session.projection.projectId);
     } catch (error) {
       window.alert(

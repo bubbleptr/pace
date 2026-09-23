@@ -6,14 +6,16 @@ import type {
   PiRuntimeBridge,
   PiRuntimeEvent,
 } from "@/entities/runtime/pi-runtime-bridge";
-import {
-  createInMemorySessionProjectionStore,
-  createSessionFromDraft,
-} from "@/entities/session/session-creation";
+import { createSessionFromDraft } from "@/entities/session/session-creation";
+import { createSessionProjectionsStore } from "@/entities/session/session-projections-store";
+
+// The store subscribes on the bridge the Session is created on.
+function storeFor(bridge: PiRuntimeBridge) {
+  return createSessionProjectionsStore({ bridge, listSessions: async () => [] });
+}
 
 describe("Session Creation state machine", () => {
   it("feeds the structured runtime model when the bridge exposes the Agent Runtime Event stream", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const agentListeners = new Set<(entry: AgentRuntimeEventEntry) => void>();
     const emitAgentEvent = (entry: AgentRuntimeEventEntry) => {
       for (const listener of agentListeners) {
@@ -72,9 +74,10 @@ describe("Session Creation state machine", () => {
       },
     };
 
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       draft: {
         projectId: "pig",
         prompt: "Ship the slice",
@@ -108,38 +111,19 @@ describe("Session Creation state machine", () => {
       trigger: "prompt",
     });
 
-    if (!result.ok) {
-      throw new Error("expected session creation to succeed");
-    }
-
-    // Unsubscribing tears down both the legacy and the agent event streams.
-    result.unsubscribeRuntimeEvents();
-    emitAgentEvent({
-      seq: 2,
-      timestamp: "2026-07-02T10:00:02.000Z",
-      event: {
-        type: "run",
-        runId,
-        phase: "end",
-        trigger: "prompt",
-        outcome: "completed",
-        surface: "hidden",
-        origin: "sdk",
-      },
-    });
-
-    expect(projections.get("session-1")?.status).toBe("running");
+    expect(result.ok).toBe(true);
   });
 
   it("submits a draft into a resumable Live Session through the fake Pi Runtime Bridge", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const observedStages: string[] = [];
 
+    const bridge = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:00:03.000Z",
+    });
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
-      bridge: createInMemoryPiRuntimeBridge({
-        now: () => "2026-06-26T08:00:03.000Z",
-      }),
-      projections,
+      bridge,
+      store: projections,
       draft: {
         projectId: "pig",
         prompt: "Create a resumable live session",
@@ -192,14 +176,15 @@ describe("Session Creation state machine", () => {
   });
 
   it("forwards image attachments on the first prompt and mirrors them into the runtime model", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const images = [{ mimeType: "image/png", data: "abc", name: "shot.png" }];
 
+    const bridge = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:00:03.000Z",
+    });
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
-      bridge: createInMemoryPiRuntimeBridge({
-        now: () => "2026-06-26T08:00:03.000Z",
-      }),
-      projections,
+      bridge,
+      store: projections,
       draft: {
         projectId: "pig",
         prompt: "Look at this",
@@ -240,7 +225,6 @@ describe("Session Creation state machine", () => {
   });
 
   it("keeps Session Projection in sync with the Runtime Event Stream", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const inner = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:00:00.000Z",
       summary: {
@@ -266,9 +250,10 @@ describe("Session Creation state machine", () => {
       }
     };
 
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       draft: {
         projectId: "pig",
         prompt: "Create a resumable live session",
@@ -350,28 +335,9 @@ describe("Session Creation state machine", () => {
         .get("session-1")
         ?.runtimeEvents.filter((event) => event.role === "assistant"),
     ).toHaveLength(1);
-
-    result.unsubscribeRuntimeEvents();
-    emit({
-      id: "runtime-event-after-dispose",
-      piSessionId: result.projection.piSessionId!,
-      kind: "tool-call",
-      title: "write",
-      body: "{\"path\":\"README.md\"}",
-      timestamp: "2026-06-26T08:00:06.000Z",
-    });
-
-    expect(projections.get("session-1")?.runtimeEvents).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          title: "write",
-        }),
-      ]),
-    );
   });
 
   it("keeps multiple Sessions active for one Project and isolates background concurrent checkouts", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-27T08:00:03.000Z",
     });
@@ -393,9 +359,10 @@ describe("Session Creation state machine", () => {
       projectRoot: "/Users/void/code/opensource/Pig/packages/web",
     };
 
+    const projections = storeFor(bridge);
     const foreground = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       checkoutManager,
       executionMode: "foreground",
       draft: {
@@ -409,7 +376,7 @@ describe("Session Creation state machine", () => {
     });
     const background = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       checkoutManager,
       executionMode: "background",
       draft: {
@@ -466,12 +433,13 @@ describe("Session Creation state machine", () => {
         },
       },
     });
-    const create = (id: string, baseRef?: string) =>
-      createSessionFromDraft({
-        bridge: createInMemoryPiRuntimeBridge({
-          now: () => "2026-06-27T08:00:03.000Z",
-        }),
-        projections: createInMemorySessionProjectionStore(),
+    const create = (id: string, baseRef?: string) => {
+      const bridge = createInMemoryPiRuntimeBridge({
+        now: () => "2026-06-27T08:00:03.000Z",
+      });
+      return createSessionFromDraft({
+        bridge,
+        store: storeFor(bridge),
         checkoutManager,
         executionMode: "background",
         draft: {
@@ -485,6 +453,7 @@ describe("Session Creation state machine", () => {
         now: () => "2026-06-27T08:00:00.000Z",
         idFactory: () => id,
       });
+    };
 
     await create("session-feature", "feature");
     await create("session-head");
@@ -496,7 +465,6 @@ describe("Session Creation state machine", () => {
   });
 
   it("prepares a chat workspace cwd and uses a foreground-local checkout", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const prepareChatWorkspace = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
       cwd: `/tmp/pigui-chats/${sessionId}`,
     }));
@@ -505,9 +473,10 @@ describe("Session Creation state machine", () => {
     });
     bridge.prepareChatWorkspace = prepareChatWorkspace;
 
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       executionMode: "background",
       draft: {
         projectId: "chat",
@@ -538,7 +507,6 @@ describe("Session Creation state machine", () => {
   });
 
   it("builds a non-git chat checkout even when the checkout manager reports git=true", async () => {
-    const projections = createInMemorySessionProjectionStore();
     const isGitRepository = vi.fn(async () => true);
     const checkoutManager = createExecutionCheckoutManager({
       gitClient: {
@@ -554,9 +522,10 @@ describe("Session Creation state machine", () => {
     });
     bridge.prepareChatWorkspace = prepareChatWorkspace;
 
+    const projections = storeFor(bridge);
     const result = await createSessionFromDraft({
       bridge,
-      projections,
+      store: projections,
       checkoutManager,
       executionMode: "background",
       draft: {
@@ -597,15 +566,16 @@ describe("Session Creation state machine", () => {
   ] as const)(
     "keeps the draft recoverable and records failure detail when %s fails",
     async (failAt, failureStage) => {
-      const projections = createInMemorySessionProjectionStore();
-      const observedStages: string[] = [];
+        const observedStages: string[] = [];
 
+      const bridge = createInMemoryPiRuntimeBridge({
+        failAt,
+        failureMessage: `Failure while ${failureStage}`,
+      });
+      const projections = storeFor(bridge);
       const result = await createSessionFromDraft({
-        bridge: createInMemoryPiRuntimeBridge({
-          failAt,
-          failureMessage: `Failure while ${failureStage}`,
-        }),
-        projections,
+        bridge,
+        store: projections,
         draft: {
           projectId: "pig",
           prompt: "Create a resumable live session",

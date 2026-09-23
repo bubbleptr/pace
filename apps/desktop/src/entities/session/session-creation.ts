@@ -8,11 +8,12 @@ import {
   type ExecutionCheckoutManager,
 } from "@/entities/checkout/execution-checkout";
 import {
-  applySessionProjectionEvent,
   createSessionProjection,
   type SessionCreationFailureStage,
   type SessionProjection,
+  type SessionProjectionEvent,
 } from "@/entities/session/session-projection";
+import type { SessionProjectionsStore } from "@/entities/session/session-projections-store";
 
 export type ProjectSessionCreationTarget = {
   id: string;
@@ -20,16 +21,10 @@ export type ProjectSessionCreationTarget = {
   projectRoot: string;
 };
 
-export type SessionProjectionStore = {
-  get(id: string): SessionProjection | null;
-  list(): SessionProjection[];
-  save(projection: SessionProjection): SessionProjection;
-};
-
 export type CreateSessionFromDraftInput = {
   bridge: PiRuntimeBridge;
   checkoutManager?: ExecutionCheckoutManager;
-  projections: SessionProjectionStore;
+  store: SessionProjectionsStore;
   draft: SessionDraft;
   project: ProjectSessionCreationTarget;
   /** Optional model chosen on the draft composer before the session exists (DF-011). */
@@ -47,31 +42,12 @@ export type CreateSessionFromDraftResult =
       ok: true;
       clearDraft: true;
       projection: SessionProjection;
-      unsubscribeRuntimeEvents: () => void;
     }
   | {
       ok: false;
       clearDraft: false;
       projection: SessionProjection;
     };
-
-export function createInMemorySessionProjectionStore(): SessionProjectionStore {
-  const projections = new Map<string, SessionProjection>();
-
-  return {
-    get(id) {
-      return projections.get(id) ?? null;
-    },
-    list() {
-      return Array.from(projections.values());
-    },
-    save(projection) {
-      projections.set(projection.id, projection);
-
-      return projection;
-    },
-  };
-}
 
 function defaultIdFactory() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -151,23 +127,23 @@ export async function createSessionFromDraft(
   }
 
   let failureStage: SessionCreationFailureStage = "preparing checkout";
-  let projection = createSessionProjection({
-    id: idFactory(),
-    projectId: draftProjectId,
-    initialPrompt:
-      input.draft.prompt.trim() ||
-      input.images?.[0]?.name ||
-      "Attached image",
-    createdAt: now(),
-  });
+  let projection = input.store.insert(
+    createSessionProjection({
+      id: idFactory(),
+      projectId: draftProjectId,
+      initialPrompt:
+        input.draft.prompt.trim() ||
+        input.images?.[0]?.name ||
+        "Attached image",
+      createdAt: now(),
+    }),
+  );
+  input.onProjectionChange?.(projection);
 
-  const commit = (nextProjection: SessionProjection) => {
-    projection = input.projections.save(nextProjection);
+  const commit = (event: SessionProjectionEvent) => {
+    projection = input.store.apply(projection.id, event);
     input.onProjectionChange?.(projection);
   };
-
-  commit(projection);
-  let unsubscribeRuntimeEvents: (() => void) | null = null;
 
   try {
     const chatCheckout = isChatProjectId(draftProjectId)
@@ -189,14 +165,12 @@ export async function createSessionFromDraft(
         baseRef: input.draft.baseRef,
       }));
 
-    commit(
-      applySessionProjectionEvent(projection, {
-        type: "checkout-selected",
-        stage: "preparing checkout",
-        checkout,
-        occurredAt: now(),
-      }),
-    );
+    commit({
+      type: "checkout-selected",
+      stage: "preparing checkout",
+      checkout,
+      occurredAt: now(),
+    });
 
     failureStage = "starting runtime";
     const runtime = await input.bridge.startRuntime({
@@ -210,48 +184,19 @@ export async function createSessionFromDraft(
       projectId: draftProjectId,
       cwd: checkout.runtimeCwd,
     });
-    const unsubscribeLegacyEvents = input.bridge.subscribeToEvents(
-      piState.piSessionId,
-      (event) => {
-        commit(
-          applySessionProjectionEvent(projection, {
-            type: "runtime-event-received",
-            event,
-          }),
-        );
-      },
-    );
-    // Bridges that speak the Agent Runtime Event Model also feed the
-    // structured runtime model; run events then own the Session Status.
-    const unsubscribeAgentEvents = input.bridge.subscribeToAgentEvents?.(
-      piState.piSessionId,
-      (entry) => {
-        commit(
-          applySessionProjectionEvent(projection, {
-            type: "agent-event-received",
-            entry,
-          }),
-        );
-      },
-    );
 
-    unsubscribeRuntimeEvents = () => {
-      unsubscribeLegacyEvents();
-      unsubscribeAgentEvents?.();
-    };
-
-    commit(
-      applySessionProjectionEvent(projection, {
-        type: "runtime-bound",
-        stage: "starting runtime",
-        runtimeId: runtime.runtimeId,
-        piSessionId: piState.piSessionId,
-        summary: piState.summary,
-        modelControls: piState.modelControls,
-        followUpMode: piState.followUpMode,
-        occurredAt: now(),
-      }),
-    );
+    // The store subscribes to the runtime's event streams here, so the
+    // created Session keeps updating after this function returns.
+    commit({
+      type: "runtime-bound",
+      stage: "starting runtime",
+      runtimeId: runtime.runtimeId,
+      piSessionId: piState.piSessionId,
+      summary: piState.summary,
+      modelControls: piState.modelControls,
+      followUpMode: piState.followUpMode,
+      occurredAt: now(),
+    });
 
     if (input.modelSelection && input.bridge.configureModel) {
       const modelControls = await input.bridge.configureModel({
@@ -260,23 +205,19 @@ export async function createSessionFromDraft(
         ...input.modelSelection,
       });
 
-      commit(
-        applySessionProjectionEvent(projection, {
-          type: "model-controls-changed",
-          modelControls,
-          occurredAt: now(),
-        }),
-      );
+      commit({
+        type: "model-controls-changed",
+        modelControls,
+        occurredAt: now(),
+      });
     }
 
     failureStage = "sending prompt";
-    commit(
-      applySessionProjectionEvent(projection, {
-        type: "creation-stage-changed",
-        stage: "sending prompt",
-        occurredAt: now(),
-      }),
-    );
+    commit({
+      type: "creation-stage-changed",
+      stage: "sending prompt",
+      occurredAt: now(),
+    });
 
     const submittedAt = now();
     const accepted = await input.bridge.sendInitialPrompt({
@@ -285,33 +226,27 @@ export async function createSessionFromDraft(
       ...(input.images?.length ? { images: input.images } : {}),
     });
 
-    commit(
-      applySessionProjectionEvent(projection, {
-        type: "runtime-event-received",
-        stage: "accepted",
-        submittedAt,
-        event: accepted.event,
-      }),
-    );
+    commit({
+      type: "runtime-event-received",
+      stage: "accepted",
+      submittedAt,
+      event: accepted.event,
+    });
 
     return {
       ok: true,
       clearDraft: true,
       projection,
-      unsubscribeRuntimeEvents,
     };
   } catch (error) {
-    unsubscribeRuntimeEvents?.();
     const detail = failureDetail(error, failureStage);
 
-    commit(
-      applySessionProjectionEvent(projection, {
-        type: "creation-failed",
-        stage: detail.stage,
-        message: detail.message,
-        occurredAt: now(),
-      }),
-    );
+    commit({
+      type: "creation-failed",
+      stage: detail.stage,
+      message: detail.message,
+      occurredAt: now(),
+    });
 
     return {
       ok: false,

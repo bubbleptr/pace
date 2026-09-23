@@ -132,7 +132,6 @@ import {
 } from "@/entities/session/session-runtime-model";
 import { deriveCotView, type CotStep, type CotView } from "@/entities/session/cot-view";
 import {
-  createInMemorySessionProjectionStore,
   createSessionFromDraft,
   prepareChatSessionCheckout,
   type CreateSessionFromDraftInput,
@@ -157,7 +156,6 @@ import {
   type SessionDraft,
 } from "@/entities/session/session-drafts";
 import {
-  applySessionProjectionEvent,
   createSessionProjection,
   isSessionProjectionArchived,
   getSessionProjectionListItems,
@@ -189,10 +187,17 @@ import { SessionFilesPanel } from "@/pages/session-files-panel";
 import { SessionTerminalPanel } from "@/pages/session-terminal-panel";
 import { useSettingsDialog } from "@/shared/settings-navigation";
 import {
+  SessionProjectionsStoreProvider,
   sessionProjectionFromPersistedProjection,
+  useLiveSession,
   useSessionProjections,
   useSessionProjectionsOptional,
+  useSessionProjectionsStoreOptional,
 } from "@/entities/session/use-session-projections";
+import {
+  createSessionProjectionsStore,
+  type SessionProjectionsStore,
+} from "@/entities/session/session-projections-store";
 
 
 type LiveMessage = {
@@ -280,10 +285,7 @@ export type SessionDraftSubmitEvent = {
   images?: RuntimePromptImage[];
 };
 
-type SessionCreatorInput = Omit<
-  CreateSessionFromDraftInput,
-  "bridge" | "projections"
->;
+type SessionCreatorInput = Omit<CreateSessionFromDraftInput, "bridge">;
 
 type SessionCreator = (
   input: SessionCreatorInput,
@@ -3069,12 +3071,6 @@ function messageFromError(error: unknown) {
     : "Pi could not stop the active run.";
 }
 
-function historyLoadErrorMessage(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "Pace could not load session history.";
-}
-
 async function restoreProjectionRuntimeState(input: {
   bridge: PiRuntimeBridge;
   projection: SessionProjection;
@@ -3123,16 +3119,14 @@ function LiveSessionColumn({
   sessionCreator,
   checkoutManager,
   getRuntimeBridge,
+  projectionsStore,
   recommendedCheckoutMode,
-  sessionProjection,
+  sessionId,
   sessionChanges,
   clockNowMs,
   loadProjectGitSummary,
-  onProjectionChange,
-  onLatestMessageRendered,
   onManageModels,
   onOpenProviderSettings,
-  runtimeGeneration,
 }: {
   workspace: AgentWorkspaceFixture;
   projectId: string;
@@ -3146,16 +3140,15 @@ function LiveSessionColumn({
   sessionCreator: SessionCreator;
   checkoutManager: ExecutionCheckoutManager;
   getRuntimeBridge: () => PiRuntimeBridge;
+  projectionsStore: SessionProjectionsStore;
   recommendedCheckoutMode: SessionDraftCheckoutMode;
-  sessionProjection?: SessionProjection | null;
+  /** The Session on screen outside the Session Draft. */
+  sessionId: string | null;
   sessionChanges?: SessionChangesView;
   clockNowMs?: number;
   loadProjectGitSummary?: typeof getProjectGitSummary;
-  onProjectionChange?: (projection: SessionProjection) => void;
-  onLatestMessageRendered?: (sessionId: string) => void;
   onManageModels?: () => void;
   onOpenProviderSettings?: () => void;
-  runtimeGeneration: number;
 }) {
   // The retry control under a failed run reads the same live set as the composer.
   const visibleModels = useVisibleModels();
@@ -3198,10 +3191,15 @@ function LiveSessionColumn({
     projectRoot: draftProjectRoot,
     ...(loadProjectGitSummary ? { loadSummary: loadProjectGitSummary } : {}),
   });
-  const [creationProjection, setCreationProjection] =
-    useState<SessionProjection | null>(null);
-  const [interactionProjection, setInteractionProjection] =
-    useState<SessionProjection | null>(null);
+  // The Session this column's draft submit is creating; the draft composer
+  // shows its stages until the route leaves the draft.
+  const [creatingSessionId, setCreatingSessionId] = useState<string | null>(null);
+  const {
+    projection: liveProjection = null,
+    history,
+    apply,
+    retryHistory,
+  } = useLiveSession(showDraft ? creatingSessionId : sessionId);
   // Set by a draft submit in this column; consumed when the route leaves the
   // draft so only that handoff plays the composer settle, not a sidebar click.
   const draftHandoffPendingRef = useRef(false);
@@ -3218,15 +3216,10 @@ function LiveSessionColumn({
     checkoutMode: SessionDraftCheckoutMode;
   } | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
-  const [stoppingRun, setStoppingRun] = useState(false);
+  // Keyed by Session so a Stop in flight never locks another Session's composer.
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
+  const stoppingRun = stoppingSessionId !== null && stoppingSessionId === liveProjection?.id;
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
-  const historyLoadedKeysRef = useRef(new Set<string>());
-  const viewedHistoryKeyRef = useRef<string | null>(null);
-  const pendingHistoryRequestsRef = useRef(new Map<string, Promise<PiSessionState>>());
-  const historyFailedKeysRef = useRef(new Set<string>());
-  const [historyRetryNonce, setHistoryRetryNonce] = useState(0);
-  // A pending history read is independent of execution preparation.
-  const [pendingHistoryKey, setPendingHistoryKey] = useState<string | null>(null);
 
   useEffect(
     () =>
@@ -3238,8 +3231,7 @@ function LiveSessionColumn({
 
   useEffect(() => {
     setSessionDraft(getVisibleSessionDraft());
-    setCreationProjection(null);
-    setInteractionProjection(null);
+    setCreatingSessionId(null);
 
     return subscribeSessionDrafts(() => {
       setSessionDraft(getVisibleSessionDraft());
@@ -3293,171 +3285,10 @@ function LiveSessionColumn({
   }, [draftHandoff]);
 
   useEffect(() => {
-    setInteractionProjection(null);
-    setStoppingRun(false);
-  }, [sessionProjection?.id]);
-
-  useEffect(() => {
-    if (!sessionProjection) {
-      return;
+    if (!showDraft && liveProjection?.unreadResult) {
+      apply({ type: "latest-message-rendered", occurredAt: new Date().toISOString() });
     }
-
-    const syncProjection = (currentProjection: SessionProjection | null) => {
-      if (currentProjection?.id !== sessionProjection.id) {
-        return null;
-      }
-
-      // A queued parent effect can run after the subscription applied a newer
-      // event. Rewinding here would erase tool results before the next event.
-      if (
-        currentProjection.piSessionId === sessionProjection.piSessionId &&
-        currentProjection.runtimeModel.lastSeq > sessionProjection.runtimeModel.lastSeq
-      ) {
-        return currentProjection;
-      }
-
-      return sessionProjection;
-    };
-
-    setCreationProjection(syncProjection);
-    setInteractionProjection(syncProjection);
-  }, [sessionProjection]);
-
-  useEffect(() => {
-    if (!showDraft && sessionProjection?.unreadResult) {
-      onLatestMessageRendered?.(sessionProjection.id);
-    }
-  }, [
-    onLatestMessageRendered,
-    sessionProjection?.id,
-    sessionProjection?.unreadResult,
-    showDraft,
-  ]);
-
-  const historyKeyForProjection = (
-    projection: SessionProjection,
-    retryNonce: number,
-  ) =>
-    projection.piSessionId
-      ? `${projection.id}\u0000${projection.piSessionId}\u0000${projection.sessionFile}\u0000${runtimeGeneration}\u0000${retryNonce}`
-      : null;
-
-  useEffect(() => {
-    if (
-      showDraft ||
-      !sessionProjection?.piSessionId
-    ) {
-      viewedHistoryKeyRef.current = null;
-      return;
-    }
-
-    const bridge = getRuntimeBridge();
-
-    if (!bridge.loadSession) {
-      return;
-    }
-
-    const historyKey = historyKeyForProjection(
-      sessionProjection,
-      historyRetryNonce,
-    );
-
-    if (viewedHistoryKeyRef.current !== historyKey) {
-      if (historyKey) historyLoadedKeysRef.current.delete(historyKey);
-      viewedHistoryKeyRef.current = historyKey;
-    }
-
-    if (!historyKey || historyFailedKeysRef.current.has(historyKey)) {
-      return;
-    }
-
-    if (historyLoadedKeysRef.current.has(historyKey)) {
-      return;
-    }
-
-    let cancelled = false;
-    let request = pendingHistoryRequestsRef.current.get(historyKey);
-    if (!request) {
-      request = bridge.loadSession({
-        sessionId: sessionProjection.id,
-        piSessionId: sessionProjection.piSessionId,
-      });
-      pendingHistoryRequestsRef.current.set(historyKey, request);
-    }
-    setPendingHistoryKey(historyKey);
-
-    // Projection refreshes cancel the old effect, but the current view must
-    // still receive its pending history without duplicating the read.
-    void request
-      .then((state) => {
-        if (cancelled) {
-          return;
-        }
-
-        historyLoadedKeysRef.current.add(historyKey);
-        historyFailedKeysRef.current.delete(historyKey);
-
-        // Re-base on the freshest projection: prompt/queue handlers may have
-        // committed echoes while the history RPC was in flight, and resync
-        // replaces runtimeEvents wholesale from a snapshot that predates
-        // them. Fall back to the prop when the view switched Sessions.
-        const latest = liveProjectionRef.current ?? sessionProjection;
-        const base =
-          latest?.piSessionId === sessionProjection.piSessionId
-            ? latest
-            : sessionProjection;
-        let next = applySessionProjectionEvent(base, {
-          type: "runtime-state-resynced",
-          state,
-        });
-        const snapshotEventIds = new Set(
-          state.events.map((snapshotEvent) => snapshotEvent.id),
-        );
-
-        // Gateway reads already merge concurrent events in sequence. Only
-        // legacy bridges need to retain echoes absent from their snapshots.
-        for (const event of state.replay ? [] : base.runtimeEvents) {
-          if (!snapshotEventIds.has(event.id)) {
-            next = applySessionProjectionEvent(next, {
-              type: "runtime-event-received",
-              event,
-            });
-          }
-        }
-
-        commitInteractionProjection(next);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-
-        historyLoadedKeysRef.current.delete(historyKey);
-        historyFailedKeysRef.current.add(historyKey);
-        commitInteractionProjection(
-          applySessionProjectionEvent(sessionProjection, {
-            type: "projection-marked-stale",
-            reason: historyLoadErrorMessage(error),
-            occurredAt: new Date().toISOString(),
-          }),
-        );
-      })
-      .finally(() => {
-        pendingHistoryRequestsRef.current.delete(historyKey);
-        setPendingHistoryKey((current) => (current === historyKey ? null : current));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    getRuntimeBridge,
-    runtimeGeneration,
-    historyRetryNonce,
-    sessionProjection,
-    showDraft,
-    workspace.checkout.runtimeCwd,
-  ]);
+  }, [apply, liveProjection?.unreadResult, showDraft]);
 
   const handleDraftChange = (prompt: string) => {
     setSessionDraft(saveSessionDraft(sessionDraft?.projectId ?? null, prompt));
@@ -3536,34 +3367,25 @@ function LiveSessionColumn({
         : checkoutModeToExecutionMode(event.checkoutMode),
       ...(event.modelSelection ? { modelSelection: event.modelSelection } : {}),
       ...(event.images?.length ? { images: event.images } : {}),
+      store: projectionsStore,
+      // The creator writes every step to the store; the first one, the
+      // `creating` projection, is the signal to leave the draft (ADR-0010).
       onProjectionChange: (projection) => {
-        const isStarting = !creationStarted;
-        // Runtime subscriptions outlive creation. Once navigation clears the
-        // local owner, background events must not reclaim the draft's state.
-        setCreationProjection((current) =>
-          isStarting || current?.id === projection.id ? projection : current,
-        );
-        onProjectionChange?.(projection);
-
-        if (isStarting) {
-          creationStarted = true;
-          draftHandoffPendingRef.current = true;
-
-          setDraftLocationHandoff({
-            sessionId: projection.id,
-            branchLabel: draftBranchLabel,
-            checkoutMode: event.checkoutMode,
-          });
-
-          onSessionCreationStarted?.(projection);
+        if (creationStarted) {
+          return;
         }
+
+        creationStarted = true;
+        draftHandoffPendingRef.current = true;
+        setCreatingSessionId(projection.id);
+        setDraftLocationHandoff({
+          sessionId: projection.id,
+          branchLabel: draftBranchLabel,
+          checkoutMode: event.checkoutMode,
+        });
+        onSessionCreationStarted?.(projection);
       },
     });
-
-    setCreationProjection((current) =>
-      current?.id === result.projection.id ? result.projection : current,
-    );
-    onProjectionChange?.(result.projection);
 
     if (result.clearDraft) {
       clearSessionDraft(draft.projectId);
@@ -3571,126 +3393,9 @@ function LiveSessionColumn({
       onSessionCreated?.(result.projection);
     }
   };
-  const commitInteractionProjection = (
-    nextProjection: SessionProjection,
-    { follow = false }: { follow?: boolean } = {},
-  ) => {
-    const current = liveProjectionRef.current;
-    // Async resolutions can land after the view switched Sessions: they still
-    // reach the store, but only the Session still on screen may reclaim the
-    // local projection. `follow` is for commits that intentionally move the
-    // view to a new Session (fork).
-    if (follow || !current || current.id === nextProjection.id) {
-      liveProjectionRef.current = nextProjection;
-      setInteractionProjection(nextProjection);
-    }
-    onProjectionChange?.(nextProjection);
-  };
-  const liveProjection =
-    interactionProjection ?? creationProjection ?? sessionProjection ?? null;
-  // Keep a mutable pointer so live event listeners can chain applies without
-  // waiting for React to re-render (and without dropping mid-stream events).
-  const liveProjectionRef = useRef(liveProjection);
-  liveProjectionRef.current = liveProjection;
-  // Every interaction handler awaits an RPC and then commits. The projection
-  // it captured before the await is stale by then: the live subscription keeps
-  // applying Gateway events (a Run's answer, the closure of an aborted Run)
-  // into the ref during the round-trip, and committing on top of the snapshot
-  // would silently drop them. Commit on the ref instead, falling back to the
-  // snapshot only when the view switched to another Session mid-flight.
-  const latestProjectionFor = (snapshot: SessionProjection) => {
-    const latest = liveProjectionRef.current;
-
-    return latest?.piSessionId === snapshot.piSessionId ? latest : snapshot;
-  };
-
-  const onProjectionChangeRef = useRef(onProjectionChange);
-  onProjectionChangeRef.current = onProjectionChange;
-
-  // DF-009: create path subscribes in sessionCreator, but resume/open of an
-  // existing session only resynced once and never re-subscribed. Follow-ups
-  // still hit the backend/journal while the UI only applied the user echo —
-  // looks like "must start a new chat". Subscribe for any viewed piSessionId.
-  useEffect(() => {
-    const piSessionId = liveProjection?.piSessionId;
-
-    if (showDraft || !piSessionId) {
-      return;
-    }
-
-    const bridge = getRuntimeBridge();
-
-    const applyLiveProjectionEvent = (
-      event: Parameters<typeof applySessionProjectionEvent>[1],
-    ) => {
-      const base = liveProjectionRef.current;
-
-      if (!base || base.piSessionId !== piSessionId) {
-        return;
-      }
-
-      const next = applySessionProjectionEvent(base, event);
-      liveProjectionRef.current = next;
-      setInteractionProjection(next);
-      onProjectionChangeRef.current?.(next);
-    };
-
-    const unsubscribeLegacyEvents = bridge.subscribeToEvents(
-      piSessionId,
-      (event) => {
-        applyLiveProjectionEvent({
-          type: "runtime-event-received",
-          event,
-        });
-      },
-    );
-    const unsubscribeAgentEvents = bridge.subscribeToAgentEvents?.(
-      piSessionId,
-      (entry) => {
-        applyLiveProjectionEvent({
-          type: "agent-event-received",
-          entry,
-        });
-      },
-    );
-
-    const unsubscribeModelControls = bridge.subscribeToModelControls?.(
-      piSessionId,
-      (modelControls, occurredAt) => {
-        applyLiveProjectionEvent({
-          type: "model-controls-changed",
-          modelControls,
-          occurredAt,
-        });
-      },
-    );
-
-    return () => {
-      unsubscribeLegacyEvents();
-      unsubscribeAgentEvents?.();
-      unsubscribeModelControls?.();
-    };
-  }, [getRuntimeBridge, liveProjection?.piSessionId, showDraft]);
-
-  const historyInFlight =
-    pendingHistoryKey !== null &&
-    Boolean(sessionProjection) &&
-    sessionProjection != null &&
-    historyKeyForProjection(sessionProjection, historyRetryNonce) === pendingHistoryKey;
-  const canRetryHistoryLoad = Boolean(
-    liveProjection?.piSessionId &&
-      getRuntimeBridge().loadSession,
-  );
-  const handleRetryHistoryLoad = () => {
-    if (!liveProjection) {
-      return;
-    }
-
-    // The new nonce alone yields a fresh history key. Keep the failed key
-    // marked: clearing it here lets a history effect still pending with the
-    // old nonce re-read it before the retry render commits.
-    setHistoryRetryNonce((currentNonce) => currentNonce + 1);
-  };
+  // Retry only re-reads a failed load; the store keeps every other read to
+  // one per runtime identity.
+  const canRetryHistoryLoad = history === "failed";
   const shouldTickLiveClock =
     clockNowMs === undefined &&
     Boolean(liveProjection && isSessionProjectionActive(liveProjection));
@@ -3766,34 +3471,31 @@ function LiveSessionColumn({
     Boolean(liveProjection && isSessionProjectionActive(liveProjection)) &&
     !creating &&
     !readOnlyProjection;
+  // Handlers apply their result through `apply`, which stays bound to the
+  // Session they started on: a reply that lands after the user switched away
+  // updates that Session in the store and nothing on screen.
   const handleQueueSubmit = async (
     message: string,
     images?: RuntimePromptImage[],
   ) => {
-    const projection = liveProjectionRef.current ?? liveProjection;
-
-    if (!projection?.piSessionId || !queueMode) {
+    if (!liveProjection?.piSessionId || !queueMode) {
       return;
     }
 
     const queuedMessage = await getRuntimeBridge().queueFollowUp({
-      piSessionId: projection.piSessionId,
+      piSessionId: liveProjection.piSessionId,
       message,
       ...(images?.length ? { images } : {}),
     });
 
-    const next = applySessionProjectionEvent(latestProjectionFor(projection), {
-      type: "queued-message-added",
-      queuedMessage,
-    });
-    commitInteractionProjection(next);
+    apply({ type: "queued-message-added", queuedMessage });
   };
   const pendingPromptsRef = useRef(new Map<string, { content: string; promise: Promise<void> }>());
   const handlePromptSubmit = async (
     message: string,
     images?: RuntimePromptImage[],
   ) => {
-    const projection = liveProjectionRef.current ?? liveProjection;
+    const projection = liveProjection;
 
     if (!projection?.piSessionId || readOnlyProjection) {
       return;
@@ -3820,15 +3522,10 @@ function LiveSessionColumn({
         ...(images?.length ? { images } : {}),
       });
 
-      const current = accepted.state
-        ? applySessionProjectionEvent(latestProjectionFor(projection), { type: "runtime-state-resynced", state: accepted.state })
-        : latestProjectionFor(projection);
-      const next = applySessionProjectionEvent(current, {
-        type: "runtime-event-received",
-        submittedAt,
-        event: accepted.event,
-      });
-      commitInteractionProjection(next);
+      if (accepted.state) {
+        apply({ type: "runtime-state-resynced", state: accepted.state });
+      }
+      apply({ type: "runtime-event-received", submittedAt, event: accepted.event });
     })();
     pendingPromptsRef.current.set(projection.piSessionId, { content, promise: sending });
     try {
@@ -3854,7 +3551,7 @@ function LiveSessionColumn({
   const retryFailedRequest = async () => {
     // A retry must use the model the user just chose, even during its RPC.
     await modelChangeInFlight.current;
-    const current = liveProjectionRef.current ?? liveProjection;
+    const current = liveProjection && projectionsStore.get(liveProjection.id);
     if (!canRetryRequest || !failedRequest || !current || isSessionProjectionActive(current)) return;
     await handlePromptSubmit(failedRequest.body, retryImages as RuntimePromptImage[] | undefined);
   };
@@ -3880,12 +3577,11 @@ function LiveSessionColumn({
       if (modelControls.selected) {
         saveLastModelSelection(modelControls.selected);
       }
-      const next = applySessionProjectionEvent(latestProjectionFor(liveProjection), {
+      apply({
         type: "model-controls-changed",
         modelControls,
         occurredAt: new Date().toISOString(),
       });
-      commitInteractionProjection(next);
     });
     modelChangeInFlight.current = change;
     try {
@@ -3895,37 +3591,32 @@ function LiveSessionColumn({
     }
   };
   const handleWithdrawQueuedMessage = async (queuedMessageId: string) => {
-    const projection = liveProjectionRef.current ?? liveProjection;
-
-    if (!projection?.piSessionId) {
+    if (!liveProjection?.piSessionId) {
       return;
     }
 
     const result = await getRuntimeBridge().withdrawQueuedMessage({
-      piSessionId: projection.piSessionId,
+      piSessionId: liveProjection.piSessionId,
       queuedMessageId,
     });
 
     if (!result.ok) {
-      commitInteractionProjection(
-        applySessionProjectionEvent(latestProjectionFor(projection), {
-          type: "queued-messages-synced",
-          queuedMessages: result.queuedMessages,
-          occurredAt: new Date().toISOString(),
-        }),
-      );
+      apply({
+        type: "queued-messages-synced",
+        queuedMessages: result.queuedMessages,
+        occurredAt: new Date().toISOString(),
+      });
       throw new Error(result.error);
     }
 
-    const next = applySessionProjectionEvent(latestProjectionFor(projection), {
+    apply({
       type: "queued-message-withdrawn",
       queuedMessageId,
       occurredAt: new Date().toISOString(),
     });
-    commitInteractionProjection(next);
   };
   const handleReorderQueuedMessages = async (orderedIds: string[]) => {
-    const projection = liveProjectionRef.current ?? liveProjection;
+    const projection = liveProjection;
 
     if (!projection?.piSessionId) {
       return;
@@ -3936,13 +3627,11 @@ function LiveSessionColumn({
       return;
     }
 
-    commitInteractionProjection(
-      applySessionProjectionEvent(latestProjectionFor(projection), {
-        type: "queued-messages-reordered",
-        orderedIds,
-        occurredAt: new Date().toISOString(),
-      }),
-    );
+    apply({
+      type: "queued-messages-reordered",
+      orderedIds,
+      occurredAt: new Date().toISOString(),
+    });
 
     try {
       const pendingIds = orderedIds.filter((id) => {
@@ -3953,49 +3642,41 @@ function LiveSessionColumn({
         piSessionId: projection.piSessionId,
         orderedIds: pendingIds,
       });
-      commitInteractionProjection(
-        applySessionProjectionEvent(latestProjectionFor(projection), {
-          type: "queued-messages-synced",
-          queuedMessages: result.queuedMessages,
-          occurredAt: new Date().toISOString(),
-        }),
-      );
+      apply({
+        type: "queued-messages-synced",
+        queuedMessages: result.queuedMessages,
+        occurredAt: new Date().toISOString(),
+      });
     } catch {
-      commitInteractionProjection(
-        applySessionProjectionEvent(latestProjectionFor(projection), {
-          type: "queued-messages-reordered",
-          orderedIds: previousIds,
-          occurredAt: new Date().toISOString(),
-        }),
-      );
+      apply({
+        type: "queued-messages-reordered",
+        orderedIds: previousIds,
+        occurredAt: new Date().toISOString(),
+      });
     }
   };
   const handleSteerFromQueue = async (queuedMessageId: string) => {
-    const projection = liveProjectionRef.current ?? liveProjection;
-
-    if (!projection?.piSessionId) {
+    if (!liveProjection?.piSessionId) {
       return;
     }
 
     const result = await getRuntimeBridge().steerFromQueue({
-      piSessionId: projection.piSessionId,
+      piSessionId: liveProjection.piSessionId,
       queuedMessageId,
     });
 
-    commitInteractionProjection(
-      applySessionProjectionEvent(latestProjectionFor(projection), {
-        type: "queued-messages-synced",
-        queuedMessages: result.queuedMessages,
-        occurredAt: new Date().toISOString(),
-      }),
-    );
+    apply({
+      type: "queued-messages-synced",
+      queuedMessages: result.queuedMessages,
+      occurredAt: new Date().toISOString(),
+    });
 
     if (!result.ok) {
       throw new Error(result.error);
     }
   };
   const handleStopRun = async () => {
-    const projection = liveProjectionRef.current ?? liveProjection;
+    const projection = liveProjection;
 
     if (!projection?.piSessionId || !queueMode || stoppingRun) {
       return;
@@ -4003,7 +3684,7 @@ function LiveSessionColumn({
 
     const { piSessionId } = projection;
 
-    setStoppingRun(true);
+    setStoppingSessionId(projection.id);
 
     try {
       await restoreProjectionRuntimeState({
@@ -4013,14 +3694,9 @@ function LiveSessionColumn({
       });
 
       const event = await getRuntimeBridge().abortRun({ piSessionId });
-      const next = applySessionProjectionEvent(latestProjectionFor(projection), {
-        type: "run-stopped",
-        event,
-      });
-
-      commitInteractionProjection(next);
+      apply({ type: "run-stopped", event });
     } catch (error) {
-      const next = applySessionProjectionEvent(latestProjectionFor(projection), {
+      apply({
         type: "run-stop-failed",
         event: {
           id: `stop-failed-${Date.now()}`,
@@ -4031,10 +3707,8 @@ function LiveSessionColumn({
           timestamp: new Date().toISOString(),
         },
       });
-
-      commitInteractionProjection(next);
     } finally {
-      setStoppingRun(false);
+      setStoppingSessionId((current) => (current === projection.id ? null : current));
     }
   };
   const handleForkMessage = async (message: LiveMessage) => {
@@ -4091,21 +3765,22 @@ function LiveSessionColumn({
       : usingRegistryProjects
         ? undefined
         : workspace.repoRoot;
-    let forkProjection = createSessionProjection({
-      id: forkSessionId,
-      projectId: targetProject.id,
-      initialPrompt: message.body,
-      createdAt: now(),
-    });
-    const commitForkProjection = (nextProjection: SessionProjection) => {
-      forkProjection = nextProjection;
-      commitInteractionProjection(nextProjection, { follow: true });
-    };
+    // Creation steps go through the store so it subscribes to the forked
+    // Session's runtime on `runtime-bound`, like a Session created from a draft.
+    const forkCreated = projectionsStore.insert(
+      createSessionProjection({
+        id: forkSessionId,
+        projectId: targetProject.id,
+        initialPrompt: message.body,
+        createdAt: now(),
+      }),
+    );
 
     if (message.body.trim()) {
       saveFollowUpDraft(forkSessionId, message.body);
     }
-    commitForkProjection(forkProjection);
+    // The fork takes the view while it is created, as a draft's Session does.
+    onSessionCreationStarted?.(forkCreated);
 
     try {
       const checkout = chatFork
@@ -4126,14 +3801,12 @@ function LiveSessionColumn({
             now,
           });
 
-      commitForkProjection(
-        applySessionProjectionEvent(forkProjection, {
-          type: "checkout-selected",
-          stage: "preparing checkout",
-          checkout,
-          occurredAt: now(),
-        }),
-      );
+      projectionsStore.apply(forkSessionId, {
+        type: "checkout-selected",
+        stage: "preparing checkout",
+        checkout,
+        occurredAt: now(),
+      });
 
       const fork = await bridge.forkSession({
         sessionId: forkSessionId,
@@ -4150,7 +3823,7 @@ function LiveSessionColumn({
         saveFollowUpDraft(forkSessionId, selectedText);
       }
 
-      forkProjection = applySessionProjectionEvent(forkProjection, {
+      projectionsStore.apply(forkSessionId, {
         type: "runtime-bound",
         stage: "starting runtime",
         runtimeId: fork.state.runtimeId,
@@ -4160,34 +3833,30 @@ function LiveSessionColumn({
         followUpMode: fork.state.followUpMode,
         occurredAt: now(),
       });
-      forkProjection = applySessionProjectionEvent(forkProjection, {
+      projectionsStore.apply(forkSessionId, {
         type: "runtime-state-resynced",
         state: fork.state,
       });
-      commitForkProjection({
-        ...forkProjection,
+      projectionsStore.apply(forkSessionId, {
+        type: "creation-accepted",
         initialPrompt: selectedText,
-        creationStage: "accepted",
+        occurredAt: now(),
       });
     } catch (error) {
-      commitForkProjection(
-        applySessionProjectionEvent(forkProjection, {
-          type: "creation-failed",
-          stage:
-            error instanceof PiRuntimeBridgeError &&
-            error.stage === "forking session"
-              ? "starting runtime"
-              : "preparing checkout",
-          message: messageFromError(error),
-          occurredAt: now(),
-        }),
-      );
+      projectionsStore.apply(forkSessionId, {
+        type: "creation-failed",
+        stage:
+          error instanceof PiRuntimeBridgeError &&
+          error.stage === "forking session"
+            ? "starting runtime"
+            : "preparing checkout",
+        message: messageFromError(error),
+        occurredAt: now(),
+      });
     }
 
-    // Forked Sessions used to take over via the selection side effect on
-    // every projection commit; selection is explicit now, so the fork lands
-    // the view itself (failure state included, matching prior behavior).
-    onSessionCreated?.(forkProjection);
+    // Also on failure: the failed fork is where its error is shown.
+    onSessionCreated?.(projectionsStore.get(forkSessionId) ?? forkCreated);
   };
 
   // Only the Session this column just created inherits the draft's Location;
@@ -4208,7 +3877,7 @@ function LiveSessionColumn({
         <SessionDraftComposer
           draft={sessionDraft}
           projects={projects}
-          creationProjection={creationProjection}
+          creationProjection={liveProjection}
           recommendedCheckoutMode={recommendedCheckoutMode}
           projectGit={projectGit}
           onDraftChange={handleDraftChange}
@@ -4248,7 +3917,7 @@ function LiveSessionColumn({
                   label="Retry"
                   size="sm"
                   variant="secondary"
-                  onClick={handleRetryHistoryLoad}
+                  onClick={retryHistory}
                 />
               ) : null}
             </div>
@@ -4293,7 +3962,7 @@ function LiveSessionColumn({
                   }
                 />
               ))}
-              {historyInFlight ? (
+              {history === "loading" ? (
                 <p
                   aria-live="polite"
                   className="text-sm text-muted"
@@ -4401,15 +4070,13 @@ export function AgentWorkspaceSessionsView({
   sessionCreator,
   checkoutManager,
   runtimeBridge,
+  sessionId,
   sessionProjection,
   sessionChanges,
   clockNowMs,
   loadProjectGitSummary,
-  onProjectionChange,
-  onLatestMessageRendered,
   onManageModels,
   onOpenProviderSettings,
-  runtimeGeneration = 0,
 }: {
   projectId?: string;
   showDraft?: boolean;
@@ -4424,16 +4091,20 @@ export function AgentWorkspaceSessionsView({
   sessionCreator?: SessionCreator;
   checkoutManager?: ExecutionCheckoutManager;
   runtimeBridge?: PiRuntimeBridge;
+  /** The Session on screen, read from the Session Projections store. */
+  sessionId?: string | null;
+  /**
+   * Test seam for views rendered without a store provider: seeds the view's
+   * own store with this Session (once per id) and shows it when `sessionId`
+   * is absent.
+   */
   sessionProjection?: SessionProjection | null;
   sessionChanges?: SessionChangesView;
   clockNowMs?: number;
   /** Test seam for the Session Draft's Project-level Git read. */
   loadProjectGitSummary?: typeof getProjectGitSummary;
-  onProjectionChange?: (projection: SessionProjection) => void;
-  onLatestMessageRendered?: (sessionId: string) => void;
   onManageModels?: () => void;
   onOpenProviderSettings?: () => void;
-  runtimeGeneration?: number;
 }) {
   const [getDefaultRuntimeBridge] = useState(() => {
     let bridge: PiRuntimeBridge | null = null;
@@ -4447,9 +4118,27 @@ export function AgentWorkspaceSessionsView({
   const getActiveRuntimeBridge = runtimeBridge
     ? () => runtimeBridge
     : getDefaultRuntimeBridge;
-  const [defaultProjectionStore] = useState(() =>
-    createInMemorySessionProjectionStore(),
-  );
+  const storeContext = useSessionProjectionsStoreOptional();
+  // Views rendered without the app provider (isolated view tests) still need
+  // a store to read from and for creation and fork to write through.
+  const [fallbackProjectionsStore] = useState(() => {
+    if (storeContext) return null;
+
+    const store = createSessionProjectionsStore({
+      bridge: getActiveRuntimeBridge(),
+      listSessions: async () => [],
+    });
+    // Seeded before the first render so a synchronous test sees the Session.
+    if (sessionProjection) store.insert(sessionProjection);
+    return store;
+  });
+  const projectionsStore = storeContext?.store ?? fallbackProjectionsStore!;
+
+  useEffect(() => {
+    if (fallbackProjectionsStore && sessionProjection && !fallbackProjectionsStore.get(sessionProjection.id)) {
+      fallbackProjectionsStore.insert(sessionProjection);
+    }
+  }, [fallbackProjectionsStore, sessionProjection]);
   const [defaultCheckoutManager] = useState(() =>
     createExecutionCheckoutManager({
       gitClient: createInvokeExecutionCheckoutGitClient(),
@@ -4462,9 +4151,8 @@ export function AgentWorkspaceSessionsView({
       bridge: getActiveRuntimeBridge(),
       checkoutManager: activeCheckoutManager,
       executionMode: input.executionMode ?? "foreground",
-      projections: defaultProjectionStore,
     });
-  const liveSession = (
+  const liveSessionColumn = (
     <LiveSessionColumn
       projectId={projectId}
       showDraft={showDraft}
@@ -4476,17 +4164,20 @@ export function AgentWorkspaceSessionsView({
       sessionCreator={sessionCreator ?? defaultSessionCreator}
       checkoutManager={activeCheckoutManager}
       getRuntimeBridge={getActiveRuntimeBridge}
+      projectionsStore={projectionsStore}
       recommendedCheckoutMode="local"
-      sessionProjection={sessionProjection}
+      sessionId={sessionId !== undefined ? sessionId : sessionProjection?.id ?? null}
       sessionChanges={sessionChanges}
       clockNowMs={clockNowMs}
       loadProjectGitSummary={loadProjectGitSummary}
-      onProjectionChange={onProjectionChange}
-      onLatestMessageRendered={onLatestMessageRendered}
       onManageModels={onManageModels}
       onOpenProviderSettings={onOpenProviderSettings}
-      runtimeGeneration={runtimeGeneration}
     />
+  );
+  const liveSession = storeContext ? liveSessionColumn : (
+    <SessionProjectionsStoreProvider store={projectionsStore} runtimeGeneration={0}>
+      {liveSessionColumn}
+    </SessionProjectionsStoreProvider>
   );
   // The panel's ceiling is whatever Chat's minimum does not need, so it has to
   // follow the split container rather than resolve once at mount.
@@ -4635,12 +4326,11 @@ export function AgentWorkspaceSessionsPage() {
   const [registryProjects, setRegistryProjects] = useState(() =>
     getVisibleProjectRegistry(),
   );
-  const [runtimeBridge] = useState(() => createDefaultPiRuntimeBridge());
   const {
     sessionProjections,
     sessionsHydrated,
-    backendGeneration,
-    setSessionProjections,
+    store: projectionsStore,
+    runtimeBridge,
   } = useSessionProjections();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
@@ -4650,10 +4340,14 @@ export function AgentWorkspaceSessionsPage() {
       return;
     }
 
-    setSessionProjections((current) =>
-      current.length > 0 ? current : defaultSidebarProjectSessionProjections,
-    );
-  }, [browserDevelopmentData, setSessionProjections]);
+    if (projectionsStore.list().length > 0) {
+      return;
+    }
+    // `insert` puts each Session first; reverse to keep the fixture order.
+    for (const projection of [...defaultSidebarProjectSessionProjections].reverse()) {
+      projectionsStore.insert(projection);
+    }
+  }, [browserDevelopmentData, projectionsStore]);
   // Shell count for the Terminal rail badge, reported up by the Terminal
   // surface while it is mounted; reset per Session below.
   const [terminalInstanceCount, setTerminalInstanceCount] = useState(0);
@@ -4771,37 +4465,9 @@ export function AgentWorkspaceSessionsPage() {
     }
   }, [selectedSessionProjection?.id]);
 
-  // Store updates only: projection commits also arrive for Sessions the user
-  // is not viewing (a created Session's runtime subscription outlives the
-  // view), so this must never move the selection. Selection changes are
-  // explicit: sidebar clicks, the first-session fallback, and Session takeovers.
-  const handleProjectionChange = (nextProjection: SessionProjection) => {
-    setSessionProjections((projections) => {
-      const projectionExists = projections.some(
-        (projection) => projection.id === nextProjection.id,
-      );
-
-      if (!projectionExists) {
-        return [nextProjection, ...projections];
-      }
-
-      return projections.map((projection) =>
-        projection.id === nextProjection.id ? nextProjection : projection,
-      );
-    });
-  };
-  const handleLatestMessageRendered = (sessionId: string) => {
-    setSessionProjections((projections) =>
-      projections.map((projection) =>
-        projection.id === sessionId
-          ? applySessionProjectionEvent(projection, {
-              type: "latest-message-rendered",
-              occurredAt: new Date().toISOString(),
-            })
-          : projection,
-      ),
-    );
-  };
+  // Selection changes are explicit — sidebar clicks, the first-session
+  // fallback, and Session takeovers — never a store update: the store also
+  // advances Sessions the user is not viewing.
   // The Live Session takes over as soon as the `creating` projection exists:
   // waiting for Pi to accept the prompt left the draft on screen for as long
   // as extensions held the user-message boundary. Also fires on success so a
@@ -4924,13 +4590,10 @@ export function AgentWorkspaceSessionsPage() {
         showDraft={showDraft}
         workspace={workspace}
         runtimeBridge={runtimeBridge}
-        runtimeGeneration={backendGeneration}
-        sessionProjection={selectedSessionProjection}
-        onProjectionChange={handleProjectionChange}
+        sessionId={selectedSessionProjection?.id ?? null}
         onSessionCreationStarted={enterLiveSession}
         onSessionCreated={enterLiveSession}
         onReopenDraft={handleReopenDraft}
-        onLatestMessageRendered={handleLatestMessageRendered}
         onManageModels={() => openSettings("models")}
         onOpenProviderSettings={() => openSettings("providers")}
       />
