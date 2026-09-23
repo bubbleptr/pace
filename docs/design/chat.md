@@ -58,7 +58,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 
 - **Project**（在哪个项目）是 draft 的输入，会话建好后已隐含，所以 `ProjectPicker` 放在**标题下方、composer 上方**，随 hero 一起淡出，不进 footer。
 - **Location**（在哪跑）draft 时是 `CheckoutStrategyPicker`（Project folder / Git worktree），会话内冻结为标签（`ComposerStaticChip`，`chrome="selector"` 复刻 ghost Selector 的 28px 高、14px/500 字、12px 横向内边距与图标尺寸，chevron 用 `invisible` 保留占位（只是不画出来）——draft 的 Location 选择器交接后变成这个标签，少掉 16px + gap 会把右边的 Branch chip 往左拽，行内任何东西都不许移动；Branch 侧的静态标签用 `chrome="button"` 复刻 ghost Button 的 8px 内边距与 muted 色）。Location 的图标是"地方"不是 ref：Project folder 用 `Computer`，Git worktree 用 `FolderLibrary`，**不要用 `GitBranch`**（会和旁边的 Branch chip 撞图形）。Chat 工作区两态都显示 "Chat"，且不渲染 Branch。
-- **Branch** draft 时：Project folder 显示当前分支（可切，即原目录 checkout）；Git worktree 显示基准分支 "from main"（只读，见下）。会话内是既有 `GitBranchPicker`；Git 还没回答新 checkout 时，保持 draft 的分支值，不出现空槽。
+- **Branch** draft 时：Project folder 显示当前分支（可切，即原目录 checkout）；Git worktree 显示基准分支 "from main"（只读，见下）。Git 回答了但没有分支（非仓库或 detached HEAD，`branch: null`）时，两种 Location 都显示静态 "No branch"（`ComposerStaticChip chrome="button"`），不可点；读取失败则不渲染 Branch，并在控制台 `console.warn` 项目路径与错误。会话内是既有 `GitBranchPicker`；Git 还没回答新 checkout 时，保持 draft 的分支值，不出现空槽。
 - 用量环两态都在：draft 是空的灰环（`usage={null}`），会话内填充。
 
 Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不会把环挤出去。决策见 `.scratch/draft-live-handoff/PRD.md`。

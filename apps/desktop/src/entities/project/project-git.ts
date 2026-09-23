@@ -16,6 +16,11 @@ export async function checkoutProjectBranch(projectRoot: string, branch: string)
 }
 
 export type ProjectGitView = {
+  /**
+   * Null while the read is pending, for the Chat workspace, or when the read
+   * failed. A summary whose `branch` is null means Git answered but there is
+   * no branch to name: not a repository, or a detached HEAD.
+   */
   summary: ProjectGitSummary | null;
   checkoutBranch: (branch: string) => Promise<void>;
 };
@@ -59,13 +64,19 @@ export function useProjectGit({
 
     let cancelled = false;
 
-    // A Project without Git, or a failed read, simply leaves the row without a
-    // branch; the draft must stay usable either way.
+    // A Project without Git answers with `branch: null`, which the row shows
+    // as "No branch". A failed read leaves `summary` null so the row simply has
+    // no branch and the draft stays usable — but it is logged, because an
+    // empty row alone gives no clue why the branch is missing.
     void loadSummary(projectRoot)
       .then((next) => {
         if (!cancelled) setState({ root: projectRoot, summary: next });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.warn(
+          `Could not read the Git branch of ${projectRoot}:`,
+          error instanceof Error ? error.message : error,
+        );
         if (!cancelled) setState(null);
       });
 

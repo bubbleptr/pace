@@ -1673,6 +1673,22 @@ function ChatPromptInputGallery() {
           }
         />
         <PromptInputFooterSlotDemo
+          caption="footer slot — Session Draft Location row, no branch (not a repository or detached HEAD; static)"
+          footer={
+            <span className="flex w-full items-center gap-2">
+              <span className="inline-flex h-7 items-center gap-2 px-3 text-sm font-medium text-foreground">
+                Project folder
+              </span>
+              <span className="inline-flex h-7 items-center gap-1.5 px-2 text-sm font-medium text-muted">
+                No branch
+              </span>
+              <span className="ml-auto inline-flex shrink-0">
+                <ContextUsageMeter usage={null} />
+              </span>
+            </span>
+          }
+        />
+        <PromptInputFooterSlotDemo
           caption="footer slot — the same row inside a Session"
           footer={
             <span className="flex w-full items-center gap-2">
