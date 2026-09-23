@@ -18,6 +18,14 @@ describe("ChatRunFailure", () => {
     expect(screen.getByText(raw)).toBeVisible();
   });
 
+  it("asks the user to sign in again when the OAuth refresh token is rejected", () => {
+    render(
+      <ChatRunFailure error="OAuth refresh failed for xai: xAI OAuth token refresh failed (HTTP 400): invalid_grant: Invalid or unknown refresh token" />,
+    );
+    expect(screen.getByText("Provider authentication failed")).toBeInTheDocument();
+    expect(screen.getByText(/Sign in again/)).toBeInTheDocument();
+  });
+
   it("prevents duplicate retries and shows a retry failure without losing the original", async () => {
     const user = userEvent.setup();
     let reject!: (reason: Error) => void;

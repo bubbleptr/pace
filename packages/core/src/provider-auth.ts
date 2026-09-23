@@ -166,15 +166,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const RESOLVED_NETWORK_MESSAGE =
   /network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|ECONNREFUSED|ETIMEDOUT|ECONNRESET|UND_ERR_/i;
 
+// A dead OAuth refresh token comes back as HTTP 400 invalid_grant: the fix is
+// signing in again, same as a 401.
+const OAUTH_REFRESH_FAILURE = /invalid_grant|oauth refresh failed|refresh.?token/i;
+
 function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
   // Status wins over prose: a 401 that mentions a plan is still an auth failure,
   // and a 403 that says "unauthorized" is still an entitlement reject.
   if (detail.status === 401 || /\b401\b/.test(detail.message)) return "auth";
   if (detail.status === 403 || /\b403\b/.test(detail.message)) return "entitlement";
   if (/\b(?:plan|subscription|entitlement)\b/i.test(detail.message)) return "entitlement";
-  // A dead OAuth refresh token comes back as HTTP 400 invalid_grant: the fix is
-  // signing in again, same as a 401.
-  if (/invalid.?api.?key|authentication_error|unauthorized|invalid_grant|oauth refresh failed/i.test(detail.message)) {
+  if (
+    /invalid.?api.?key|authentication_error|unauthorized/i.test(detail.message) ||
+    OAUTH_REFRESH_FAILURE.test(detail.message)
+  ) {
     return "auth";
   }
   if (detail.networkCode || RESOLVED_NETWORK_MESSAGE.test(detail.message)) return "network";
@@ -184,7 +189,7 @@ function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
 function messageFor(kind: ProviderFailureKind, detail: ProviderFailureDetail): string {
   switch (kind) {
     case "auth":
-      return "Authentication failed";
+      return OAUTH_REFRESH_FAILURE.test(detail.message) ? "Sign in again" : "Authentication failed";
     case "entitlement":
       return "Not covered by your subscription plan";
     case "network":

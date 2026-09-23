@@ -251,6 +251,7 @@ async function connectionRuntime(
     models?: Model<"openai-completions">[];
     getModel?: ProviderAuthRuntime["getModel"];
     timeoutMs?: number;
+    settings?: Record<string, unknown>;
   },
 ) {
   const runtime: ProviderAuthRuntime = {
@@ -269,6 +270,9 @@ async function connectionRuntime(
   };
 
   const agentDir = await tempAgentDir();
+  if (options?.settings) {
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify(options.settings));
+  }
   return createProviderAuthService({
     agentDir,
     dataDir: agentDir,
@@ -371,6 +375,47 @@ describe("test provider connection", () => {
     expect(probed).toEqual(["gpt-5.3-codex-spark", "gpt-5.5"]);
   });
 
+  it("probes the Pi settings default model first when it belongs to the provider", async () => {
+    const probed: string[] = [];
+    const service = await connectionRuntime(
+      async (model) => {
+        probed.push(model.id);
+        return { stopReason: "length" } as ProbeReply;
+      },
+      {
+        models: [probeModel("anthropic", "claude-sonnet-4"), probeModel("anthropic", "claude-haiku")],
+        settings: { defaultProvider: "anthropic", defaultModel: "claude-haiku" },
+      },
+    );
+
+    await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+      ok: true,
+      modelId: "claude-haiku",
+    });
+    expect(probed).toEqual(["claude-haiku"]);
+  });
+
+  it("falls back to snapshot order when the settings default is another provider's or unavailable", async () => {
+    const probed: string[] = [];
+    const models = [probeModel("anthropic", "claude-sonnet-4"), probeModel("anthropic", "claude-haiku")];
+    const probe: ProviderAuthRuntime["completeSimple"] = async (model) => {
+      probed.push(model.id);
+      return { stopReason: "length" } as ProbeReply;
+    };
+
+    for (const settings of [
+      { defaultProvider: "openai", defaultModel: "claude-haiku" },
+      { defaultProvider: "anthropic", defaultModel: "claude-retired" },
+    ]) {
+      const service = await connectionRuntime(probe, { models, settings });
+      await expect(service.testConnection("anthropic")).resolves.toMatchObject({
+        ok: true,
+        modelId: "claude-sonnet-4",
+      });
+    }
+    expect(probed).toEqual(["claude-sonnet-4", "claude-sonnet-4"]);
+  });
+
   it("stops at a provider-wide failure instead of trying other models", async () => {
     const probed: string[] = [];
     const service = await connectionRuntime(
@@ -448,14 +493,22 @@ describe("test provider connection", () => {
 
   it("aborts the probe when the deadline fires", async () => {
     let signal: AbortSignal | undefined;
+    let probeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      probeStarted = resolve;
+    });
     const service = await connectionRuntime((_model, _context, options) => {
       signal = options?.signal;
+      probeStarted();
       return new Promise<ProbeReply>(() => {});
     });
 
     vi.useFakeTimers();
     try {
       const pending = service.testConnection("anthropic");
+      // Candidate selection reads settings.json first; the deadline is armed
+      // only once the probe is about to run.
+      await started;
       await vi.advanceTimersByTimeAsync(15_000);
       await expect(pending).resolves.toMatchObject({
         ok: false,

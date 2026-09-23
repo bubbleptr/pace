@@ -11,7 +11,7 @@ function describeFailure(error: string) {
   if (kind === "auth") {
     return {
       title: "Provider authentication failed",
-      description: "The provider rejected the credentials. Update them in Provider settings, or choose another model and retry.",
+      description: "The provider rejected the credentials. Sign in again or update them in Provider settings, or choose another model and retry.",
     };
   }
   if (kind === "entitlement") {

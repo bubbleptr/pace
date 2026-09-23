@@ -115,7 +115,7 @@ function defaultSelection(
   };
 }
 
-async function readSettingsPreferredModel(agentDir: string) {
+export async function readSettingsPreferredModel(agentDir: string) {
   try {
     const { readFile } = await import("node:fs/promises");
     const raw = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8")) as unknown;
