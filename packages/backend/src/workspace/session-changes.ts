@@ -624,6 +624,27 @@ async function readBranchNames(repositoryRoot: string) {
 }
 
 /**
+ * The commit-ish a worktree can start from for a name the branch pickers
+ * list. Remote-only names are listed by their short name, which git cannot
+ * resolve on its own, so they map back to their remote-tracking ref.
+ */
+export async function resolveBranchStartPoint(repositoryRoot: string, branch: string) {
+  assertLocalBranchName(branch);
+
+  if ((await listLocalBranches(repositoryRoot)).includes(branch)) {
+    return `refs/heads/${branch}`;
+  }
+
+  const remoteRef = (await listRemoteTrackingBranches(repositoryRoot)).get(branch);
+
+  if (!remoteRef) {
+    throw new Error(`Unknown branch "${branch}".`);
+  }
+
+  return `refs/remotes/${remoteRef}`;
+}
+
+/**
  * Move a repository onto `branch`, creating a local tracking branch when the
  * name only exists on a remote. Shared by the Session composer's branch picker
  * and the Session Draft's, which run the same switch against different roots.

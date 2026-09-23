@@ -619,6 +619,7 @@ async function dispatchRequest(input: {
         repoRoot: string;
         checkoutRoot: string;
         sessionId: string;
+        baseRef?: string;
       });
       return null;
     case "list_terminals":

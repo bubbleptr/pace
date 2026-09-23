@@ -453,6 +453,48 @@ describe("Session Creation state machine", () => {
     ).toHaveLength(2);
   });
 
+  it("cuts a background worktree from the draft's base branch", async () => {
+    const worktreeRequests: Array<{ checkoutRoot: string; baseRef?: string }> = [];
+    const checkoutManager = createExecutionCheckoutManager({
+      worktreesRoot: "/tmp/pig-worktrees",
+      gitClient: {
+        async isGitRepository() {
+          return true;
+        },
+        async addDetachedWorktree({ checkoutRoot, baseRef }) {
+          worktreeRequests.push({ checkoutRoot, baseRef });
+        },
+      },
+    });
+    const create = (id: string, baseRef?: string) =>
+      createSessionFromDraft({
+        bridge: createInMemoryPiRuntimeBridge({
+          now: () => "2026-06-27T08:00:03.000Z",
+        }),
+        projections: createInMemorySessionProjectionStore(),
+        checkoutManager,
+        executionMode: "background",
+        draft: {
+          projectId: "pig",
+          prompt: "Start from a chosen branch",
+          checkoutMode: "worktree",
+          ...(baseRef ? { baseRef } : {}),
+          updatedAt: "2026-06-27T08:00:00.000Z",
+        },
+        project: { id: "pig", projectRoot: "/Users/void/code/opensource/Pig" },
+        now: () => "2026-06-27T08:00:00.000Z",
+        idFactory: () => id,
+      });
+
+    await create("session-feature", "feature");
+    await create("session-head");
+
+    expect(worktreeRequests).toEqual([
+      { checkoutRoot: "/tmp/pig-worktrees/session-feature", baseRef: "feature" },
+      { checkoutRoot: "/tmp/pig-worktrees/session-head", baseRef: undefined },
+    ]);
+  });
+
   it("prepares a chat workspace cwd and uses a foreground-local checkout", async () => {
     const projections = createInMemorySessionProjectionStore();
     const prepareChatWorkspace = vi.fn(async ({ sessionId }: { sessionId: string }) => ({

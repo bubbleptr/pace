@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { ExecutionCheckoutGitClient } from "@pace/core";
+import { resolveBranchStartPoint } from "./session-changes";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,10 @@ export function createNodeExecutionCheckoutGitClient(): ExecutionCheckoutGitClie
         throw new Error("session id is required to create a worktree");
       }
 
+      const startPoint = input.baseRef
+        ? await resolveBranchStartPoint(input.repoRoot, input.baseRef)
+        : "HEAD";
+
       await mkdir(dirname(input.checkoutRoot), { recursive: true });
 
       try {
@@ -38,7 +43,7 @@ export function createNodeExecutionCheckoutGitClient(): ExecutionCheckoutGitClie
           "add",
           "--detach",
           input.checkoutRoot,
-          "HEAD",
+          startPoint,
         ]);
       } catch (error) {
         throw new Error(`git worktree add failed: ${stderrFromError(error)}`);

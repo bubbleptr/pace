@@ -22,6 +22,8 @@ export type PrepareExecutionCheckoutInput = {
   now?: () => string;
   /** Chat folders must not inherit a parent Git repo as their checkout. */
   skipGit?: boolean;
+  /** Branch a managed worktree starts from; ignored by local checkouts. */
+  baseRef?: string;
 };
 
 export type ExecutionCheckoutManager = {
@@ -284,6 +286,7 @@ export function createExecutionCheckoutManager(
         repoRoot: gitProject.repoRoot,
         checkoutRoot: checkout.executionCheckoutRoot ?? checkout.root,
         sessionId: input.sessionId,
+        baseRef: input.baseRef,
       });
 
       return checkout;

@@ -5,6 +5,8 @@ import {
   getSessionDraft,
   hasSessionDraft,
   saveSessionDraft,
+  setSessionDraftBaseRef,
+  setSessionDraftCheckoutMode,
   setSessionDraftTarget,
 } from "@/entities/session/session-drafts";
 
@@ -120,5 +122,38 @@ describe("Session Draft storage", () => {
       projectId: null,
       prompt: "Keep this global draft",
     });
+  });
+
+  it("keeps the chosen base branch while the draft is edited", () => {
+    saveSessionDraft("/Users/void/code/opensource/Pig", "");
+    setSessionDraftCheckoutMode("worktree");
+    setSessionDraftBaseRef("feature");
+    saveSessionDraft("/Users/void/code/opensource/Pig", "Typed after picking");
+    setSessionDraftCheckoutMode("local");
+    setSessionDraftCheckoutMode("worktree");
+
+    expect(getSessionDraft()).toMatchObject({
+      prompt: "Typed after picking",
+      baseRef: "feature",
+    });
+  });
+
+  // A branch name only means something inside the Project it was picked in.
+  it("drops the chosen base branch when the draft changes Project", () => {
+    saveSessionDraft("/Users/void/code/opensource/Pig", "");
+    setSessionDraftBaseRef("feature");
+    setSessionDraftTarget("/Users/void/Documents/study");
+
+    expect(getSessionDraft()?.baseRef).toBeUndefined();
+
+    setSessionDraftBaseRef("feature");
+    ensureSessionDraft("/Users/void/code/opensource/Pig");
+
+    expect(getSessionDraft()?.baseRef).toBeUndefined();
+
+    setSessionDraftBaseRef("feature");
+    getSessionDraft({ projectIds: [] });
+
+    expect(getSessionDraft()?.baseRef).toBeUndefined();
   });
 });
