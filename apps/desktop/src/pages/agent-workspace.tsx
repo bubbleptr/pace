@@ -74,7 +74,7 @@ import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
 import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-state";
 import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-status";
-import { invoke, onBackendEvent } from "@/shared/runtime";
+import { invoke } from "@/shared/runtime";
 import {
   Stop,
   ChatAdd,
@@ -177,7 +177,6 @@ import {
   saveLastModelSelection,
 } from "@/entities/session/last-model-preference";
 import {
-  modelControlsFromUnknown,
   readCachedModelCatalog,
   rememberModelCatalog,
   subscribeModelCatalogInvalidation,
@@ -3714,22 +3713,21 @@ function LiveSessionColumn({
       },
     );
 
-    const unsubscribeCatalog = onBackendEvent((event) => {
-      if (event.type !== "event" || event.event.piSessionId !== piSessionId) return;
-      if (event.event.payload.type !== "model_catalog_changed") return;
-      const modelControls = modelControlsFromUnknown(event.event.payload.modelControls);
-      if (!modelControls) return;
-      applyLiveProjectionEvent({
-        type: "model-controls-changed",
-        modelControls,
-        occurredAt: event.event.ts,
-      });
-    });
+    const unsubscribeModelControls = bridge.subscribeToModelControls?.(
+      piSessionId,
+      (modelControls, occurredAt) => {
+        applyLiveProjectionEvent({
+          type: "model-controls-changed",
+          modelControls,
+          occurredAt,
+        });
+      },
+    );
 
     return () => {
       unsubscribeLegacyEvents();
       unsubscribeAgentEvents?.();
-      unsubscribeCatalog();
+      unsubscribeModelControls?.();
     };
   }, [getRuntimeBridge, liveProjection?.piSessionId, showDraft]);
 

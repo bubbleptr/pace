@@ -7980,15 +7980,11 @@ describe("AgentWorkspaceSessionsPage", () => {
   });
 
   it("updates an open live session's model list when the catalog refresh arrives", async () => {
-    const listeners = new Set<(event: BackendRpcEvent) => void>();
     window.pace = {
       invoke: vi.fn(async () => {
         throw new Error("unexpected invoke");
       }) as unknown as NonNullable<typeof window.pace>["invoke"],
-      onBackendEvent: (listener) => {
-        listeners.add(listener);
-        return () => { listeners.delete(listener); };
-      },
+      onBackendEvent: vi.fn(() => vi.fn()),
       onBrowserEvent: vi.fn(() => vi.fn()),
       onUpdateEvent: vi.fn(() => vi.fn()),
       onWindowFocusChanged: vi.fn(() => vi.fn()),
@@ -8017,44 +8013,29 @@ describe("AgentWorkspaceSessionsPage", () => {
         selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" as const },
       },
     };
+    const bridge = createInMemoryPiRuntimeBridge();
     render(
       <AgentWorkspaceSessionsView
         projectId="pig-docs"
-        runtimeBridge={createInMemoryPiRuntimeBridge()}
+        runtimeBridge={bridge}
         sessionProjection={projection}
       />,
     );
     expect(screen.getByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
 
     act(() => {
-      for (const listener of listeners) {
-        listener({
-          type: "event",
-          event: {
-            id: "catalog",
-            seq: 1,
-            sessionId: projection.id,
-            piSessionId: "pi-catalog-refresh",
-            type: "model_catalog_changed",
-            ts: "2026-09-22T00:01:00.000Z",
-            payload: {
-              type: "model_catalog_changed",
-              modelControls: {
-                models: [
-                  sonnet,
-                  {
-                    provider: "openai",
-                    modelId: "gpt-4.1",
-                    name: "GPT-4.1",
-                    thinkingLevels: ["off"],
-                  },
-                ],
-                selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
-              },
-            },
+      bridge.pushModelControls("pi-catalog-refresh", {
+        models: [
+          sonnet,
+          {
+            provider: "openai",
+            modelId: "gpt-4.1",
+            name: "GPT-4.1",
+            thinkingLevels: ["off"],
           },
-        });
-      }
+        ],
+        selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
+      });
     });
 
     await user.click(screen.getByTestId("model-thinking-trigger"));

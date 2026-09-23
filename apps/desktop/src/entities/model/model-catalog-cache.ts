@@ -1,4 +1,6 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { RuntimeModelCapability, RuntimeModelControls } from "@pace/core";
+import { onBackendEvent as onRuntimeBackendEvent } from "@/shared/runtime";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,4 +41,26 @@ export function subscribeModelCatalogInvalidation(listener: () => void) {
   return () => {
     invalidationListeners.delete(listener);
   };
+}
+
+// Same literal as Settings' query key; the PR ③ catalog hook owns one key.
+const availableModelControlsQueryKey = ["available-model-controls"] as const;
+
+/**
+ * App-level: the backend's global model_catalog.invalidated signal (startup
+ * refresh, credential change, manual refresh) drops every renderer copy of
+ * the catalog so mounted Drafts and Settings re-read it (ADR-0043 §4).
+ */
+export function startModelCatalogInvalidationBridge({
+  queryClient,
+  onBackendEvent = onRuntimeBackendEvent,
+}: {
+  queryClient: QueryClient;
+  onBackendEvent?: typeof onRuntimeBackendEvent;
+}) {
+  return onBackendEvent((event) => {
+    if (event.type !== "event" || event.event.type !== "model_catalog.invalidated") return;
+    invalidateCachedModelCatalog();
+    void queryClient.invalidateQueries({ queryKey: availableModelControlsQueryKey });
+  });
 }

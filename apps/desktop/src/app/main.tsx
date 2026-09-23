@@ -21,6 +21,7 @@ import { TrajectoryIndexPage, TrajectorySessionPage } from "@/pages/trajectory";
 import { UsagePage } from "@/pages/usage";
 import type { EnvironmentPreflightStatus } from "@pace/core";
 import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
+import { startModelCatalogInvalidationBridge } from "@/entities/model/model-catalog-cache";
 import { invoke, isElectronRuntime, onNavigateRequest } from "@/shared/runtime";
 import { Theme } from "@astryxdesign/core";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
@@ -29,6 +30,7 @@ import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import "./styles.css";
 
 const queryClient = new QueryClient();
+startModelCatalogInvalidationBridge({ queryClient });
 
 function isPreflightExemptPath(pathname: string) {
   // Preflight itself, plus Provider Settings so "Configure providers →" can

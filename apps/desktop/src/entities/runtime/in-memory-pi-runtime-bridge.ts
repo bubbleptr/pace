@@ -15,11 +15,14 @@ import {
   type PiRuntimeSummary,
   type PiSessionState,
   type RuntimeBridgeFailureStage,
+  type RuntimeModelControls,
 } from "@/entities/runtime/pi-runtime-bridge";
 
 export type InMemoryPiRuntimeBridge = PiRuntimeBridge & {
   restoreSessionState(state: PiSessionState): Promise<PiSessionState>;
   consumeQueuedMessage(queuedMessageId: string): void;
+  /** Stands in for a Session process re-reading its model catalog. */
+  pushModelControls(piSessionId: string, controls: RuntimeModelControls): void;
 };
 
 type InMemoryBridgeFailurePoint =
@@ -46,6 +49,10 @@ export function createInMemoryPiRuntimeBridge(
   const queuedMessages = new Map<string, PiQueuedMessage>();
   const listeners = new Map<string, Set<(event: PiRuntimeEvent) => void>>();
   const agentListeners = new Map<string, Set<(entry: AgentRuntimeEventEntry) => void>>();
+  const modelControlsListeners = new Map<
+    string,
+    Set<(controls: RuntimeModelControls, occurredAt: string) => void>
+  >();
   let runtimeCounter = 0;
   let sessionCounter = 0;
   let eventCounter = 0;
@@ -407,6 +414,29 @@ export function createInMemoryPiRuntimeBridge(
       return () => {
         sessionListeners.delete(listener);
       };
+    },
+
+    subscribeToModelControls(piSessionId, listener) {
+      const sessionListeners = modelControlsListeners.get(piSessionId) ?? new Set();
+
+      sessionListeners.add(listener);
+      modelControlsListeners.set(piSessionId, sessionListeners);
+
+      return () => {
+        sessionListeners.delete(listener);
+      };
+    },
+
+    pushModelControls(piSessionId, controls) {
+      const occurredAt = now();
+      const state = states.get(piSessionId);
+      if (state) {
+        state.modelControls = controls;
+        state.updatedAt = occurredAt;
+      }
+      for (const listener of modelControlsListeners.get(piSessionId) ?? []) {
+        listener(controls, occurredAt);
+      }
     },
 
     consumeQueuedMessage(queuedMessageId) {
