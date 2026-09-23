@@ -10,12 +10,26 @@ function DesignComponentsLayer() {
   return <>{componentExamples.map((entry) => <DesignComponentPreview key={entry.name} entry={entry} />)}</>;
 }
 
+// Rendering every gallery takes seconds on a loaded runner and pushed single
+// tests past the 5s timeout (#353); tests about one gallery render only it.
+function renderGalleries(...names: string[]) {
+  const entries = names.map((name) => {
+    const entry = componentExamples.find((candidate) => candidate.name === name);
+    if (!entry) throw new Error(`No gallery named ${name}`);
+    return entry;
+  });
+
+  return render(<>{entries.map((entry) => <DesignComponentPreview key={entry.name} entry={entry} />)}</>);
+}
+
 const repoRoot = process.cwd();
 
 describe("Design components layer", () => {
   it("demonstrates failure recovery and suggestion focus", async () => {
     const user = userEvent.setup();
-    render(<DesignComponentsLayer />);
+    // The failed CoT header lives in the ChatPixelLoader gallery and the
+    // suggestion-focus demo in ChatPromptInput.
+    renderGalleries("ChatRunFailure", "ChatPixelLoader", "ChatPromptInput");
     const failures = screen.getByRole("region", { name: "ChatRunFailure" });
     expect(within(failures).getByText("Provider authentication failed")).toBeInTheDocument();
     expect(within(failures).getAllByRole("button", { name: "Retry request" })).toHaveLength(3);
@@ -65,7 +79,7 @@ describe("Design components layer", () => {
   });
 
   it("shows PiKpi in stacked, inline, delta, empty and footer variants", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("PiKpi");
 
     const section = screen.getByRole("region", { name: "PiKpi" });
 
@@ -77,7 +91,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the chart primitives with data, empty and tooltip states", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("PiLineChart", "PiHeatmap");
 
     const line = screen.getByRole("region", { name: "PiLineChart" });
     expect(within(line).getByText("No usage in this range")).toBeInTheDocument();
@@ -89,7 +103,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the Cockpit ledger: run headers, row states, focus dim, and empty variant", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("PiTrajectoryLedger");
 
     const section = screen.getByRole("region", { name: "PiTrajectoryLedger" });
 
@@ -105,7 +119,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the Strip swimlanes and the Inspector states", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("PiTrajectoryStrip", "PiTrajectoryInspector");
 
     const strip = screen.getByRole("region", { name: "PiTrajectoryStrip" });
     expect(strip.querySelector('[data-slot="trajectory-strip"]')).toBeInTheDocument();
@@ -123,7 +137,7 @@ describe("Design components layer", () => {
   });
 
   it("shows all four ChatTool states", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatTool");
 
     const section = screen.getByRole("region", { name: "ChatTool" });
 
@@ -141,7 +155,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the chat heading scale against body copy", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatMarkdown");
 
     const section = screen.getByRole("region", { name: "ChatMarkdown" });
 
@@ -163,7 +177,7 @@ describe("Design components layer", () => {
   it("streams the markdown demo chunk by chunk and replays on demand", async () => {
     const user = userEvent.setup();
 
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatMarkdown");
 
     const section = screen.getByRole("region", { name: "ChatMarkdown" });
     const stream = within(section).getByTestId("stream-markdown-renderer");
@@ -190,7 +204,7 @@ describe("Design components layer", () => {
   }, 40_000);
 
   it("shows ChatToolGroup single and grouped variants", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatToolGroup");
 
     const section = screen.getByRole("region", { name: "ChatToolGroup" });
 
@@ -208,7 +222,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the prompt input across its status matrix", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatPromptInput");
 
     const section = screen.getByRole("region", { name: "ChatPromptInput" });
 
@@ -223,7 +237,7 @@ describe("Design components layer", () => {
   });
 
   it("renders the full icon set with export names as labels", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("Icons");
 
     const section = screen.getByRole("region", { name: "Icons" });
 
@@ -234,7 +248,7 @@ describe("Design components layer", () => {
 
 
   it("registers the composer insert menu and attachment drawer", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ComposerInsertMenu", "ComposerAttachmentDrawer");
 
     expect(
       screen.getByRole("region", { name: "ComposerInsertMenu" }),
@@ -254,7 +268,7 @@ describe("Design components layer", () => {
   // belongs to the surface — so the gallery has to show both bar shapes and
   // the instance strip's states, not just the panel.
   it("shows the headerless dock with the surface bar and instance strip states", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("SessionDock");
 
     const section = screen.getByRole("region", { name: "SessionDock" });
 
@@ -286,7 +300,7 @@ describe("Design components layer", () => {
   });
 
   it("demonstrates multiple, single, empty and loading Browser tabs", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("BrowserSurface");
     const section = screen.getByRole("region", { name: "BrowserSurface" });
     const strips = within(section).getAllByRole("tablist", { name: "Browser instances" });
     const counts = strips.map((strip) => within(strip).queryAllByRole("tab").length);
@@ -300,7 +314,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the BrowserSurface still that stands in for the native view", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("BrowserSurface");
 
     const section = screen.getByRole("region", { name: "BrowserSurface" });
 
@@ -329,7 +343,7 @@ describe("Design components layer", () => {
   });
 
   it("registers the ContextUsageMeter in every level it can reach", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ContextUsageMeter");
 
     const section = screen.getByRole("region", { name: "ContextUsageMeter" });
 
@@ -356,7 +370,7 @@ describe("Design components layer", () => {
   });
 
   it("registers the ModelSelectorControl with its variants", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ModelSelectorControl");
 
     const section = screen.getByRole("region", { name: "ModelSelectorControl" });
 
@@ -371,7 +385,7 @@ describe("Design components layer", () => {
   });
 
   it("shows persist actions on the settled assistant message", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatMessage");
 
     const section = screen.getByRole("region", { name: "ChatMessage" });
 
@@ -380,7 +394,7 @@ describe("Design components layer", () => {
   });
 
   it("shows every CoT phase and both settled disclosures", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatChainOfThought", "ChatThoughtMarkdown");
 
     const section = screen.getByRole("region", { name: "ChatChainOfThought" });
 
@@ -400,7 +414,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the CoT step rows live, settled, with and without a body", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatThoughtStep", "ChatToolStep", "ChatToolKindIcon");
 
     const thought = screen.getByRole("region", { name: "ChatThoughtStep" });
 
@@ -425,7 +439,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the motion atoms with their reduced-motion behaviour spelled out", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatPixelLoader", "ChatInlinePager", "ChatStatusLine");
 
     const loader = screen.getByRole("region", { name: "ChatPixelLoader" });
 
@@ -449,7 +463,7 @@ describe("Design components layer", () => {
   });
 
   it("shows the CoT block flat while live and folded once settled", () => {
-    render(<DesignComponentsLayer />);
+    renderGalleries("ChatChainOfThought");
 
     const section = screen.getByRole("region", { name: "ChatChainOfThought" });
 
