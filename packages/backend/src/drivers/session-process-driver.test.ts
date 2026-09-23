@@ -107,6 +107,14 @@ describe("Session process isolation", () => {
     expect(events.some(event => event.type === "error" && String(event.payload.body).includes("timed out"))).toBe(true);
   });
 
+  it("names the missing project directory instead of a spawn ENOENT, then starts once it exists", async () => {
+    const cwd = join(root, "deleted");
+    const input = { sessionId: "a", projectId: "a", cwd, piSessionId: "pi-a", sessionFile: "fixture.jsonl" };
+    await expect(driver.resumeSession(input)).rejects.toThrow(`Project directory does not exist: ${cwd}`);
+    await mkdir(cwd);
+    expect((await driver.resumeSession(input)).cwd).toBe(cwd);
+  });
+
   it("returns the failed Session snapshot when the process exits during a snapshot query", async () => {
     const a = await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
     await driver.sendPrompt({ piSessionId: a.piSessionId, prompt: "hold-snapshot" });
