@@ -96,15 +96,15 @@ describe("createPaceModelRuntime", () => {
   it("shows account models the Pi catalog does not know yet", async () => {
     const { agentDir, dataDir } = await setup({
       cache: cacheFor([
-        { id: "gpt-6-sol", name: "GPT-6-Sol", contextWindow: 400_000 },
+        { id: "gpt-99-unreleased", name: "GPT-99-Unreleased", contextWindow: 400_000 },
       ]),
     });
 
     const runtime = await createPaceModelRuntime({ agentDir, dataDir });
-    const model = runtime.getModel("openai-codex", "gpt-6-sol");
+    const model = runtime.getModel("openai-codex", "gpt-99-unreleased");
 
-    expect(codexIds(runtime)).toEqual(["gpt-6-sol"]);
-    expect(model).toMatchObject({ name: "GPT-6-Sol", contextWindow: 400_000 });
+    expect(codexIds(runtime)).toEqual(["gpt-99-unreleased"]);
+    expect(model).toMatchObject({ name: "GPT-99-Unreleased", contextWindow: 400_000 });
     // Borrowed from a catalog sibling so the model can actually stream.
     expect(model?.api).toBe(runtime.getModel("openai-codex", "gpt-5.5")?.api ?? model?.api);
     expect(model?.baseUrl).toBeTruthy();
