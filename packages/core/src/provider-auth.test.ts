@@ -44,6 +44,18 @@ describe("classifyProviderFailure", () => {
     expect(classifyProviderFailure("Invalid or unknown refresh token")).toBe("auth");
   });
 
+  it("treats a connectivity failure during an OAuth refresh as network, not a dead token", () => {
+    expect(describeProviderFailure("OAuth refresh failed for xai: fetch failed")).toMatchObject({
+      kind: "network",
+      message: "Network error",
+    });
+    expect(
+      classifyProviderFailure(
+        Object.assign(new Error("OAuth refresh failed for xai"), { code: "ECONNRESET" }),
+      ),
+    ).toBe("network");
+  });
+
   it("tells an OAuth user to sign in again but keeps the API-key label", () => {
     expect(
       describeProviderFailure(

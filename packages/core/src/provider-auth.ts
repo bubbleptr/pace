@@ -176,13 +176,15 @@ function kindFromDetail(detail: ProviderFailureDetail): ProviderFailureKind {
   if (detail.status === 401 || /\b401\b/.test(detail.message)) return "auth";
   if (detail.status === 403 || /\b403\b/.test(detail.message)) return "entitlement";
   if (/\b(?:plan|subscription|entitlement)\b/i.test(detail.message)) return "entitlement";
+  // Network before auth prose: a refresh that never reached the provider
+  // ("OAuth refresh failed ...: fetch failed") needs connectivity, not a new login.
+  if (detail.networkCode || RESOLVED_NETWORK_MESSAGE.test(detail.message)) return "network";
   if (
     /invalid.?api.?key|authentication_error|unauthorized/i.test(detail.message) ||
     OAUTH_REFRESH_FAILURE.test(detail.message)
   ) {
     return "auth";
   }
-  if (detail.networkCode || RESOLVED_NETWORK_MESSAGE.test(detail.message)) return "network";
   return "unknown";
 }
 
