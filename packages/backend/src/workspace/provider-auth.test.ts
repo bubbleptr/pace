@@ -8,15 +8,25 @@ import {
   createProviderAuthService,
   type ProviderAuthRuntime,
 } from "./provider-auth";
+import { createPaceModelRuntime } from "./account-models";
 
 async function tempAgentDir() {
   return mkdtemp(join(tmpdir(), "pigui-provider-auth-"));
 }
 
+/** Production wiring: one lazily created Pace runtime for the service's life. */
+function realRuntimeService(agentDir: string) {
+  let runtime: ReturnType<typeof createPaceModelRuntime> | undefined;
+  return createProviderAuthService({
+    agentDir,
+    runtime: () => (runtime ??= createPaceModelRuntime({ agentDir, dataDir: agentDir })),
+  });
+}
+
 describe("provider auth service", () => {
   it("lists every runtime provider including Radius and Codex auth shapes", async () => {
     const agentDir = await tempAgentDir();
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
@@ -51,7 +61,7 @@ describe("provider auth service", () => {
       }),
       "utf8",
     );
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
 
     const report = await service.listStatus();
     const codex = report.providers.find((provider) => provider.id === "openai-codex");
@@ -69,7 +79,7 @@ describe("provider auth service", () => {
 
   it("sets an API key and returns a masked hint without the full secret", async () => {
     const agentDir = await tempAgentDir();
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
 
     const report = await service.setApiKey("deepseek", "sk-secret-key-ae1d");
 
@@ -89,7 +99,7 @@ describe("provider auth service", () => {
 
   it("removes a provider credential", async () => {
     const agentDir = await tempAgentDir();
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
     await service.setApiKey("openai", "sk-openai-1234");
 
     const report = await service.remove("openai");
@@ -102,14 +112,14 @@ describe("provider auth service", () => {
 
   it("rejects empty API keys", async () => {
     const agentDir = await tempAgentDir();
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
 
     await expect(service.setApiKey("openai", "   ")).rejects.toThrow(/empty/i);
   });
 
   it("rejects API keys when Pi reports the provider as oauth-only", async () => {
     const agentDir = await tempAgentDir();
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
 
     await expect(service.setApiKey("openai-codex", "sk-not-a-key")).rejects.toThrow(
       /does not support API keys/i,
@@ -147,8 +157,7 @@ describe("provider auth service", () => {
     };
     const service = createProviderAuthService({
       agentDir,
-      dataDir: agentDir,
-      createRuntime: async () => runtime,
+      runtime: async () => runtime,
     });
 
     await service.loginOAuth("openai-codex");
@@ -170,7 +179,7 @@ describe("provider auth service", () => {
       }),
       "utf8",
     );
-    const service = createProviderAuthService({ agentDir, dataDir: agentDir });
+    const service = realRuntimeService(agentDir);
 
     const report = await service.listStatus();
     const xai = report.providers.find((provider) => provider.id === "xai");
@@ -215,11 +224,10 @@ describe("provider auth service", () => {
     };
     const service = createProviderAuthService({
       agentDir,
-      dataDir: agentDir,
       openExternalUrl: (url) => {
         opened.push(url);
       },
-      createRuntime: async () => runtime,
+      runtime: async () => runtime,
     });
 
     await service.loginOAuth("xai");
@@ -275,9 +283,8 @@ async function connectionRuntime(
   }
   return createProviderAuthService({
     agentDir,
-    dataDir: agentDir,
     connectionTestTimeoutMs: options?.timeoutMs,
-    createRuntime: async () => runtime,
+    runtime: async () => runtime,
   });
 }
 

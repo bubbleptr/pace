@@ -3,7 +3,6 @@ import { realpathSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBackendService } from "./service";
 import {
@@ -265,30 +264,40 @@ describe("backend service", () => {
     });
   });
 
-  it("broadcasts a model-catalog refresh after credential changes and still returns the auth result when refresh fails", async () => {
+  it("routes credential and catalog commands through the model catalog", async () => {
     const report = {
       agentDir: "/tmp/agent",
       authPath: "/tmp/agent/auth.json",
       providers: [],
       configuredCount: 1,
     };
+    const calls: string[] = [];
+    const credentialWrite = (name: string) =>
+      vi.fn(async () => {
+        calls.push(name);
+        return report;
+      });
     const providerAuth = {
       listStatus: vi.fn(async () => report),
-      setApiKey: vi.fn(async () => report),
-      remove: vi.fn(async () => report),
-      loginOAuth: vi.fn(async () => report),
-      logout: vi.fn(async () => report),
+      setApiKey: credentialWrite("setApiKey"),
+      remove: credentialWrite("remove"),
+      loginOAuth: credentialWrite("loginOAuth"),
+      logout: credentialWrite("logout"),
       testConnection: vi.fn(async () => ({ ok: true as const, modelId: "gpt-5.5", latencyMs: 1 })),
     };
-    const refreshModelCatalog = vi.fn(async () => {});
-    const runtimeDriver = {
-      refreshModelCatalog,
-      onEvent: vi.fn(() => () => {}),
-    } as unknown as PiRuntimeDriver;
+    const controls = { models: [], selected: null };
+    const modelCatalog = {
+      list: vi.fn(async () => controls),
+      refresh: vi.fn(async () => ({ offline: true as const })),
+      onCredentialChanged: vi.fn(async () => {
+        calls.push("onCredentialChanged");
+      }),
+      subscribe: vi.fn(() => () => {}),
+    };
     const service = createBackendService({
       agentDir: fixtureAgentDir(),
       providerAuth,
-      runtimeDriver,
+      modelCatalog,
       runtimeJournal: createInMemorySessionEventJournal(),
       sessionProjectionStore: createInMemorySessionProjectionStore(),
     });
@@ -306,189 +315,24 @@ describe("backend service", () => {
       });
     }
 
-    expect(refreshModelCatalog).toHaveBeenCalledTimes(4);
-    expect(refreshModelCatalog).toHaveBeenNthCalledWith(1);
-    expect(providerAuth.setApiKey).toHaveBeenCalledWith("openai", "sk-test");
-    expect(providerAuth.remove).toHaveBeenCalledWith("openai");
-    expect(providerAuth.loginOAuth).toHaveBeenCalledWith("anthropic");
-    expect(providerAuth.logout).toHaveBeenCalledWith("anthropic");
-
-    refreshModelCatalog.mockRejectedValueOnce(new Error("session process is gone"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Every credential write, including remove and logout, refreshes the catalog after it lands.
+    expect(calls).toEqual([
+      "setApiKey",
+      "onCredentialChanged",
+      "remove",
+      "onCredentialChanged",
+      "loginOAuth",
+      "onCredentialChanged",
+      "logout",
+      "onCredentialChanged",
+    ]);
     await expect(
-      service.handleRequest({
-        id: "logout-again",
-        method: "logout_provider_auth",
-        params: { providerId: "anthropic" },
-      }),
-    ).resolves.toEqual({ id: "logout-again", result: report });
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
-
-  it("returns the credential report when one live catalog refresh never settles", async () => {
-    const report = {
-      agentDir: "/tmp/agent",
-      authPath: "/tmp/agent/auth.json",
-      providers: [],
-      configuredCount: 1,
-    };
-    let healthyFinished = false;
-    const refreshModelCatalog = vi.fn(() => {
-      const healthy = Promise.resolve().then(() => {
-        healthyFinished = true;
-      });
-      const hung = new Promise<void>(() => {});
-      return Promise.all([healthy, hung]).then(() => undefined);
-    });
-    const service = createBackendService({
-      agentDir: fixtureAgentDir(),
-      providerAuth: {
-        listStatus: vi.fn(async () => report),
-        setApiKey: vi.fn(async () => report),
-        remove: vi.fn(async () => report),
-        loginOAuth: vi.fn(async () => report),
-        logout: vi.fn(async () => report),
-        testConnection: vi.fn(async () => ({ ok: true as const, modelId: "gpt-5.5", latencyMs: 1 })),
-      },
-      runtimeDriver: {
-        refreshModelCatalog,
-        onEvent: vi.fn(() => () => {}),
-      } as unknown as PiRuntimeDriver,
-      runtimeJournal: createInMemorySessionEventJournal(),
-      sessionProjectionStore: createInMemorySessionProjectionStore(),
-    });
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const pending = service.handleRequest({
-        id: "set-key",
-        method: "set_provider_api_key",
-        // A provider without an account model list, so only the live refresh runs.
-        params: { providerId: "xai", apiKey: "sk-test" },
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(healthyFinished).toBe(true);
-      await vi.advanceTimersByTimeAsync(4_999);
-      let settled = false;
-      void pending.then(() => {
-        settled = true;
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(pending).resolves.toEqual({ id: "set-key", result: report });
-      expect(errorSpy).toHaveBeenCalledWith(
-        "Pace could not refresh live session model catalogs.",
-        expect.objectContaining({ message: expect.stringContaining("timed out") }),
-      );
-    } finally {
-      errorSpy.mockRestore();
-      vi.useRealTimers();
-    }
-  });
-
-  it("refreshes the model catalog over the network and updates live sessions", async () => {
-    const refreshModelCatalog = vi.fn(async () => {});
-    const service = createBackendService({
-      agentDir: fixtureAgentDir(),
-      runtimeDriver: {
-        refreshModelCatalog,
-        onEvent: vi.fn(() => () => {}),
-      } as unknown as PiRuntimeDriver,
-      runtimeJournal: createInMemorySessionEventJournal(),
-      sessionProjectionStore: createInMemorySessionProjectionStore(),
-    });
-    const refresh = vi.fn(async () => ({ aborted: false, errors: new Map() }));
-    vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
-      refresh,
-      getAvailableSnapshot: () => [],
-      getProvider: () => undefined,
-    }) as unknown as ModelRuntime);
-
+      service.handleRequest({ id: "list", method: "list_available_model_controls" }),
+    ).resolves.toEqual({ id: "list", result: controls });
     await expect(
-      service.handleRequest({
-        id: "refresh-models",
-        method: "refresh_model_catalog",
-        params: { force: true },
-      }),
-    ).resolves.toEqual({
-      id: "refresh-models",
-      result: {
-        refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-        errors: {},
-      },
-    });
-    expect(refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true });
-    expect(refreshModelCatalog).toHaveBeenCalledOnce();
-  });
-
-  it("returns a provider refresh error and still updates live sessions", async () => {
-    const refreshModelCatalog = vi.fn(async () => {});
-    const service = createBackendService({
-      agentDir: fixtureAgentDir(),
-      runtimeDriver: {
-        refreshModelCatalog,
-        onEvent: vi.fn(() => () => {}),
-      } as unknown as PiRuntimeDriver,
-      runtimeJournal: createInMemorySessionEventJournal(),
-      sessionProjectionStore: createInMemorySessionProjectionStore(),
-    });
-    vi.spyOn(ModelRuntime, "create").mockImplementation(async () => ({
-      refresh: vi.fn(async () => ({
-        aborted: false,
-        errors: new Map([["xai", new Error("catalog unavailable")]]),
-      })),
-      getAvailableSnapshot: () => [],
-      getProvider: () => undefined,
-    }) as unknown as ModelRuntime);
-
-    await expect(
-      service.handleRequest({
-        id: "refresh-partial",
-        method: "refresh_model_catalog",
-        params: { force: true },
-      }),
-    ).resolves.toEqual({
-      id: "refresh-partial",
-      result: {
-        refreshedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-        errors: { xai: "catalog unavailable" },
-      },
-    });
-    expect(refreshModelCatalog).toHaveBeenCalledOnce();
-  });
-
-  it("does not refresh the catalog or live sessions when PI_OFFLINE is set", async () => {
-    vi.stubEnv("PI_OFFLINE", "1");
-    const refreshModelCatalog = vi.fn(async () => {});
-    const create = vi.spyOn(ModelRuntime, "create");
-    const service = createBackendService({
-      agentDir: fixtureAgentDir(),
-      runtimeDriver: {
-        refreshModelCatalog,
-        onEvent: vi.fn(() => () => {}),
-      } as unknown as PiRuntimeDriver,
-      runtimeJournal: createInMemorySessionEventJournal(),
-      sessionProjectionStore: createInMemorySessionProjectionStore(),
-    });
-
-    try {
-      await expect(
-        service.handleRequest({
-          id: "refresh-offline",
-          method: "refresh_model_catalog",
-          params: { force: true },
-        }),
-      ).resolves.toEqual({
-        id: "refresh-offline",
-        result: { offline: true },
-      });
-      expect(create).not.toHaveBeenCalled();
-      expect(refreshModelCatalog).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-    }
+      service.handleRequest({ id: "refresh", method: "refresh_model_catalog", params: { force: true } }),
+    ).resolves.toEqual({ id: "refresh", result: { offline: true } });
+    expect(modelCatalog.refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true });
   });
 
   it("routes tool schema resolution through the Runtime Gateway", async () => {
