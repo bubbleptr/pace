@@ -265,7 +265,7 @@ Pace 自带的 Surface：Changes、Files、Terminal、Browser。它们与将来�
 _Avoid_: Core panel, native panel, first-party plugin
 
 **Session Projection**:
-Pace 自己保存的查询模型，用来支撑 Session 列表、Analyze、状态索引、成本聚合、checkout 生命周期、恢复入口和 UI 快速渲染。它是从 Pi Session State、Session Trajectory 和 Pace checkout 管理事件同步出来的投影，不是 Pi 会话内容的权威来源。
+Pace 自己保存的查询模型，用来支撑 Session 列表、Analyze、状态索引、成本聚合、checkout 生命周期、恢复入口和 UI 快速渲染。它是从 Pi Session State、Session Trajectory 和 Pace checkout 管理事件同步出来的投影，不是 Pi 会话内容的权威来源。渲染层每个 Session 只保留一份，由一个 module 拥有并作为唯一写者（ADR-0044）。
 _Avoid_: Runtime truth, independent chat state, source of record
 
 **Task**:
