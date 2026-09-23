@@ -177,7 +177,7 @@ _Avoid_: AI Gateway, Pi SDK API, Pi RPC protocol, renderer bridge
 _Avoid_: Runtime, agent, workspace
 
 **Model Catalog**:
-Pace 后端唯一拥有「当前有哪些 Model 可用、各自的 capability（thinking 档位等）」这个事实的 module。它持有唯一的 Pi ModelRuntime，统一从 Pi 注册表映射 capability，决定凭证变化后的刷新策略，并把刷新扇出到运行中的 Session。Settings、Session Draft 的 composer 和 Live Session View 都只读它；capability 只即时发现不持久化（ADR-0024），变化以全局失效信号通知（同 ADR-0038 模式，ADR-0043）。
+Pace 后端唯一拥有「当前有哪些 Model 可用、各自的 capability（thinking 档位等）」这个事实的 module。它持有主进程内唯一的 Pace ModelRuntime（对 Pi ModelRuntime 的包装；每个 Session 进程仍有自己的实例，ADR-0040），统一从 Pi 注册表映射 capability，决定凭证变化后的刷新策略，并把刷新扇出到运行中的 Session。Settings、Session Draft 的 composer 和 Live Session View 都只读它；capability 只即时发现不持久化（ADR-0024），变化以全局失效信号通知（同 ADR-0038 模式，ADR-0043）。
 _Avoid_: Model list, model registry (that is Pi's), provider status (that is provider auth's), per-session catalog
 
 **Agent Run**:
