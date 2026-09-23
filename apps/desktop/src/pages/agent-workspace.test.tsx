@@ -43,10 +43,7 @@ import {
 } from "@/entities/runtime/in-memory-pi-runtime-bridge";
 import { createExecutionCheckoutManager } from "@/entities/checkout/execution-checkout";
 import * as checkoutClientModule from "@/entities/checkout/execution-checkout-client";
-import {
-  createInMemorySessionProjectionStore,
-  createSessionFromDraft,
-} from "@/entities/session/session-creation";
+import { createSessionFromDraft } from "@/entities/session/session-creation";
 import {
   applySessionProjectionEvent,
   createSessionProjection,
@@ -1864,7 +1861,6 @@ describe("AgentWorkspaceSessionsPage", () => {
             bridge: createInMemoryPiRuntimeBridge({
               now: () => "2026-06-26T08:00:03.000Z",
             }),
-            projections: createInMemorySessionProjectionStore(),
             idFactory: () => "session-base-branch",
             now: () => "2026-06-26T08:00:00.000Z",
           }),
@@ -1964,7 +1960,6 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     it("keeps the draft Location and branch while the Session is being created", async () => {
       const user = userEvent.setup();
-      const projections = createInMemorySessionProjectionStore();
       const loadProjectGitSummary = projectGitLoader("main", ["main"]);
       saveSessionDraft("pig-docs", "Carry the Location row over");
 
@@ -1980,7 +1975,6 @@ describe("AgentWorkspaceSessionsPage", () => {
               bridge: createInMemoryPiRuntimeBridge({
                 now: () => "2026-06-26T08:00:03.000Z",
               }),
-              projections,
               idFactory: () => "session-location-row",
               now: () => "2026-06-26T08:00:00.000Z",
             })
@@ -5620,7 +5614,6 @@ describe("AgentWorkspaceSessionsPage", () => {
   it("submits the draft through Session Creation, clears the draft, and shows the first runtime event", async () => {
     const user = userEvent.setup();
     const onDraftSubmit = vi.fn();
-    const projections = createInMemorySessionProjectionStore();
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
     render(
@@ -5653,7 +5646,6 @@ describe("AgentWorkspaceSessionsPage", () => {
             bridge: createInMemoryPiRuntimeBridge({
               now: () => "2026-06-26T08:00:03.000Z",
             }),
-            projections,
             idFactory: () => "session-created",
             now: () => "2026-06-26T08:00:00.000Z",
           })
@@ -6415,7 +6407,6 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   it("keeps draft text visible and shows failure detail when Session Creation fails", async () => {
     const user = userEvent.setup();
-    const projections = createInMemorySessionProjectionStore();
     const onSessionCreated = vi.fn();
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
@@ -6450,7 +6441,6 @@ describe("AgentWorkspaceSessionsPage", () => {
               failAt: "send-initial-prompt",
               failureMessage: "Pi rejected the initial prompt",
             }),
-            projections,
             idFactory: () => "session-failed",
             now: () => "2026-06-26T08:00:00.000Z",
           })

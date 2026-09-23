@@ -132,7 +132,6 @@ import {
 } from "@/entities/session/session-runtime-model";
 import { deriveCotView, type CotStep, type CotView } from "@/entities/session/cot-view";
 import {
-  createInMemorySessionProjectionStore,
   createSessionFromDraft,
   prepareChatSessionCheckout,
   type CreateSessionFromDraftInput,
@@ -193,6 +192,10 @@ import {
   useSessionProjections,
   useSessionProjectionsOptional,
 } from "@/entities/session/use-session-projections";
+import {
+  createSessionProjectionsStore,
+  type SessionProjectionsStore,
+} from "@/entities/session/session-projections-store";
 
 
 type LiveMessage = {
@@ -280,10 +283,7 @@ export type SessionDraftSubmitEvent = {
   images?: RuntimePromptImage[];
 };
 
-type SessionCreatorInput = Omit<
-  CreateSessionFromDraftInput,
-  "bridge" | "projections"
->;
+type SessionCreatorInput = Omit<CreateSessionFromDraftInput, "bridge">;
 
 type SessionCreator = (
   input: SessionCreatorInput,
@@ -3123,6 +3123,7 @@ function LiveSessionColumn({
   sessionCreator,
   checkoutManager,
   getRuntimeBridge,
+  projectionsStore,
   recommendedCheckoutMode,
   sessionProjection,
   sessionChanges,
@@ -3146,6 +3147,7 @@ function LiveSessionColumn({
   sessionCreator: SessionCreator;
   checkoutManager: ExecutionCheckoutManager;
   getRuntimeBridge: () => PiRuntimeBridge;
+  projectionsStore: SessionProjectionsStore;
   recommendedCheckoutMode: SessionDraftCheckoutMode;
   sessionProjection?: SessionProjection | null;
   sessionChanges?: SessionChangesView;
@@ -3536,6 +3538,7 @@ function LiveSessionColumn({
         : checkoutModeToExecutionMode(event.checkoutMode),
       ...(event.modelSelection ? { modelSelection: event.modelSelection } : {}),
       ...(event.images?.length ? { images: event.images } : {}),
+      store: projectionsStore,
       onProjectionChange: (projection) => {
         const isStarting = !creationStarted;
         // Runtime subscriptions outlive creation. Once navigation clears the
@@ -4091,12 +4094,16 @@ function LiveSessionColumn({
       : usingRegistryProjects
         ? undefined
         : workspace.repoRoot;
-    let forkProjection = createSessionProjection({
-      id: forkSessionId,
-      projectId: targetProject.id,
-      initialPrompt: message.body,
-      createdAt: now(),
-    });
+    // Creation steps go through the store so it subscribes to the forked
+    // Session's runtime on `runtime-bound`, like a Session created from a draft.
+    let forkProjection = projectionsStore.insert(
+      createSessionProjection({
+        id: forkSessionId,
+        projectId: targetProject.id,
+        initialPrompt: message.body,
+        createdAt: now(),
+      }),
+    );
     const commitForkProjection = (nextProjection: SessionProjection) => {
       forkProjection = nextProjection;
       commitInteractionProjection(nextProjection, { follow: true });
@@ -4127,7 +4134,7 @@ function LiveSessionColumn({
           });
 
       commitForkProjection(
-        applySessionProjectionEvent(forkProjection, {
+        projectionsStore.apply(forkSessionId, {
           type: "checkout-selected",
           stage: "preparing checkout",
           checkout,
@@ -4150,7 +4157,7 @@ function LiveSessionColumn({
         saveFollowUpDraft(forkSessionId, selectedText);
       }
 
-      forkProjection = applySessionProjectionEvent(forkProjection, {
+      forkProjection = projectionsStore.apply(forkSessionId, {
         type: "runtime-bound",
         stage: "starting runtime",
         runtimeId: fork.state.runtimeId,
@@ -4160,7 +4167,7 @@ function LiveSessionColumn({
         followUpMode: fork.state.followUpMode,
         occurredAt: now(),
       });
-      forkProjection = applySessionProjectionEvent(forkProjection, {
+      forkProjection = projectionsStore.apply(forkSessionId, {
         type: "runtime-state-resynced",
         state: fork.state,
       });
@@ -4171,7 +4178,7 @@ function LiveSessionColumn({
       });
     } catch (error) {
       commitForkProjection(
-        applySessionProjectionEvent(forkProjection, {
+        projectionsStore.apply(forkSessionId, {
           type: "creation-failed",
           stage:
             error instanceof PiRuntimeBridgeError &&
@@ -4447,9 +4454,16 @@ export function AgentWorkspaceSessionsView({
   const getActiveRuntimeBridge = runtimeBridge
     ? () => runtimeBridge
     : getDefaultRuntimeBridge;
-  const [defaultProjectionStore] = useState(() =>
-    createInMemorySessionProjectionStore(),
+  const sessionProjectionsContext = useSessionProjectionsOptional();
+  // Views rendered without the app provider (isolated view tests) still need
+  // a store for creation and fork to write through.
+  const [fallbackProjectionsStore] = useState(() =>
+    createSessionProjectionsStore({
+      bridge: getActiveRuntimeBridge(),
+      listSessions: async () => [],
+    }),
   );
+  const projectionsStore = sessionProjectionsContext?.store ?? fallbackProjectionsStore;
   const [defaultCheckoutManager] = useState(() =>
     createExecutionCheckoutManager({
       gitClient: createInvokeExecutionCheckoutGitClient(),
@@ -4462,7 +4476,6 @@ export function AgentWorkspaceSessionsView({
       bridge: getActiveRuntimeBridge(),
       checkoutManager: activeCheckoutManager,
       executionMode: input.executionMode ?? "foreground",
-      projections: defaultProjectionStore,
     });
   const liveSession = (
     <LiveSessionColumn
@@ -4476,6 +4489,7 @@ export function AgentWorkspaceSessionsView({
       sessionCreator={sessionCreator ?? defaultSessionCreator}
       checkoutManager={activeCheckoutManager}
       getRuntimeBridge={getActiveRuntimeBridge}
+      projectionsStore={projectionsStore}
       recommendedCheckoutMode="local"
       sessionProjection={sessionProjection}
       sessionChanges={sessionChanges}
@@ -4635,12 +4649,12 @@ export function AgentWorkspaceSessionsPage() {
   const [registryProjects, setRegistryProjects] = useState(() =>
     getVisibleProjectRegistry(),
   );
-  const [runtimeBridge] = useState(() => createDefaultPiRuntimeBridge());
   const {
     sessionProjections,
     sessionsHydrated,
     backendGeneration,
-    setSessionProjections,
+    store: projectionsStore,
+    runtimeBridge,
   } = useSessionProjections();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
@@ -4650,10 +4664,14 @@ export function AgentWorkspaceSessionsPage() {
       return;
     }
 
-    setSessionProjections((current) =>
-      current.length > 0 ? current : defaultSidebarProjectSessionProjections,
-    );
-  }, [browserDevelopmentData, setSessionProjections]);
+    if (projectionsStore.list().length > 0) {
+      return;
+    }
+    // `insert` puts each Session first; reverse to keep the fixture order.
+    for (const projection of [...defaultSidebarProjectSessionProjections].reverse()) {
+      projectionsStore.insert(projection);
+    }
+  }, [browserDevelopmentData, projectionsStore]);
   // Shell count for the Terminal rail badge, reported up by the Terminal
   // surface while it is mounted; reset per Session below.
   const [terminalInstanceCount, setTerminalInstanceCount] = useState(0);
@@ -4776,31 +4794,13 @@ export function AgentWorkspaceSessionsPage() {
   // view), so this must never move the selection. Selection changes are
   // explicit: sidebar clicks, the first-session fallback, and Session takeovers.
   const handleProjectionChange = (nextProjection: SessionProjection) => {
-    setSessionProjections((projections) => {
-      const projectionExists = projections.some(
-        (projection) => projection.id === nextProjection.id,
-      );
-
-      if (!projectionExists) {
-        return [nextProjection, ...projections];
-      }
-
-      return projections.map((projection) =>
-        projection.id === nextProjection.id ? nextProjection : projection,
-      );
-    });
+    projectionsStore.save(nextProjection);
   };
   const handleLatestMessageRendered = (sessionId: string) => {
-    setSessionProjections((projections) =>
-      projections.map((projection) =>
-        projection.id === sessionId
-          ? applySessionProjectionEvent(projection, {
-              type: "latest-message-rendered",
-              occurredAt: new Date().toISOString(),
-            })
-          : projection,
-      ),
-    );
+    projectionsStore.apply(sessionId, {
+      type: "latest-message-rendered",
+      occurredAt: new Date().toISOString(),
+    });
   };
   // The Live Session takes over as soon as the `creating` projection exists:
   // waiting for Pi to accept the prompt left the draft on screen for as long

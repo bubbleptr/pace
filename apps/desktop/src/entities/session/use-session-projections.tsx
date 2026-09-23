@@ -5,9 +5,8 @@ import {
   useEffect,
   useMemo,
   useState,
-  type Dispatch,
+  useSyncExternalStore,
   type ReactNode,
-  type SetStateAction,
 } from "react";
 import type { PersistedSessionProjection } from "@pace/backend";
 import { onBackendEvent } from "@/shared/runtime";
@@ -15,11 +14,18 @@ import { shouldUseBrowserDevelopmentData } from "@/shared/browser-development-da
 import {
   defaultRuntimeSummary,
   type ExecutionCheckout,
+  type PiRuntimeBridge,
 } from "@/entities/runtime/pi-runtime-bridge";
+import { createDefaultPiRuntimeBridge } from "@/entities/runtime/pi-runtime-factory";
 import {
   createSessionProjection,
   type SessionProjection,
+  type SessionProjectionEvent,
 } from "@/entities/session/session-projection";
+import {
+  createSessionProjectionsStore,
+  type SessionProjectionsStore,
+} from "@/entities/session/session-projections-store";
 import { listSessionProjections } from "@/entities/session/sessions";
 
 function sessionStatusFromPersistedProjection(
@@ -93,46 +99,50 @@ type SessionProjectionsContextValue = {
   sessionProjections: SessionProjection[];
   sessionsHydrated: boolean;
   backendGeneration: number;
-  setSessionProjections: Dispatch<SetStateAction<SessionProjection[]>>;
-  refreshSessionProjections: () => Promise<void>;
+  store: SessionProjectionsStore;
+  // The store subscribes on this bridge, so Sessions created or forked on the
+  // page must go through the same instance.
+  runtimeBridge: PiRuntimeBridge;
 };
 
 const SessionProjectionsContext = createContext<SessionProjectionsContextValue | null>(
   null,
 );
 
+// The store never changes identity, so readers of one Session subscribe
+// through this context without re-rendering on every list change.
+const SessionProjectionsStoreContext = createContext<SessionProjectionsStore | null>(null);
+
 const retryDelaysMs = [0, 150, 300, 600, 1200, 2000, 3000, 4000];
 
-export function SessionProjectionsProvider({ children }: { children: ReactNode }) {
+export function SessionProjectionsProvider({
+  children,
+  bridge,
+}: {
+  children: ReactNode;
+  bridge?: PiRuntimeBridge;
+}) {
   const browserDevelopmentData = useMemo(() => shouldUseBrowserDevelopmentData(), []);
-  const [sessionProjections, setSessionProjections] = useState<SessionProjection[]>(
-    [],
+  const [runtimeBridge] = useState(() => bridge ?? createDefaultPiRuntimeBridge());
+  const [store] = useState(() =>
+    createSessionProjectionsStore({
+      bridge: runtimeBridge,
+      listSessions: async () =>
+        (await listSessionProjections()).map(sessionProjectionFromPersistedProjection),
+    }),
   );
+  const sessionProjections = useSyncExternalStore(store.subscribe, store.list);
   const [sessionsHydrated, setSessionsHydrated] = useState(
     () => browserDevelopmentData,
   );
   const [backendGeneration, setBackendGeneration] = useState(0);
-
-  const refreshSessionProjections = useCallback(async () => {
-    if (browserDevelopmentData) {
-      setSessionsHydrated(true);
-      return;
-    }
-
-    const records = await listSessionProjections();
-    setSessionProjections(records.map(sessionProjectionFromPersistedProjection));
-    setSessionsHydrated(true);
-  }, [browserDevelopmentData]);
 
   useEffect(
     () =>
       onBackendEvent((event) => {
         const payload = event.event.payload;
         if (payload.type === "session_info_changed" && typeof payload.name === "string") {
-          const sessionName = payload.name.trim();
-          setSessionProjections(current => current.map(session =>
-            session.id === event.event.sessionId ? { ...session, sessionName } : session,
-          ));
+          store.rename(event.event.sessionId, { sessionName: payload.name.trim() });
         }
         if (
           event.event.sessionId === "__backend__" &&
@@ -141,10 +151,11 @@ export function SessionProjectionsProvider({ children }: { children: ReactNode }
           setBackendGeneration((generation) => generation + 1);
         }
       }),
-    [],
+    [store],
   );
 
   useEffect(() => {
+    // Browser fixtures have no backend list; rehydrating would wipe them.
     if (browserDevelopmentData) {
       setSessionsHydrated(true);
       return;
@@ -170,7 +181,8 @@ export function SessionProjectionsProvider({ children }: { children: ReactNode }
         }
 
         try {
-          await refreshSessionProjections();
+          await store.rehydrate();
+          setSessionsHydrated(true);
           return;
         } catch {
           // Keep prior list; retry. Never wipe to [] on transient errors.
@@ -185,28 +197,25 @@ export function SessionProjectionsProvider({ children }: { children: ReactNode }
     return () => {
       cancelled = true;
     };
-  }, [backendGeneration, browserDevelopmentData, refreshSessionProjections]);
+  }, [backendGeneration, browserDevelopmentData, store]);
 
   const value = useMemo(
     () => ({
       sessionProjections,
       sessionsHydrated,
       backendGeneration,
-      setSessionProjections,
-      refreshSessionProjections,
+      store,
+      runtimeBridge,
     }),
-    [
-      backendGeneration,
-      refreshSessionProjections,
-      sessionProjections,
-      sessionsHydrated,
-    ],
+    [backendGeneration, runtimeBridge, sessionProjections, sessionsHydrated, store],
   );
 
   return (
-    <SessionProjectionsContext.Provider value={value}>
-      {children}
-    </SessionProjectionsContext.Provider>
+    <SessionProjectionsStoreContext.Provider value={store}>
+      <SessionProjectionsContext.Provider value={value}>
+        {children}
+      </SessionProjectionsContext.Provider>
+    </SessionProjectionsStoreContext.Provider>
   );
 }
 
@@ -223,4 +232,24 @@ export function useSessionProjections() {
 /** Safe for tests / pages that may render AppFrame without the provider. */
 export function useSessionProjectionsOptional(): SessionProjectionsContextValue | null {
   return useContext(SessionProjectionsContext);
+}
+
+/**
+ * One Session's projection. Selecting by id keeps other Sessions' events from
+ * re-rendering the Live Session View.
+ */
+export function useLiveSession(sessionId: string) {
+  const store = useContext(SessionProjectionsStoreContext);
+
+  if (!store) {
+    throw new Error("useLiveSession requires SessionProjectionsProvider");
+  }
+
+  const projection = useSyncExternalStore(store.subscribe, () => store.get(sessionId));
+  const apply = useCallback(
+    (event: SessionProjectionEvent) => store.apply(sessionId, event),
+    [sessionId, store],
+  );
+
+  return { projection, apply };
 }

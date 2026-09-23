@@ -13,7 +13,8 @@ import { createInMemorySessionProjectionStore } from "../persistence/session-pro
 import { createPiSdkDriver } from "../drivers/pi-sdk-driver";
 import { createPublicPiSdkRuntimeFactory, createPublicPiSdkRuntimeResumer } from "../drivers/pi-sdk-runtime-adapter";
 import { createRuntimeGatewayClient } from "@/entities/runtime/runtime-gateway-client";
-import { createSessionFromDraft, createInMemorySessionProjectionStore as createDraftProjectionStore } from "@/entities/session/session-creation";
+import { createSessionFromDraft } from "@/entities/session/session-creation";
+import { createSessionProjectionsStore } from "@/entities/session/session-projections-store";
 
 let defaultDataDir: string;
 beforeEach(async () => {
@@ -438,8 +439,9 @@ describe("Runtime Gateway service", () => {
       },
       onBackendEvent: listener => gateway.onEvent(listener),
     });
+    const store = createSessionProjectionsStore({ bridge, listSessions: async () => [] });
     const result = await createSessionFromDraft({
-      bridge, projections: createDraftProjectionStore(), modelSelection: selection,
+      bridge, store, modelSelection: selection,
       draft: { projectId: "p", prompt: "Hello", updatedAt: "2026-09-16T00:00:00.000Z" },
       project: { id: "p", projectRoot: "/repo" }, idFactory: () => "app-composer",
     });
@@ -448,7 +450,7 @@ describe("Runtime Gateway service", () => {
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.setThinkingLevel).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    if (result.ok) result.unsubscribeRuntimeEvents();
+    store.remove("app-composer");
     await driver.dispose?.();
   });
 
