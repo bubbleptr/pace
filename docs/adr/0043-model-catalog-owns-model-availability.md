@@ -32,7 +32,7 @@ Model Catalog 放在 workspace 层而不是 Runtime Gateway：Gateway 是 Sessio
 
 ### 4. 两种信号，各管一头
 
-- 全局 `model_catalog_changed`：seq 0、不经 Gateway、不进 journal，复用 ADR-0038 `workspace.invalidated` 的"失效信号与真值读取分离"模式。它只表达"请重新拉取"，供 Draft 和 Settings 使用。
+- 全局 `model_catalog.invalidated`：seq 0、不经 Gateway、不进 journal，复用 ADR-0038 `workspace.invalidated` 的"失效信号与真值读取分离"模式。它只表达"请重新拉取"，供 Draft 和 Settings 使用。
 - 按 piSessionId 的 `model_catalog_changed` 保留，因为它携带该 Session 的 `selected`。它只由 `runtime-gateway-client` 处理并正确通知 listener；page 删掉裸订阅。把它从 runtime event 降级为 Gateway snapshot patch、随之删掉 core 的 journal 特例，记为后续项。
 
 ### 5. Pi settings 默认模型是独立的小 module
@@ -52,7 +52,7 @@ Model Catalog 放在 workspace 层而不是 Runtime Gateway：Gateway 是 Sessio
 三个 stacked PR，每个单独可 review、可回滚：
 
 1. 后端 Model Catalog module：行为不变，只收拢四个 runtime、两份映射、分档规则和扇出。
-2. 信号：新增全局 `model_catalog_changed`；按 Session 的推送改由 `runtime-gateway-client` 完整处理。
+2. 信号：新增全局 `model_catalog.invalidated`；按 Session 的推送改由 `runtime-gateway-client` 完整处理。
 3. 渲染层读取点：三处 fetch 和两个缓存收成一个 hook。
 
 ## 测试边界
