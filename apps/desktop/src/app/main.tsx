@@ -21,7 +21,7 @@ import { TrajectoryIndexPage, TrajectorySessionPage } from "@/pages/trajectory";
 import { UsagePage } from "@/pages/usage";
 import type { EnvironmentPreflightStatus } from "@pace/core";
 import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
-import { startModelCatalogInvalidationBridge } from "@/entities/model/model-catalog-cache";
+import { startModelCatalogInvalidationBridge } from "@/entities/model/use-model-catalog";
 import { invoke, isElectronRuntime, onNavigateRequest } from "@/shared/runtime";
 import { Theme } from "@astryxdesign/core";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";

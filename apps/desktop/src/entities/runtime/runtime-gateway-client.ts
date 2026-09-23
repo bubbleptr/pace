@@ -31,7 +31,6 @@ import {
   type SessionReplayEntry,
 } from "@/entities/runtime/pi-runtime-bridge";
 import type { AgentRuntimeEvent } from "@pace/core";
-import { modelControlsFromUnknown } from "@/entities/model/model-catalog-cache";
 import { invoke as invokeRuntime, onBackendEvent as onRuntimeBackendEvent } from "@/shared/runtime";
 
 type InvokeGatewayMethod = <T>(
@@ -53,6 +52,13 @@ export type RuntimeGatewayClientOptions = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Ignore a catalog push that is not a model list. The backend owns the shape. */
+function modelControlsFromUnknown(value: unknown): RuntimeModelControls | null {
+  if (!isRecord(value) || !Array.isArray(value.models)) return null;
+  if (value.selected != null && !isRecord(value.selected)) return null;
+  return value as RuntimeModelControls;
 }
 
 function maybeString(value: unknown): string | null {

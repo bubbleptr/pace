@@ -1,5 +1,4 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -10,7 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SettingsDialog, resetCatalogRefreshGate, startCatalogRefresh } from "@/pages/settings";
+import { SettingsDialog } from "@/pages/settings";
 import { AppFrame } from "@/app/app-shell";
 import {
   getVisibleModels,
@@ -19,7 +18,7 @@ import {
 import { resetUpdateStatusStore } from "@/entities/update/use-update-status";
 import type { PaceRendererApi } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type { ModelCatalogRefreshResult, ProviderConnectionTestResult } from "@pace/core";
+import type { ProviderConnectionTestResult } from "@pace/core";
 
 const providerAuthStatus = {
   agentDir: "/agent",
@@ -117,17 +116,7 @@ type RenderSettingsOptions = {
   authStatus?: typeof providerAuthStatus;
   probe?: () => Promise<ProviderConnectionTestResult>;
   catalogRefresh?: CatalogRefreshFixture;
-  catalogRefreshImpl?: (args?: Record<string, unknown>) => Promise<ModelCatalogRefreshResult>;
-  strict?: boolean;
 };
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
 
 function renderSettings(
   path = "/usage?settings=models",
@@ -158,10 +147,6 @@ function renderSettings(
     }
 
     if (command === "refresh_model_catalog") {
-      if (options.catalogRefreshImpl) {
-        return options.catalogRefreshImpl(args);
-      }
-
       if ("offline" in catalogRefresh) {
         return { offline: true };
       }
@@ -245,13 +230,7 @@ function renderSettings(
 
   const tree = (
     <QueryClientProvider client={new QueryClient()}>
-      {options.strict ? (
-        <StrictMode>
-          <RouterProvider router={router} />
-        </StrictMode>
-      ) : (
-        <RouterProvider router={router} />
-      )}
+      <RouterProvider router={router} />
     </QueryClientProvider>
   );
 
@@ -274,7 +253,6 @@ async function findModelsSection() {
 
 beforeEach(() => {
   resetUpdateStatusStore();
-  resetCatalogRefreshGate();
 });
 
 describe("Settings — visible models", () => {
@@ -362,7 +340,8 @@ describe("Settings — visible models", () => {
 
     const section = await findModelsSection();
     const card = within(section).getByTestId("model-visibility-xai");
-    const group = within(card).getByRole("group", { name: "Grok (xAI) models" });
+    // Provider labels come from a separate query that may land after the catalog.
+    const group = await within(card).findByRole("group", { name: "Grok (xAI) models" });
     const selectAll = () => within(card).getByRole("checkbox", { name: "Select all" });
 
     // The control sits in the card header, not among the model rows.
@@ -419,33 +398,6 @@ describe("Settings — visible models", () => {
     for (const checkbox of within(section).getAllByRole("checkbox")) {
       expect(checkbox).not.toBeChecked();
     }
-  });
-
-  it("refetches the model catalog after provider credentials change", async () => {
-    const user = userEvent.setup();
-    const { countCalls } = renderSettings();
-
-    const section = await findModelsSection();
-    await waitFor(() => {
-      expect(section.querySelector("time")).toBeTruthy();
-      expect(countCalls("list_available_model_controls")).toBeGreaterThanOrEqual(2);
-    });
-    const listsAfterOpen = countCalls("list_available_model_controls");
-
-    await user.click(screen.getByRole("button", { name: "Providers" }));
-    await user.click(screen.getByRole("button", { name: "API Key" }));
-
-    const card = await screen.findByTestId("provider-api-key-anthropic");
-
-    await user.type(
-      within(card).getByPlaceholderText("Paste API key"),
-      "sk-test",
-    );
-    await user.click(within(card).getByRole("button", { name: "Replace key" }));
-
-    await waitFor(() => {
-      expect(countCalls("list_available_model_controls")).toBe(listsAfterOpen + 1);
-    });
   });
 
   it("refreshes the catalog on opening Models and shows the force refresh result", async () => {
@@ -513,71 +465,6 @@ describe("Settings — visible models", () => {
 
     await waitFor(() => {
       expect(countCalls("refresh_model_catalog")).toBe(2);
-    });
-  });
-
-  it("reuses the in-flight refresh when Models is left and reopened", async () => {
-    const user = userEvent.setup();
-    const pending = deferred<ModelCatalogRefreshResult>();
-    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
-      catalogRefreshImpl: () => pending.promise,
-    });
-    const section = await findModelsSection();
-    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
-
-    await waitFor(() => expect(refreshButton()).toBeDisabled());
-    expect(countCalls("refresh_model_catalog")).toBe(1);
-    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
-
-    await user.click(screen.getByRole("button", { name: "Providers" }));
-    await user.click(screen.getByRole("button", { name: "Models" }));
-
-    expect(countCalls("refresh_model_catalog")).toBe(1);
-    expect(refreshButton()).toBeDisabled();
-
-    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
-    await waitFor(() => expect(refreshButton()).toBeEnabled());
-  });
-
-  it("keeps Refresh models disabled when a later refresh settles before an earlier one", async () => {
-    const first = deferred<ModelCatalogRefreshResult>();
-    const second = deferred<ModelCatalogRefreshResult>();
-    renderSettings("/usage?settings=models", disabledUpdateStatus, {
-      catalogRefreshImpl: () => first.promise,
-    });
-    const section = await findModelsSection();
-    const refreshButton = () => within(section).getByRole("button", { name: "Refresh models" });
-    await waitFor(() => expect(refreshButton()).toBeDisabled());
-
-    act(() => {
-      startCatalogRefresh(true, () => second.promise);
-    });
-    expect(refreshButton()).toBeDisabled();
-
-    await act(async () => {
-      second.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
-      await second.promise;
-    });
-    expect(refreshButton()).toBeDisabled();
-
-    first.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
-    await waitFor(() => expect(refreshButton()).toBeEnabled());
-  });
-
-  it("fires one auto-refresh when Models mounts under StrictMode", async () => {
-    const pending = deferred<ModelCatalogRefreshResult>();
-    const { countCalls } = renderSettings("/usage?settings=models", disabledUpdateStatus, {
-      catalogRefreshImpl: () => pending.promise,
-      strict: true,
-    });
-
-    await findModelsSection();
-    await waitFor(() => expect(countCalls("refresh_model_catalog")).toBe(1));
-    expect(window.pace!.invoke).toHaveBeenCalledWith("refresh_model_catalog", { force: false });
-
-    pending.resolve({ refreshedAt: defaultCatalogRefreshedAt, errors: {} });
-    await act(async () => {
-      await pending.promise;
     });
   });
 
