@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyProviderFailure, sortProvidersForDisplay } from "./provider-auth";
+import {
+  classifyProviderFailure,
+  describeProviderFailure,
+  sortProvidersForDisplay,
+} from "./provider-auth";
 
 describe("sortProvidersForDisplay", () => {
   it("orders configured, then featured, then alphabetical by label", () => {
@@ -37,6 +41,36 @@ describe("classifyProviderFailure", () => {
         "OAuth refresh failed for xai: xAI OAuth token refresh failed (HTTP 400): invalid_grant: Invalid or unknown refresh token",
       ),
     ).toBe("auth");
+    expect(classifyProviderFailure("Invalid or unknown refresh token")).toBe("auth");
+  });
+
+  it("treats a connectivity failure during an OAuth refresh as network, not a dead token", () => {
+    expect(describeProviderFailure("OAuth refresh failed for xai: fetch failed")).toMatchObject({
+      kind: "network",
+      message: "Network error",
+    });
+    expect(
+      classifyProviderFailure(
+        Object.assign(new Error("OAuth refresh failed for xai"), { code: "ECONNRESET" }),
+      ),
+    ).toBe("network");
+  });
+
+  it("tells an OAuth user to sign in again but keeps the API-key label", () => {
+    expect(
+      describeProviderFailure(
+        "OAuth refresh failed for xai: xAI OAuth token refresh failed (HTTP 400): invalid_grant: Invalid or unknown refresh token",
+      ).message,
+    ).toBe("Sign in again");
+    expect(describeProviderFailure("401: Invalid API key").message).toBe("Authentication failed");
+  });
+
+  it("leaves a model the account cannot use unclassified so the probe can try another", () => {
+    expect(
+      classifyProviderFailure(
+        "The 'gpt-5.3-codex-spark' model is not supported when using Codex with a ChatGPT account.",
+      ),
+    ).toBe("unknown");
   });
 
   it("classifies 403 and plan, subscription, or entitlement wording as entitlement", () => {

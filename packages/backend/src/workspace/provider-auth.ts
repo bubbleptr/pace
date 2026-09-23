@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { createPaceModelRuntime } from "./account-models";
+import { readSettingsPreferredModel } from "./available-model-controls";
 import {
   PROVIDER_DISPLAY_OVERRIDES,
   describeProviderFailure,
@@ -151,9 +152,12 @@ function timeoutMessage(timeoutMs: number): string {
 
 /** Probe order. An explicit model is the only candidate; otherwise a few
  * snapshot models, because the first one listed can be a model this account
- * cannot use (Codex lists gpt-5.3-codex-spark, which ChatGPT plans reject). */
-function probeCandidates(
+ * cannot use (Codex lists gpt-5.3-codex-spark, which ChatGPT plans reject).
+ * The Pi settings default goes first: the user already runs it, so it is the
+ * model most likely to work. */
+async function probeCandidates(
   runtime: ProviderAuthRuntime,
+  agentDir: string,
   providerId: string,
   modelId?: string,
 ) {
@@ -165,7 +169,16 @@ function probeCandidates(
     return resolved?.provider === providerId ? [resolved] : [];
   }
 
-  return snapshot.filter((model) => model.provider === providerId).slice(0, MAX_PROBE_MODELS);
+  const models = snapshot.filter((model) => model.provider === providerId);
+  const preferred = await readSettingsPreferredModel(agentDir);
+  const preferredIndex =
+    preferred?.provider === providerId
+      ? models.findIndex((model) => model.id === preferred.modelId)
+      : -1;
+  if (preferredIndex > 0) {
+    models.unshift(...models.splice(preferredIndex, 1));
+  }
+  return models.slice(0, MAX_PROBE_MODELS);
 }
 
 async function probeModel(
@@ -374,7 +387,7 @@ export function createProviderAuthService(
       // Local snapshot only. The probe below is the network request.
       await runtime.refresh({ allowNetwork: false }).catch(() => {});
 
-      const candidates = probeCandidates(runtime, providerId, modelId);
+      const candidates = await probeCandidates(runtime, options.agentDir, providerId, modelId);
       if (candidates.length === 0) {
         return failureResult(
           "unknown",

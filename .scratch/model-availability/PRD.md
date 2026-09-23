@@ -16,7 +16,7 @@
 
 ### S1 Provider 连通性检测(Settings → Providers)
 
-- 新增 backend RPC `test_provider_connection { providerId, modelId? }`:用 provider-auth 的 runtime 取该 provider 第一个可用模型(或指定模型),`completeSimple` 发一条 `maxTokens: 1` 的最小请求,返回 `{ ok: true, modelId, latencyMs } | { ok: false, kind, message, modelId }`。
+- 新增 backend RPC `test_provider_connection { providerId, modelId? }`:用 provider-auth 的 runtime 取该 provider 的探测模型(指定模型;否则优先 Pi settings 默认模型,再按可用模型顺序,未分类失败时最多换 3 个,见 #363),`completeSimple` 发一条 `maxTokens: 1` 的最小请求,返回 `{ ok: true, modelId, latencyMs } | { ok: false, kind, message, modelId }`。
 - `kind` 分类器放 `packages/core`:`auth`(401)/ `entitlement`(403 或 provider 文案含 plan/subscription)/ `network` / `unknown`。`chat-run-failure.tsx` 复用同一分类器,让 403 显示"该模型不在你的订阅套餐内"而非通用失败。
 - UI:两种 provider 卡片都加 "Test connection" 按钮,结果以三态 chip 显示:未测试 / 已验证 · 用的模型 · 耗时 / 失败 · 原因。结果保存在 query 状态,不落盘。
 - 明确不做:逐模型探测(先按 provider 一次;若 Kimi 实测同一 provider 下不同模型套餐不同,再开后续 issue)。
@@ -76,6 +76,7 @@
 ## 切片
 
 - S1 → #357(已合并,PR #361)
+- S1 后续 → #363(OAuth refresh 失效归 auth 并提示 "Sign in again";探测优先默认模型,PR #375)
 - S2 → #358(已合并,PR #360)
 - S3 → #359(已合并,PR #362)
 - S4 → 订阅通道已实现(feat/codex-account-models)
