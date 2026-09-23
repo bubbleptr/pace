@@ -25,7 +25,7 @@ Live Session View 屏幕上显示的 Session Projection 没有 module 拥有它�
 
 ### 2. store 拥有 bridge 订阅，按 Session 生命周期而不是按视图
 
-store 为每个绑定了 piSessionId 且未归档的 Session 保持一个 bridge 订阅，从 `runtime-bound`（创建或 resume）起到 `session-archived` / `remove` 为止，与用户是否正在看它无关。侧栏的 Session Status 和 Unread Result Indicator 从它派生。这把今天靠泄漏订阅得到的后台更新变成明确行为。`onBackendEvent` 本来就收全部事件，按 session 过滤没有额外成本。
+store 为在本进程内变为 live 的 Session 保持一个 bridge 订阅：创建、fork、或被查看并 resume 的 Session，从 `runtime-bound` 起到 `session-archived` / `remove` 为止，之后与用户是否正在看它无关。回灌进来但本进程从未触碰的历史 Session 不订阅，否则「live 拥有」判定对所有 Session 成立，§5 的回灌规则失效。订阅在 gateway client 里只是本地 listener 表的插入，没有后端调用。侧栏的 Session Status 和 Unread Result Indicator 从它派生。这把今天靠泄漏订阅得到的后台更新变成明确行为。`onBackendEvent` 本来就收全部事件，按 session 过滤没有额外成本。
 
 store 同时订阅 legacy `subscribeToEvents` 与 `subscribeToAgentEvents`（以及 `subscribeToModelControls`）。reducer 已把两条流合进 `runtimeModel`；user / steer echo 今天只走 legacy 流，退役 legacy 通路要先给它们 Agent-event 等价物，属后端改动，放在本 ADR 之后单独做。退役时只改 store 内部。
 
