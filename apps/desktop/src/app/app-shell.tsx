@@ -5,6 +5,7 @@ import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import {
   AnimatedChartPie,
@@ -25,6 +26,7 @@ import {
   Trash2,
 } from "@/shared/ui/icons";
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -81,7 +83,12 @@ import {
   shouldUseBrowserDevelopmentData,
 } from "@/shared/browser-development-data";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
-import { revealProjectInFinder, selectProjectDirectory } from "@/shared/runtime";
+import {
+  checkProjectDirectories,
+  revealProjectInFinder,
+  selectProjectDirectory,
+} from "@/shared/runtime";
+import { useRefreshOnWindowFocus } from "@/shared/refresh";
 
 type AppFrameProps = {
   sidebar?: ReactNode;
@@ -512,6 +519,7 @@ function SidebarSessionGroupBody({
   onDeleteSession,
   hasUnsentFollowUp,
   trailingActions,
+  missingDirectoryPath,
 }: {
   rowTestId: string;
   expanded: boolean;
@@ -531,10 +539,27 @@ function SidebarSessionGroupBody({
   onDeleteSession: (sessionId: string) => void;
   hasUnsentFollowUp: boolean;
   trailingActions: ReactNode;
+  /** Set when the group's project root no longer exists on disk. */
+  missingDirectoryPath?: string;
 }) {
+  const headerRef = useRef<HTMLButtonElement>(null);
+
   return (
-    <div className="pigui-sidenav-row-with-actions" data-testid={rowTestId}>
+    <div
+      className="pigui-sidenav-row-with-actions"
+      data-directory-missing={missingDirectoryPath ? "true" : undefined}
+      data-testid={rowTestId}
+    >
+      {missingDirectoryPath ? (
+        // Anchored to the header button only, so hovering the nested
+        // session rows does not raise it.
+        <Tooltip
+          anchorRef={headerRef}
+          content={`Project directory not found: ${missingDirectoryPath}`}
+        />
+      ) : null}
       <SideNavItem
+        ref={headerRef}
         collapsible={{
           isCollapsed: !expanded,
           onCollapsedChange: onToggle,
@@ -903,6 +928,37 @@ function ChatNavigation({
   );
 }
 
+/**
+ * Asks the backend which registry roots still exist. Unknown or failed
+ * checks count as present, so a row is only dimmed on a positive "missing".
+ */
+function useProjectDirectoryExistence(projects: ProjectRegistryEntry[]) {
+  const [existence, setExistence] = useState<Record<string, boolean>>({});
+  const rootsKey = projects.map((project) => project.path).join("\n");
+
+  const refresh = useCallback(() => {
+    let cancelled = false;
+    const roots = rootsKey ? rootsKey.split("\n") : [];
+
+    if (roots.length > 0) {
+      checkProjectDirectories(roots)
+        .then((result) => {
+          if (!cancelled) setExistence(result && typeof result === "object" ? result : {});
+        })
+        .catch(() => undefined);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rootsKey]);
+
+  useEffect(refresh, [refresh]);
+  useRefreshOnWindowFocus(refresh);
+
+  return existence;
+}
+
 function ProjectNavigation({
   draftViewActive,
   pathname,
@@ -945,6 +1001,7 @@ function ProjectNavigation({
   const projectActive = pathname.startsWith("/projects/");
   const { expanded: sectionExpanded, contentId, toggle } = useSidebarSectionExpansion("projects");
   const [followUpDraftVersion, setFollowUpDraftVersion] = useState(0);
+  const projectDirectories = useProjectDirectoryExistence(projects);
 
   useEffect(
     () =>
@@ -995,6 +1052,9 @@ function ProjectNavigation({
               onArchiveSession={onArchiveSession}
               onDeleteSession={onDeleteSession}
               hasUnsentFollowUp={hasProjectUnsentFollowUp}
+              missingDirectoryPath={
+                projectDirectories[project.path] === false ? project.path : undefined
+              }
               trailingActions={
                 <>
                   <IconButton

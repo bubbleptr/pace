@@ -405,6 +405,54 @@ describe("AppFrame", () => {
     });
   });
 
+  it("dims a Project whose directory is missing and names the path in a tooltip", async () => {
+    const user = userEvent.setup();
+    const studyPath = "/Users/void/Documents/study";
+    addProjectToRegistry(studyPath, { now: () => "2026-06-29T08:00:00.000Z" });
+    const invoke = vi.fn(async (command: string, args?: { roots?: string[] }) => {
+      if (command === "check_project_directories") {
+        return Object.fromEntries(
+          (args?.roots ?? []).map((root) => [root, root !== pigProjectPath]),
+        );
+      }
+
+      return null;
+    });
+    window.pace = {
+      invoke: invoke as unknown as PaceRendererApi["invoke"],
+      onBackendEvent: () => () => {},
+      onBrowserEvent: () => () => {},
+      onUpdateEvent: () => () => {},
+      onWindowFocusChanged: () => () => {},
+      onNavigateRequest: () => () => {},
+    };
+
+    renderAppFrame("/projects/pig/sessions");
+
+    expect(await screen.findByText("Main content")).toBeInTheDocument();
+    const projectGroup = screen.getByTestId("sidebar-projects");
+    const pigHeader = getProjectHeaderButton(projectGroup, "Pig");
+    const studyHeader = getProjectHeaderButton(projectGroup, "study");
+
+    await waitFor(() =>
+      expect(pigHeader).toHaveAccessibleDescription(expect.stringContaining(pigProjectPath)),
+    );
+    expect(invoke).toHaveBeenCalledWith("check_project_directories", {
+      roots: expect.arrayContaining([pigProjectPath, studyPath]),
+    });
+    const rows = within(projectGroup).getAllByTestId("project-row-with-actions");
+    const pigRow = rows.find((row) => row.contains(pigHeader));
+    const studyRow = rows.find((row) => row.contains(studyHeader));
+    expect(pigRow).toHaveAttribute("data-directory-missing", "true");
+    expect(studyRow).not.toHaveAttribute("data-directory-missing");
+    expect(studyHeader).not.toHaveAttribute("aria-describedby");
+
+    // History stays reachable: the dimmed row still toggles its sessions.
+    expect(pigHeader).toHaveAttribute("aria-expanded", "true");
+    await user.click(pigHeader);
+    expect(pigHeader).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("places Project sessions in the primary sidebar", async () => {
     renderAppFrame("/projects/pig/sessions");
 
