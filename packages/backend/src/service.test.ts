@@ -1894,6 +1894,34 @@ describe("backend service", () => {
     await expect(stat(join(dataDir, "chats"))).rejects.toThrow();
   });
 
+  it("reports which project roots are existing directories through check_project_directories", async () => {
+    const dataDir = await tempDataDir();
+    const existing = join(dataDir, "project");
+    const file = join(dataDir, "not-a-directory");
+    const missing = join(dataDir, "deleted-project");
+    await mkdir(existing);
+    await writeFile(file, "");
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      dataDir,
+      runtimeDriver: {
+        onEvent: vi.fn(() => () => {}),
+      } as unknown as PiRuntimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-project-dirs",
+        method: "check_project_directories",
+        params: { roots: [existing, file, missing] },
+      }),
+    ).resolves.toEqual({
+      id: "req-project-dirs",
+      result: { [existing]: true, [file]: false, [missing]: false },
+    });
+  });
+
   it("returns the inspected Pi runtime through get_runtime_info", async () => {
     const { VERSION } = await import("@earendil-works/pi-coding-agent");
     const service = createBackendService({

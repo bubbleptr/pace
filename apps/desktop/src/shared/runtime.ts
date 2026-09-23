@@ -143,6 +143,11 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
     }
     case "reveal_project_in_finder":
       return Promise.resolve(undefined as T);
+    case "check_project_directories": {
+      // No filesystem in the browser: never flag a project as missing.
+      const roots = Array.isArray(args?.roots) ? (args.roots as string[]) : [];
+      return Promise.resolve(Object.fromEntries(roots.map((root) => [root, true])) as T);
+    }
     case "get_chat_workspace_root":
       return Promise.resolve({ path: "/tmp/pigui-chats" } as T);
     case "get_runtime_info":
@@ -388,6 +393,11 @@ export function invoke<T>(command: string, args?: InvokeArgs) {
 
 export function selectProjectDirectory() {
   return invoke<string | null>("select_project_directory");
+}
+
+/** Maps each root to whether it is an existing directory, as stat'ed by the backend. */
+export function checkProjectDirectories(roots: string[]) {
+  return invoke<Record<string, boolean>>("check_project_directories", { roots });
 }
 
 export function revealProjectInFinder(

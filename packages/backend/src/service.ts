@@ -2,6 +2,7 @@ import { createGitMetadataWatchers } from "./workspace/git-metadata-watcher";
 import { CHAT_PROJECT_ID } from "@pace/core";
 import { createWorkspaceInvalidation } from "./workspace/workspace-invalidation";
 import { addResourceDiagnostics } from "./workspace/resource-diagnostics";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import type {
   ExecutionCheckoutGitClient,
@@ -598,6 +599,18 @@ async function dispatchRequest(input: {
         await refreshLiveSessionModelCatalogs(input.runtimeDriver);
       }
       return result;
+    }
+    case "check_project_directories": {
+      const roots = params.roots;
+      if (!Array.isArray(roots) || !roots.every((root) => typeof root === "string")) {
+        throw new Error("roots must be an array of strings");
+      }
+      // Registry entries outlive their folders; the sidebar dims the ones
+      // whose root is gone before a session start fails on the missing cwd.
+      const exists = await Promise.all(
+        roots.map((root) => stat(root).then((entry) => entry.isDirectory(), () => false)),
+      );
+      return Object.fromEntries(roots.map((root, index) => [root, exists[index]]));
     }
     case "is_git_repository":
       return input.gitClient.isGitRepository(requiredString(params.repoRoot, "repoRoot"));

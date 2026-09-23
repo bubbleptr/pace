@@ -245,6 +245,14 @@ body {
   }
 }
 
+/* A project whose root folder is gone: dim only the header row (label and
+   folder glyph) so its sessions stay readable as history. The row keeps
+   Astryx's pointer behavior because clicking it still toggles the sessions. */
+.pigui-sidenav-row-with-actions[data-directory-missing="true"] > div > .astryx-side-nav-item:not(#\#):not(#\#):not(#\#),
+.pigui-sidenav-row-with-actions[data-directory-missing="true"] > div > .astryx-side-nav-item .pigui-project-expansion-indicator {
+  color: var(--color-text-disabled);
+}
+
 .pigui-sidenav-actions-spacer {
   display: inline-block;
   width: calc(2 * var(--size-element-sm) + var(--spacing-0-5));
