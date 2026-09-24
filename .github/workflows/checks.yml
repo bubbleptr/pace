@@ -1,0 +1,38 @@
+name: Checks
+
+# Fast static checks on every PR. Tests, packaging and E2E stay in the manual
+# macOS validation workflow (ci.yml).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  typecheck-and-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.12'
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
