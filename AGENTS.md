@@ -24,7 +24,7 @@ Before opening a PR, `bun run typecheck`, `bun run test` and `bun run build` mus
 The dev-only `/design` page (`apps/desktop/src/pages/design.tsx`) is the living registry of the design system.
 
 - **Astryx first.** Before building or extending any UI, run `bunx astryx build "<idea>"` and study the returned kit. Hand-roll a component only when Astryx has no equivalent. Full CLI workflow and styling rules: `apps/desktop/AGENTS.md`.
-- **Reusable components live in `apps/desktop/src/shared/ui/` — nowhere else.** Page-level composition stays in `pages/`; if a piece of UI becomes reusable across pages, extract it to `shared/ui/` first.
+- **Domain-agnostic reusable components live in `apps/desktop/src/shared/ui/` — nowhere else.** Domain components (ones that take a CONTEXT.md concept such as an Execution Checkout or a Session Projection as input) live in their `entities/` / `features/` / `widgets/` slice per ADR-0045; page-level composition stays in `pages/`. If a piece of UI becomes reusable across pages and knows nothing about the domain, extract it to `shared/ui/` first.
 - **Every component added to `shared/ui/` MUST be registered on the Design page in the same PR**, showing all variants and typical states (loading / empty / error where applicable). Changing a component's variants means updating its Design page entry in the same PR.
 - Tokens go through the semantic bridge in `apps/desktop/src/app/styles.css` (`--foreground`, `--primary`, …) or raw Astryx first-level tokens — never hard-coded colors, radii or spacing.
 - Usage rules live in `docs/design/` (`README.md` is the entry); the ledger of self-built components is `docs/self-built-ui.md`. Update the matching file in the same PR when a component's variants or a token changes.
