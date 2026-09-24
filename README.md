@@ -149,7 +149,8 @@ flowchart TB
 
 | To change… | Go to… |
 | --- | --- |
-| UI, pages, interactions | [`apps/desktop/src/`](apps/desktop/src/), FSD layers `pages` → `entities` → `shared` ([ADR-0016](docs/adr/0016-fsd-layers-in-apps-desktop.md)) |
+| UI, pages, interactions | [`apps/desktop/src/`](apps/desktop/src/), FSD layers `pages` → `widgets` → `features` → `entities` → `shared` ([ADR-0016](docs/adr/0016-fsd-layers-in-apps-desktop.md), [ADR-0045](docs/adr/0045-slice-agent-workspace-into-fsd.md)); `bun run lint` enforces the direction |
+| Live Session View / Session Draft / Session Dock | [`apps/desktop/src/widgets/live-chat/`](apps/desktop/src/widgets/live-chat/), [`features/session-draft/`](apps/desktop/src/features/session-draft/), [`widgets/session-dock/`](apps/desktop/src/widgets/session-dock/) |
 | Event semantics (what counts as a message / run / turn) | [`packages/backend/src/gateway/agent-runtime-event-normalizer.ts`](packages/backend/src/gateway/) and its fixture tests |
 | Gateway protocol (commands, event contract, identity) | [`packages/core/src/`](packages/core/src/): `runtime-gateway.ts`, `agent-runtime-event.ts` |
 | How Pi is driven | [`packages/backend/src/drivers/`](packages/backend/src/drivers/) |
