@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +23,26 @@ function realRuntimeService(agentDir: string) {
   });
 }
 
+// Pi counts a provider as configured when the ambient environment carries its
+// credentials (API-key env vars, the AWS chain, gcloud ADC under $HOME), and it
+// reads process.env live. Strip the host environment so these tests only see
+// auth.json; production still counts env-configured providers.
+const HERMETIC_ENV_KEEP = new Set(["PATH", "TMPDIR", "TMP", "TEMP", "NODE_ENV"]);
+
+async function isolateFromHostEnvironment() {
+  for (const name of Object.keys(process.env)) {
+    if (HERMETIC_ENV_KEEP.has(name) || name.startsWith("VITEST")) continue;
+    vi.stubEnv(name, undefined);
+  }
+  vi.stubEnv("HOME", await mkdtemp(join(tmpdir(), "pigui-provider-auth-home-")));
+}
+
 describe("provider auth service", () => {
+  beforeEach(isolateFromHostEnvironment);
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("lists every runtime provider including Radius and Codex auth shapes", async () => {
     const agentDir = await tempAgentDir();
     const service = realRuntimeService(agentDir);
