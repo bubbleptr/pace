@@ -45,12 +45,11 @@ import {
 } from "@/entities/project/chat-workspace";
 import {
   addProjectToRegistry,
-  getProjectRegistry,
   renameProjectInRegistry,
   removeProjectFromRegistry,
-  subscribeProjectRegistry,
   type ProjectRegistryEntry,
 } from "@/entities/project/project-registry";
+import { useVisibleProjectRegistry } from "@/entities/project/visible-registry";
 import {
   hasFollowUpDraft,
   subscribeFollowUpDrafts,
@@ -76,7 +75,6 @@ import { useSessionProjectionsOptional } from "@/entities/session/use-session-pr
 import { useUpdateStatus } from "@/entities/update/use-update-status";
 import {
   browserDevelopmentProjectId,
-  getProjectRegistryWithBrowserDevelopmentFallback,
   shouldUseBrowserDevelopmentData,
 } from "@/shared/browser-development-data";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
@@ -294,10 +292,6 @@ const titlebarControlStyle = {
 const trafficWidth = "88px";
 const chromeSafeLeft = "132px";
 const sidebarAnimationMs = 220;
-
-function getVisibleProjectRegistry() {
-  return getProjectRegistryWithBrowserDevelopmentFallback(getProjectRegistry());
-}
 
 function getActiveTab(pathname: string) {
   if (pathname === "/") {
@@ -1297,7 +1291,7 @@ export function AppFrame({
       ? defaultSidebarProjectSessionProjections
       : [],
   );
-  const [projects, setProjects] = useState(() => getVisibleProjectRegistry());
+  const projects = useVisibleProjectRegistry();
   const [expandedProjects, setExpandedProjects] = useState(() =>
     readProjectExpansionState(),
   );
@@ -1361,11 +1355,6 @@ export function AppFrame({
         clearTimeout(sidebarAnimationTimeoutRef.current);
       }
     },
-    [],
-  );
-
-  useEffect(
-    () => subscribeProjectRegistry(() => setProjects(getVisibleProjectRegistry())),
     [],
   );
 

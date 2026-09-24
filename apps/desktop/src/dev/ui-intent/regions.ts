@@ -83,7 +83,7 @@ export const uiRegions: UiRegion[] = [
   },
   {
     term: "Surface",
-    match: { components: ["SessionChangesPanel", "SessionSurfaceContent", "SessionBrowserPanel", "BrowserSurface", "BrowserSurfaceBody", "SessionTerminalPanel", "TerminalView", "SessionDiffViewer", "SessionFilesPanel", "SessionFileViewer"] },
+    match: { components: ["SessionChangesPanel", "SessionSurfaceContent", "SessionBrowserPanel", "BrowserSurface", "SessionTerminalPanel", "TerminalView", "SessionDiffViewer", "SessionFilesPanel", "SessionFileViewer"] },
   },
   {
     term: "Session Draft",

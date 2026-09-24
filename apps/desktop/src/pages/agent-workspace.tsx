@@ -3,15 +3,12 @@ import { Collapsible, CollapsibleGroup } from "@astryxdesign/core/Collapsible";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
-import { List, ListItem } from "@astryxdesign/core/List";
-import { Popover } from "@astryxdesign/core/Popover";
 import { ResizeHandle, useResizable } from "@astryxdesign/core/Resizable";
 import {
   SegmentedControl,
   SegmentedControlItem,
 } from "@astryxdesign/core/SegmentedControl";
-import { Selector, SelectorOption } from "@astryxdesign/core/Selector";
-import { TextInput } from "@astryxdesign/core/TextInput";
+import { Selector } from "@astryxdesign/core/Selector";
 import { ChatChainOfThought as ChainOfThought } from "@/shared/ui/chat/chat-chain-of-thought";
 import { ChatThoughtMarkdown } from "@/shared/ui/chat/chat-thought-markdown";
 import { ChatThoughtStep } from "@/shared/ui/chat/chat-thought-step";
@@ -30,7 +27,6 @@ import { usePresenceList } from "@/shared/ui/chat/use-presence-list";
 import { ChatPromptSuggestion as PromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import {
   type ChatToolItem,
-  type ToolPartState,
 } from "@/shared/ui/chat/chat-tool";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
@@ -70,7 +66,6 @@ import {
   useState,
 } from "react";
 import type { RuntimePromptImage, SessionChangedFile, SessionChanges } from "@pace/core";
-import { promptImageDataUrl } from "@pace/core";
 import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
 import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-state";
@@ -78,8 +73,6 @@ import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-stat
 import {
   Stop,
   ChatAdd,
-  Check,
-  ChevronDown,
   Computer,
   FileDiff,
   FolderClosed,
@@ -92,7 +85,6 @@ import {
 } from "@/shared/ui/icons";
 import {
   getBrowserDevelopmentSessionDraft,
-  getProjectRegistryWithBrowserDevelopmentFallback,
   shouldUseBrowserDevelopmentData,
 } from "@/shared/browser-development-data";
 import {
@@ -112,11 +104,21 @@ import {
   chatWorkspaceListEntry,
   isChatProjectId,
 } from "@/entities/project/chat-workspace";
+import { type ProjectRegistryEntry } from "@/entities/project/project-registry";
+import { useVisibleProjectRegistry } from "@/entities/project/visible-registry";
 import {
-  getProjectRegistry,
-  subscribeProjectRegistry,
-  type ProjectRegistryEntry,
-} from "@/entities/project/project-registry";
+  ComposerLocationRow,
+  ComposerStaticChip,
+} from "@/entities/checkout/composer-location-row";
+import {
+  GitBranchPicker,
+  gitBranchPickerLabelFromChanges,
+} from "@/entities/checkout/git-branch-picker";
+import {
+  CheckoutStrategyPicker,
+  checkoutModeLabels,
+  checkoutModeToExecutionMode,
+} from "@/entities/checkout/checkout-strategy-picker";
 import { createDefaultPiRuntimeBridge } from "@/entities/runtime/pi-runtime-factory";
 import {
   PiRuntimeBridgeError,
@@ -125,12 +127,8 @@ import {
   type PiSessionState,
   type RuntimeModelSelection,
 } from "@/entities/runtime/pi-runtime-bridge";
-import {
-  isContextCompacting,
-  type SessionRuntimeMessage,
-  type SessionRuntimeModel,
-} from "@/entities/session/session-runtime-model";
-import { deriveCotView, type CotStep, type CotView } from "@/entities/session/cot-view";
+import { isContextCompacting } from "@/entities/session/session-runtime-model";
+import { type CotStep, type CotView } from "@/entities/session/cot-view";
 import {
   createSessionFromDraft,
   prepareChatSessionCheckout,
@@ -157,7 +155,6 @@ import {
 } from "@/entities/session/session-drafts";
 import {
   createSessionProjection,
-  isSessionProjectionArchived,
   getSessionProjectionListItems,
   isSessionProjectionActive,
   type SessionProjection,
@@ -198,42 +195,19 @@ import {
   createSessionProjectionsStore,
   type SessionProjectionsStore,
 } from "@/entities/session/session-projections-store";
+import {
+  isAssistantAnswerMessage,
+  isReadOnlyProjection,
+  isRuntimeUnavailableProjection,
+  liveMessagesFromProjection,
+  liveMessagesFromRuntimeModel,
+  relatedMessageIdsFor,
+  runTimelineFromProjection,
+  runtimeModelIsActive,
+  type LiveMessage,
+  type RunTimelineItem,
+} from "@/entities/session/live-chat-model";
 
-
-type LiveMessage = {
-  id: string;
-  role: "user" | "assistant";
-  body: string;
-  images?: { src: string; name?: string }[];
-  runId?: string;
-  piEntryId?: string;
-  controlLabel?: string;
-  isStreaming?: boolean;
-  relatedMessageIds?: string[];
-  /** The Run's Chain of Thought, derived once with the bubble it belongs to. */
-  cotView?: CotView;
-  kind?: "context_change";
-  contextChange?: {
-    sectionsChanged: readonly string[];
-    sectionsRemoved: readonly string[];
-    toolsAdded: readonly string[];
-    toolsRemoved: readonly string[];
-  };
-};
-
-type RunTimelineItem = {
-  id: string;
-  kind?: "trace" | "thinking" | "tool";
-  title: string;
-  meta: string;
-  messageId?: string;
-  toolCallId?: string;
-  toolName?: string;
-  toolState?: ToolPartState;
-  argsText?: string;
-  outputText?: string;
-  durationMs?: number;
-};
 
 type AgentWorkspaceFixture = {
   id: string;
@@ -358,15 +332,6 @@ function workspaceFromProject(project: ProjectRegistryEntry): AgentWorkspaceFixt
       totalTokens: 0,
     },
   };
-}
-
-const modelFirstResponseWatchdogMs = 15_000;
-const contactingModelPlaceholder = "Pi is contacting the model...";
-const stalledModelResponsePlaceholder =
-  "Still waiting for the model response. The provider has not returned a first chunk yet.";
-
-function getVisibleProjectRegistry() {
-  return getProjectRegistryWithBrowserDevelopmentFallback(getProjectRegistry());
 }
 
 function LiveChatMessage({
@@ -1117,613 +1082,6 @@ function FullChatComposer({
   );
 }
 
-// —— Structured runtime model rendering (Agent Runtime Event Model) ——
-// Active once run events own the session; bridges that don't speak the new
-// model fall back to the legacy runtimeEvents pipeline below.
-
-function runtimeModelIsActive(projection: SessionProjection) {
-  return projection.runtimeModel.runs.size > 0;
-}
-
-function chatTextFromModelMessage(message: SessionRuntimeMessage) {
-  return message.parts
-    .filter((part) => part.partType === "text")
-    .map((part) => part.body)
-    .join("");
-}
-
-function chatImagesFromModelMessage(message: SessionRuntimeMessage) {
-  return message.parts
-    .filter((part) => part.partType === "image" && part.body)
-    .map((part) => ({
-      src: part.body,
-      ...(part.name ? { name: part.name } : {}),
-    }));
-}
-
-function liveImagesFromPrompt(images?: RuntimePromptImage[]) {
-  return images?.map((image) => ({
-    src: promptImageDataUrl(image),
-    name: image.name,
-  }));
-}
-
-function latestRuntimeModelRunId(model: SessionRuntimeModel) {
-  const runs = [...model.runs.values()];
-  const activeRun = [...runs].reverse().find((run) => !run.endedAt);
-
-  return activeRun?.runId ?? runs[runs.length - 1]?.runId;
-}
-
-/**
- * While a queued follow-up is `processing`, the queue strip hides it and the
- * runtime may not have emitted a user message yet — bridge that gap so the
- * second (and later) user turns never disappear from live chat (DF-005A).
- */
-function appendProcessingQueuedFollowUpsAsUserMessages(
-  projection: SessionProjection,
-  messages: LiveMessage[],
-): LiveMessage[] {
-  const existingUserBodies = new Set(
-    messages.filter((message) => message.role === "user").map((message) => message.body),
-  );
-
-  const processingFollowUps = projection.queuedMessages.filter(
-    (queuedMessage) =>
-      queuedMessage.status === "processing" &&
-      !existingUserBodies.has(queuedMessage.body),
-  );
-
-  if (!processingFollowUps.length) {
-    return messages;
-  }
-
-  return [
-    ...messages,
-    ...processingFollowUps.map((queuedMessage) => ({
-      id: `queued-processing-${queuedMessage.id}`,
-      role: "user" as const,
-      body: queuedMessage.body,
-      ...(queuedMessage.images?.length
-        ? { images: liveImagesFromPrompt(queuedMessage.images) }
-        : {}),
-    })),
-  ];
-}
-
-function liveMessagesFromRuntimeModel(
-  projection: SessionProjection,
-  clockNowMs = Date.now(),
-): LiveMessage[] | null {
-  if (!runtimeModelIsActive(projection)) {
-    return null;
-  }
-
-  const model = projection.runtimeModel;
-  const streamingAllowed = projection.status === "running" && !projection.stale;
-  const messages: LiveMessage[] = [];
-  // One answer bubble per Active Run, minted at the Run's first model call and
-  // never again: agent-core opens a Message per Turn, but only the Final
-  // Answer is addressed to the user — every other Turn's text is Interim
-  // Output and belongs in the Chain of Thought (ADR-0030 §7).
-  const answeredRunIds = new Set<string>();
-  let errorCursor = 0;
-
-  for (const entry of model.order) {
-    if (entry.kind === "error") {
-      const error = model.errors[errorCursor];
-
-      errorCursor += 1;
-
-      if (error) {
-        messages.push({
-          id: entry.id,
-          role: "assistant",
-          ...(error.runId ? { runId: error.runId } : {}),
-          body: error.body,
-          controlLabel: "Run failed",
-        });
-      }
-
-      continue;
-    }
-
-    if (entry.kind === "context_change") {
-      messages.push({
-        id: entry.id,
-        role: "assistant",
-        body: "",
-        kind: "context_change",
-        contextChange: {
-          sectionsChanged: entry.sectionsChanged,
-          sectionsRemoved: entry.sectionsRemoved,
-          toolsAdded: entry.toolsAdded,
-          toolsRemoved: entry.toolsRemoved,
-        },
-      });
-      continue;
-    }
-
-    if (entry.kind !== "message") {
-      continue;
-    }
-
-    const message = model.messages.get(entry.id);
-
-    if (!message) {
-      continue;
-    }
-
-    const runId = message.runId;
-
-    if (!runId || message.role !== "assistant" || message.controlLabel) {
-      // Abandoned retry partials are closed boundaries, not answers.
-      if (message.abandoned) {
-        continue;
-      }
-
-      const body = chatTextFromModelMessage(message);
-      const images = chatImagesFromModelMessage(message);
-      const isStreaming = streamingAllowed && message.phase === "streaming";
-
-      if (!body && !images.length && !message.controlLabel && !isStreaming) {
-        continue;
-      }
-
-      messages.push({
-        id: message.messageId,
-        role: message.role,
-        body,
-        ...(images.length ? { images } : {}),
-        ...(message.runId ? { runId: message.runId } : {}),
-        ...(message.piEntryId ? { piEntryId: message.piEntryId } : {}),
-        ...(message.controlLabel ? { controlLabel: message.controlLabel } : {}),
-        ...(isStreaming ? { isStreaming: true } : {}),
-      });
-
-      continue;
-    }
-
-    if (answeredRunIds.has(runId)) {
-      continue;
-    }
-
-    answeredRunIds.add(runId);
-
-    const cotView = deriveCotView(model, runId, { streamingAllowed, nowMs: clockNowMs });
-
-    // A run whose every model call was abandoned settles with nothing said,
-    // nothing to disclose and nothing measured. Its bubble would be an empty
-    // gap above the error bubble that already tells the story.
-    if (
-      cotView.phase === "settled" &&
-      !cotView.steps.length &&
-      !cotView.answer &&
-      cotView.elapsedMs === undefined
-    ) {
-      continue;
-    }
-
-    messages.push({
-      // The Run's first Message anchors the bubble's place in the log; an
-      // abandoned one still holds it, so a retry does not reorder the chat.
-      id: message.messageId,
-      role: "assistant",
-      runId,
-      body: cotView.answer?.text ?? "",
-      // Streaming here means "the Run is still in flight": it gates the
-      // incremental renderer and holds the ActionBar back until run(end).
-      ...(cotView.phase === "settled" ? {} : { isStreaming: true }),
-      cotView,
-    });
-  }
-
-  const messagesWithPlaceholder = appendModelRunningPlaceholder(
-    projection,
-    messages,
-    clockNowMs,
-  );
-  const hasInitialPromptMessage = messagesWithPlaceholder.some(
-    (message) => message.role === "user" && message.body === projection.initialPrompt,
-  );
-
-  const withInitial = hasInitialPromptMessage
-    ? messagesWithPlaceholder
-    : [
-        {
-          id: `${projection.id}-initial-prompt`,
-          role: "user" as const,
-          body: projection.initialPrompt,
-        },
-        ...messagesWithPlaceholder,
-      ];
-
-  return appendProcessingQueuedFollowUpsAsUserMessages(projection, withInitial);
-}
-
-/**
- * The wait before the model answers at all. Once a Message opens, the Chain of
- * Thought takes over and says what is happening; until then there is no trace
- * to show, so the wait itself has to be the message (ADR-0030 §5, `hidden`).
- */
-function appendModelRunningPlaceholder(
-  projection: SessionProjection,
-  messages: LiveMessage[],
-  clockNowMs: number,
-): LiveMessage[] {
-  if (projection.status !== "running" || projection.stale) {
-    return messages;
-  }
-
-  const model = projection.runtimeModel;
-  const runId = latestRuntimeModelRunId(model);
-
-  if (!runId) {
-    return messages;
-  }
-
-  // Scoped to the Run that is actually waiting: an earlier Run's answer says
-  // nothing about whether this one has been picked up.
-  const runHasModelCall = [...model.messages.values()].some(
-    (message) => message.role === "assistant" && message.runId === runId,
-  );
-
-  if (runHasModelCall) {
-    return messages;
-  }
-
-  const latestTimestampMs = Date.parse(model.updatedAt ?? projection.updatedAt);
-  const elapsedMs = Number.isFinite(latestTimestampMs)
-    ? Math.max(0, clockNowMs - latestTimestampMs)
-    : 0;
-
-  return [
-    ...messages,
-    {
-      id: `${projection.id}-running-placeholder`,
-      role: "assistant",
-      runId,
-      body:
-        elapsedMs >= modelFirstResponseWatchdogMs
-          ? stalledModelResponsePlaceholder
-          : contactingModelPlaceholder,
-      isStreaming: true,
-    },
-  ];
-}
-
-function liveMessagesFromProjection(
-  projection: SessionProjection,
-  clockNowMs = Date.now(),
-): LiveMessage[] {
-  const liveEvents = projection.runtimeEvents
-    .filter(isLiveChatRuntimeEvent)
-    .reduce<SessionProjection["runtimeEvents"]>((events, event) => {
-      const previousEvent = events[events.length - 1];
-
-      if (isAdjacentDuplicateLiveMessageEvent(previousEvent, event)) {
-        return [...events.slice(0, -1), event];
-      }
-
-      const identity = liveRuntimeMessageIdentity(event);
-
-      if (!identity) {
-        return [...events, event];
-      }
-
-      const existingIndex = events.findIndex(
-        (existingEvent) => liveRuntimeMessageIdentity(existingEvent) === identity,
-      );
-
-      if (existingIndex === -1) {
-        return [...events, event];
-      }
-
-      return events.map((existingEvent, index) =>
-        index === existingIndex ? event : existingEvent,
-      );
-    }, []);
-  const projectedMessages = liveEvents
-    .map(
-      (event): LiveMessage => ({
-        id: event.messageId ?? event.id,
-        role:
-          event.role === "user"
-            ? "user"
-            : event.role === "assistant"
-              ? "assistant"
-              : "assistant",
-        body: event.body,
-        ...(event.images?.length
-          ? { images: liveImagesFromPrompt(event.images) }
-          : {}),
-        ...(event.piEntryId ? { piEntryId: event.piEntryId } : {}),
-        controlLabel:
-          event.kind === "control" ||
-          event.kind === "status" ||
-          event.kind === "error"
-            ? (event.title ?? "Control")
-            : undefined,
-      }),
-    );
-  const collapsedMessages = collapseAssistantRunMessages(projectedMessages);
-  const streamingMessageId =
-    projection.status === "running" && !projection.stale
-      ? [...collapsedMessages]
-          .reverse()
-          .find(
-            (message) =>
-              message.role === "assistant" && !message.controlLabel,
-          )?.id
-      : undefined;
-  const visibleMessages = collapsedMessages.map((message) =>
-    message.id === streamingMessageId
-      ? {
-          ...message,
-          isStreaming: true,
-        }
-      : message,
-  );
-  const messagesWithRunningPlaceholder = appendRunningAssistantPlaceholder(
-    projection,
-    visibleMessages,
-    clockNowMs,
-  );
-  const hasInitialPromptEvent = projectedMessages.some(
-    (message) =>
-      message.role === "user" && message.body === projection.initialPrompt,
-  );
-
-  const withInitial = hasInitialPromptEvent
-    ? messagesWithRunningPlaceholder
-    : [
-        {
-          id: `${projection.id}-initial-prompt`,
-          role: "user" as const,
-          body: projection.initialPrompt,
-        },
-        ...messagesWithRunningPlaceholder,
-      ];
-
-  return appendProcessingQueuedFollowUpsAsUserMessages(projection, withInitial);
-}
-
-function isAssistantAnswerMessage(message: LiveMessage) {
-  return message.kind !== "context_change" && message.role === "assistant" && !message.controlLabel;
-}
-
-function relatedMessageIdsFor(message: LiveMessage) {
-  return message.relatedMessageIds ?? [message.id];
-}
-
-// Legacy-fallback only: message boundaries in the runtime-model path come from
-// the protocol, so this adjacency heuristic never runs there. Delete together
-// with the legacy runtimeEvents pipeline once every bridge speaks the Agent
-// Runtime Event Model.
-function collapseAssistantRunMessages(messages: LiveMessage[]) {
-  return messages.reduce<LiveMessage[]>((collapsedMessages, message) => {
-    if (!isAssistantAnswerMessage(message)) {
-      return [...collapsedMessages, message];
-    }
-
-    const previousMessage = collapsedMessages[collapsedMessages.length - 1];
-
-    if (!previousMessage || !isAssistantAnswerMessage(previousMessage)) {
-      return [
-        ...collapsedMessages,
-        {
-          ...message,
-          relatedMessageIds: relatedMessageIdsFor(message),
-        },
-      ];
-    }
-
-    return [
-      ...collapsedMessages.slice(0, -1),
-      {
-        ...message,
-        relatedMessageIds: [
-          ...relatedMessageIdsFor(previousMessage),
-          ...relatedMessageIdsFor(message),
-        ],
-      },
-    ];
-  }, []);
-}
-
-function appendRunningAssistantPlaceholder(
-  projection: SessionProjection,
-  messages: LiveMessage[],
-  clockNowMs: number,
-): LiveMessage[] {
-  if (projection.status !== "running" || projection.stale) {
-    return messages;
-  }
-
-  const hasAssistantMessage = messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      !message.controlLabel &&
-      message.body.trim().length > 0,
-  );
-
-  if (hasAssistantMessage) {
-    return messages;
-  }
-
-  const traceMessageId = [...projection.runtimeEvents]
-    .reverse()
-    .find(
-      (event) =>
-        (event.kind === "thinking" ||
-          event.kind === "tool-call" ||
-          event.kind === "tool-result") &&
-        event.messageId,
-    )?.messageId;
-
-  return [
-    ...messages,
-    {
-      id: traceMessageId ?? `${projection.id}-running-placeholder`,
-      role: "assistant",
-      body: runningAssistantPlaceholderBody(projection, clockNowMs),
-      isStreaming: true,
-    },
-  ];
-}
-
-function runningAssistantPlaceholderBody(
-  projection: SessionProjection,
-  clockNowMs: number,
-) {
-  const hasModelActivity = projection.runtimeEvents.some(
-    (event) =>
-      event.kind === "thinking" ||
-      event.kind === "tool-call" ||
-      event.kind === "tool-result" ||
-      (event.kind === "message" && event.role === "assistant"),
-  );
-
-  if (hasModelActivity) {
-    return "";
-  }
-
-  const latestRuntimeTimestamp =
-    projection.runtimeEvents[projection.runtimeEvents.length - 1]?.timestamp ??
-    projection.updatedAt;
-  const latestRuntimeTimeMs = Date.parse(latestRuntimeTimestamp);
-  const elapsedMs = Number.isFinite(latestRuntimeTimeMs)
-    ? Math.max(0, clockNowMs - latestRuntimeTimeMs)
-    : 0;
-
-  return elapsedMs >= modelFirstResponseWatchdogMs
-    ? stalledModelResponsePlaceholder
-    : contactingModelPlaceholder;
-}
-
-function isLiveChatRuntimeEvent(
-  event: SessionProjection["runtimeEvents"][number],
-) {
-  return (
-    ((event.kind === "message" || event.kind === "control") &&
-      (event.role === "user" || event.role === "assistant")) ||
-    event.kind === "error"
-  );
-}
-
-function liveRuntimeMessageIdentity(
-  event: SessionProjection["runtimeEvents"][number],
-) {
-  if (event.kind !== "message" || !event.messageId) {
-    return null;
-  }
-
-  return `${event.piSessionId}\u0000${event.messageId}`;
-}
-
-function isAdjacentDuplicateLiveMessageEvent(
-  previousEvent: SessionProjection["runtimeEvents"][number] | undefined,
-  event: SessionProjection["runtimeEvents"][number],
-) {
-  return (
-    previousEvent?.kind === "message" &&
-    event.kind === "message" &&
-    previousEvent.piSessionId === event.piSessionId &&
-    previousEvent.role === "assistant" &&
-    event.role === "assistant" &&
-    previousEvent.body.trim() !== "" &&
-    previousEvent.body === event.body
-  );
-}
-
-function runTimelineFromProjection(
-  projection: SessionProjection,
-): RunTimelineItem[] {
-  const items: RunTimelineItem[] = [];
-  const toolItemIndexes = new Map<string, number>();
-  const toolCallTimestamps = new Map<string, string>();
-
-  for (const event of projection.runtimeEvents) {
-    if (event.kind === "thinking") {
-      items.push({
-        id: event.id,
-        kind: "thinking",
-        title: "Thinking",
-        meta: event.body,
-        messageId: event.messageId,
-      });
-      continue;
-    }
-
-    if (event.kind !== "tool-call" && event.kind !== "tool-result") {
-      continue;
-    }
-
-    const toolName = event.title ?? "Tool";
-    const toolIdentity = event.toolCallId ?? event.id;
-    const existingIndex = toolItemIndexes.get(toolIdentity);
-
-    if (event.kind === "tool-call" && !toolCallTimestamps.has(toolIdentity)) {
-      toolCallTimestamps.set(toolIdentity, event.timestamp);
-    }
-
-    if (existingIndex === undefined) {
-      const item: RunTimelineItem = {
-        id: event.id,
-        kind: "tool",
-        title: `Tool: ${toolName}`,
-        meta: event.body,
-        messageId: event.messageId,
-        toolCallId: event.toolCallId,
-        toolName,
-        toolState:
-          event.kind === "tool-result" ? "output-available" : "input-available",
-        argsText: event.kind === "tool-call" ? event.body : undefined,
-        outputText: event.kind === "tool-result" ? event.body : undefined,
-      };
-
-      toolItemIndexes.set(toolIdentity, items.length);
-      items.push(item);
-      continue;
-    }
-
-    const existingItem = items[existingIndex];
-    const callTimestamp = toolCallTimestamps.get(toolIdentity);
-    const durationMs =
-      event.kind === "tool-result" && callTimestamp
-        ? Date.parse(event.timestamp) - Date.parse(callTimestamp)
-        : undefined;
-
-    items[existingIndex] = {
-      ...existingItem,
-      id: `${existingItem.id}:${event.id}`,
-      messageId: existingItem.messageId ?? event.messageId,
-      toolCallId: existingItem.toolCallId ?? event.toolCallId,
-      toolName: existingItem.toolName ?? toolName,
-      toolState:
-        event.kind === "tool-result" ? "output-available" : existingItem.toolState,
-      argsText:
-        event.kind === "tool-call" ? event.body : existingItem.argsText,
-      outputText:
-        event.kind === "tool-result" ? event.body : existingItem.outputText,
-      meta: event.kind === "tool-result" ? event.body : existingItem.meta,
-      ...(durationMs !== undefined && Number.isFinite(durationMs) && durationMs >= 0
-        ? { durationMs }
-        : {}),
-    };
-  }
-
-  return items;
-}
-
-function isReadOnlyProjection(projection: SessionProjection | null) {
-  return Boolean(projection && isSessionProjectionArchived(projection));
-}
-
-function isRuntimeUnavailableProjection(projection: SessionProjection | null) {
-  return Boolean(projection?.stale);
-}
-
 // Pace is a coding-agent workbench, so the empty-state suggestions are
 // coding tasks (not the generic "design a launch page" copy this template
 // started from) - they're what a README screenshot or a first-time user
@@ -1823,331 +1181,6 @@ function ProjectPicker({
         variant="ghost"
         onChange={(value) => {
           onProjectChange(value);
-        }}
-      />
-    </div>
-  );
-}
-
-/**
- * A Location or Branch that can no longer be chosen — a bound Session's
- * checkout, a worktree's base branch — wearing the chrome of the picker it
- * stands in for, so the row does not change type size or metrics when a
- * control becomes a label. `chrome` names that picker: ghost Selector
- * (ProjectPicker, CheckoutStrategyPicker) or ghost Button (GitBranchPicker);
- * the measurements below are theirs.
- *
- * The Selector chrome keeps the chevron's box, hidden: the Draft's Location
- * picker becomes this label at the handoff, and dropping 16px + a gap would
- * pull the Branch chip beside it leftwards. Nothing in the row may move.
- */
-function ComposerStaticChip({
-  chrome,
-  icon: Icon,
-  label,
-  testId,
-}: {
-  chrome: "selector" | "button";
-  icon: typeof FolderClosed;
-  label: string;
-  testId: string;
-}) {
-  const selectorChrome = chrome === "selector";
-
-  return (
-    <span
-      className={`inline-flex h-7 min-w-0 max-w-[16rem] items-center text-sm font-medium ${
-        selectorChrome ? "gap-2 px-3 text-foreground" : "gap-1.5 px-2 text-muted"
-      }`}
-      data-testid={testId}
-    >
-      <Icon aria-hidden="true" className="size-4 shrink-0 text-muted" />
-      <span className="truncate">{label}</span>
-      {selectorChrome ? (
-        <ChevronDown aria-hidden="true" className="invisible size-4 shrink-0" />
-      ) : null}
-    </span>
-  );
-}
-
-/**
- * The composer's Location row, identical in the Session Draft and the Live
- * Session: where the Session runs, which branch it is on, and how much of the
- * context window it holds. Nothing here is swapped out at the handoff — the
- * draft-only Project picker lives above the composer instead.
- */
-function ComposerLocationRow({
-  location,
-  branch,
-  meter,
-}: {
-  /** Absent only in a draft with no target Project: nowhere to run yet. */
-  location?: ReactNode;
-  branch?: ReactNode;
-  meter: ReactNode;
-}) {
-  return (
-    <span className="flex w-full min-w-0 items-center gap-2">
-      {location}
-      {branch}
-      <span className="ml-auto inline-flex shrink-0">{meter}</span>
-    </span>
-  );
-}
-
-function gitBranchPickerLabel(input: {
-  branch: string | null;
-  detached: boolean;
-  oid: string | null;
-}) {
-  if (input.branch) {
-    return input.branch;
-  }
-
-  // Detached HEAD has no branch name; the short oid is the only identity.
-  if (input.detached) {
-    return input.oid ? input.oid.slice(0, 7) : "HEAD";
-  }
-
-  return null;
-}
-
-function gitBranchPickerLabelFromChanges(changes: SessionChanges | null) {
-  if (!changes || changes.state === "non-git") {
-    return null;
-  }
-
-  return gitBranchPickerLabel({
-    branch: changes.head?.branch ?? null,
-    detached: changes.head?.detached ?? false,
-    oid: changes.head?.oid ?? null,
-  });
-}
-
-function checkoutPathLabel(path: string) {
-  const trimmed = path.replace(/\/+$/, "");
-  const index = trimmed.lastIndexOf("/");
-  return index === -1 ? trimmed : trimmed.slice(index + 1);
-}
-
-function occupiedBranchHint(path: string) {
-  return `Already checked out in ${checkoutPathLabel(path)}`;
-}
-
-function gitBranchPickerOptions(
-  branch: string,
-  branches: string[],
-  occupiedBranches: Array<{ branch: string; path: string }>,
-) {
-  const occupied = new Map(
-    occupiedBranches.map((item) => [item.branch, item.path]),
-  );
-  const names = [branch, ...branches.filter((name) => name !== branch)];
-
-  return names.map((name) => ({
-    value: name,
-    label: name,
-    disabled: occupied.has(name),
-  }));
-}
-
-/**
- * Live-composer counterpart of ProjectPicker's ghost chip, with the searchable
- * menu chrome of ModelSelectorControl: `gap-1 p-1` around the field and list,
- * balanced rows so names are not flush against the popover edge. Selecting a
- * remote-only name creates a local tracking branch; occupied worktrees stay
- * visible but unselectable.
- */
-function GitBranchPicker({
-  branch,
-  branches,
-  occupiedBranches,
-  triggerLabel = branch,
-  onBranchChange,
-}: {
-  branch: string;
-  branches: string[];
-  occupiedBranches: Array<{ branch: string; path: string }>;
-  /** What the chip reads; a worktree's base says "from <branch>". */
-  triggerLabel?: string;
-  onBranchChange: (branch: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [isOpen, setIsOpen] = useState(false);
-  const options = gitBranchPickerOptions(branch, branches, occupiedBranches);
-  const needle = query.trim().toLowerCase();
-  const listed = needle
-    ? options.filter((option) => option.label.toLowerCase().includes(needle))
-    : options;
-
-  return (
-    <div className="min-w-0 max-w-full" data-testid="git-branch-status">
-      <Popover
-        alignment="start"
-        isOpen={isOpen}
-        label="Git branch"
-        placement="above"
-        content={
-          <div
-            className="flex w-full flex-col gap-1 p-1"
-            data-testid="git-branch-status-menu"
-          >
-            <TextInput
-              isLabelHidden
-              label="Search branches"
-              placeholder="Search branches..."
-              size="sm"
-              value={query}
-              width="100%"
-              onChange={setQuery}
-            />
-            <List
-              aria-label="Git branch"
-              className="max-h-72 overflow-y-auto"
-              density="balanced"
-            >
-              {listed.map((option) => {
-                const occupied = occupiedBranches.find(
-                  (item) => item.branch === option.value,
-                );
-                return (
-                  <ListItem
-                    description={
-                      occupied ? occupiedBranchHint(occupied.path) : undefined
-                    }
-                    endContent={
-                      option.value === branch ? (
-                        <Check aria-hidden="true" className="size-4 shrink-0" />
-                      ) : undefined
-                    }
-                    isDisabled={option.disabled}
-                    isSelected={option.value === branch}
-                    key={option.value}
-                    label={option.label}
-                    role="option"
-                    startContent={
-                      <GitBranch
-                        aria-hidden="true"
-                        className="size-4 shrink-0 text-muted"
-                      />
-                    }
-                    onClick={() => {
-                      if (option.disabled || option.value === branch) {
-                        return;
-                      }
-
-                      onBranchChange(option.value);
-                      setIsOpen(false);
-                      setQuery("");
-                    }}
-                  />
-                );
-              })}
-            </List>
-          </div>
-        }
-        onOpenChange={(open) => {
-          setIsOpen(open);
-          if (!open) {
-            setQuery("");
-          }
-        }}
-      >
-        <Button
-          className="min-w-0 max-w-full flex-nowrap gap-1.5 px-2 text-muted"
-          data-testid="git-branch-status-trigger"
-          label="Git branch"
-          size="sm"
-          variant="ghost"
-        >
-          <span className="flex min-w-0 items-center gap-1.5">
-            <GitBranch
-              aria-hidden="true"
-              className="size-4 shrink-0"
-              data-testid="git-branch-status-icon"
-            />
-            <span className="truncate">{triggerLabel}</span>
-            <ChevronDown aria-hidden="true" className="size-4 shrink-0" />
-          </span>
-        </Button>
-      </Popover>
-    </div>
-  );
-}
-
-const checkoutModeLabels: Record<SessionDraftCheckoutMode, string> = {
-  local: "Project folder",
-  worktree: "Git worktree",
-};
-
-function checkoutModeToExecutionMode(
-  checkoutMode: SessionDraftCheckoutMode,
-): CreateSessionFromDraftInput["executionMode"] {
-  return checkoutMode === "worktree" ? "background" : "foreground";
-}
-
-function CheckoutStrategyPicker({
-  selectedCheckoutMode,
-  onCheckoutModeChange,
-}: {
-  selectedCheckoutMode: SessionDraftCheckoutMode;
-  onCheckoutModeChange: (checkoutMode: SessionDraftCheckoutMode) => void;
-}) {
-  return (
-    <div className="max-w-full" data-testid="checkout-strategy-picker">
-      <Selector
-        data-testid="checkout-strategy-trigger"
-        isLabelHidden
-        label="Where to work"
-        placement="below"
-        renderOption={(option) => (
-          <SelectorOption label={option.label} icon={option.icon}
-            description={option.value === "local"
-              ? "Edit files directly in the selected project."
-              : "Create a separate Git worktree for this chat."} />
-        )}
-        options={[
-          {
-            value: "local",
-            label: checkoutModeLabels.local,
-            icon: (
-              <Computer
-                aria-hidden="true"
-                className="pigui-compact-menu-item-icon text-muted"
-                data-testid="checkout-strategy-local-icon"
-              />
-            ),
-          },
-          {
-            value: "worktree",
-            label: checkoutModeLabels.worktree,
-            icon: (
-              <FolderLibrary
-                aria-hidden="true"
-                className="pigui-compact-menu-item-icon text-muted"
-              />
-            ),
-          },
-        ]}
-        size="sm"
-        startIcon={
-          selectedCheckoutMode === "worktree" ? (
-            <FolderLibrary
-              aria-hidden="true"
-              className="size-4 shrink-0 text-muted"
-            />
-          ) : (
-            <Computer
-              aria-hidden="true"
-              className="size-4 shrink-0 text-muted"
-              data-testid="checkout-strategy-local-icon"
-            />
-          )
-        }
-        value={selectedCheckoutMode}
-        variant="ghost"
-        onChange={(value) => {
-          onCheckoutModeChange(value === "worktree" ? "worktree" : "local");
         }}
       />
     </div>
@@ -2556,18 +1589,6 @@ function SessionDraftComposer({
       </div>
     </section>
   );
-}
-
-function checkoutModeLabel(mode: string) {
-  if (mode === "foreground-local") {
-    return "Foreground local checkout";
-  }
-
-  if (mode === "managed-worktree") {
-    return "Pace-managed worktree";
-  }
-
-  return mode;
 }
 
 function changeKindLabel(kind: SessionChangedFile["kind"]) {
@@ -3152,9 +2173,7 @@ function LiveSessionColumn({
 }) {
   // The retry control under a failed run reads the same live set as the composer.
   const visibleModels = useVisibleModels();
-  const [registryProjects, setRegistryProjects] = useState(() =>
-    getVisibleProjectRegistry(),
-  );
+  const registryProjects = useVisibleProjectRegistry();
   const fallbackProject: ProjectRegistryEntry = isChatProjectId(projectId)
     ? chatWorkspaceListEntry()
     : {
@@ -3220,14 +2239,6 @@ function LiveSessionColumn({
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const stoppingRun = stoppingSessionId !== null && stoppingSessionId === liveProjection?.id;
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
-
-  useEffect(
-    () =>
-      subscribeProjectRegistry(() =>
-        setRegistryProjects(getVisibleProjectRegistry()),
-      ),
-    [],
-  );
 
   useEffect(() => {
     setSessionDraft(getVisibleSessionDraft());
@@ -4323,9 +3334,7 @@ export function AgentWorkspaceSessionsPage() {
   const [browserDevelopmentData] = useState(() =>
     shouldUseBrowserDevelopmentData(),
   );
-  const [registryProjects, setRegistryProjects] = useState(() =>
-    getVisibleProjectRegistry(),
-  );
+  const registryProjects = useVisibleProjectRegistry();
   const {
     sessionProjections,
     sessionsHydrated,
@@ -4417,14 +3426,6 @@ export function AgentWorkspaceSessionsPage() {
       setDockOpen(true);
     }
   }, [pendingChangeLink, sessionChanges.changes, sessionChanges.loading, sessionChanges.refreshing, selectedSessionProjection, showDraft]);
-
-  useEffect(
-    () =>
-      subscribeProjectRegistry(() =>
-        setRegistryProjects(getVisibleProjectRegistry()),
-      ),
-    [],
-  );
 
   useEffect(() => {
     setTerminalInstanceCount(0);

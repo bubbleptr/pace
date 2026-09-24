@@ -54,7 +54,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 
 外壳使用 Astryx `ChatComposer elevation="low"`，保留既有底色、24px 外观圆角对应的 token 计算和内容间距；不再使用 flat 变体的 border / inset ring。纯外阴影仅在 `chat.css` 的 Composer 作用域内定义，不影响 TextInput；neutral 默认 elevation token 在深色下带 inset 高光，因此这里用 `--color-shadow` 与 spacing token 组合替代。默认、悬停、聚焦保持同一层阴影，文件拖入时外阴影带强调色，不另加描边；强制颜色模式保留系统色聚焦轮廓。Design 的既有 ready / streaming / error 示例直接反映当前样式。
 
-`footer` 是一条**恒定高度**的插槽（`min-height: var(--size-element-sm)`，一行控件），不是"有内容才出现"的行。`agent-workspace.tsx` 用它装 **Location 行**：`[Location] [Branch] …… (用量环)`，空 draft 和会话内**内容完全一致**，提交时不做任何替换，composer 因此不会改变高度。三个轴不能混：
+`footer` 是一条**恒定高度**的插槽（`min-height: var(--size-element-sm)`，一行控件），不是"有内容才出现"的行。`agent-workspace.tsx` 用它装 **Location 行**（`ComposerLocationRow`，与各 picker 同住 `entities/checkout/`）：`[Location] [Branch] …… (用量环)`，空 draft 和会话内**内容完全一致**，提交时不做任何替换，composer 因此不会改变高度。三个轴不能混：
 
 - **Project**（在哪个项目）是 draft 的输入，会话建好后已隐含，所以 `ProjectPicker` 放在**标题下方、composer 上方**，随 hero 一起淡出，不进 footer。
 - **Location**（在哪跑）draft 时是 `CheckoutStrategyPicker`（Project folder / Git worktree），会话内冻结为标签（`ComposerStaticChip`，`chrome="selector"` 复刻 ghost Selector 的 28px 高、14px/500 字、12px 横向内边距与图标尺寸，chevron 用 `invisible` 保留占位（只是不画出来）——draft 的 Location 选择器交接后变成这个标签，少掉 16px + gap 会把右边的 Branch chip 往左拽，行内任何东西都不许移动；Branch 侧的静态标签用 `chrome="button"` 复刻 ghost Button 的 8px 内边距与 muted 色）。Location 的图标是"地方"不是 ref：Project folder 用 `Computer`，Git worktree 用 `FolderLibrary`，**不要用 `GitBranch`**（会和旁边的 Branch chip 撞图形）。Chat 工作区两态都显示 "Chat"，且不渲染 Branch。
