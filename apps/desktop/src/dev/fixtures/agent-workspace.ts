@@ -2,7 +2,7 @@
 // reads it only behind shouldUseBrowserDevelopmentData(); nothing takes it as a
 // default prop.
 import { createSessionProjection, type SessionProjection } from "@/entities/session/session-projection";
-import { browserDevelopmentProjectId } from "@/shared/browser-development-data";
+import { browserDevelopmentProjectId } from "@/dev/browser-development-data";
 import type { AgentWorkspaceFixture } from "@/widgets/live-chat";
 
 export const fixtureWorkspace: AgentWorkspaceFixture = {

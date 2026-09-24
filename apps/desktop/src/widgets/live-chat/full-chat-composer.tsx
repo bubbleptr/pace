@@ -1,7 +1,7 @@
 import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
-import { ModelSelectorControl } from "@/shared/ui/model-selector/model-selector-control";
+import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
 import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,

@@ -11,7 +11,7 @@
 // empty set is the user's choice and hides everything.
 
 import { useSyncExternalStore } from "react";
-import type { ModelRef } from "@/shared/ui/model-selector/model-selector-logic";
+import type { ModelRef } from "@/entities/model/model-selector/model-selector-logic";
 
 export const visibleModelsStorageKey = "pigui.visibleModels.v1";
 

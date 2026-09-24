@@ -3,7 +3,7 @@ import {
   getProjectRegistry,
   subscribeProjectRegistry,
 } from "@/entities/project/project-registry";
-import { getProjectRegistryWithBrowserDevelopmentFallback } from "@/shared/browser-development-data";
+import { getProjectRegistryWithBrowserDevelopmentFallback } from "@/dev/browser-development-data";
 
 export function getVisibleProjectRegistry() {
   return getProjectRegistryWithBrowserDevelopmentFallback(getProjectRegistry());

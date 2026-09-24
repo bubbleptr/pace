@@ -1,6 +1,6 @@
 # 对话、Composer、思维链
 
-三类自建组件都住在 `apps/desktop/src/shared/ui/chat/`、`composer-attachments/`、`model-selector/`。**页面不直接 import `@astryxdesign/core/Chat`**：Astryx 的 ChatMessage / ChatComposer 已被下面的组件包住并修正了字号（Astryx 根字号 16px，我们钉到 14px）与滚动行为。
+三类自建组件住在 `apps/desktop/src/shared/ui/chat/`、`shared/ui/composer-attachments/` 与 `entities/model/model-selector/`（模型选择器依赖 Provider 领域值，ADR-0045 后归入 `entities/model`）。**页面不直接 import `@astryxdesign/core/Chat`**：Astryx 的 ChatMessage / ChatComposer 已被下面的组件包住并修正了字号（Astryx 根字号 16px，我们钉到 14px）与滚动行为。
 
 ## 对话流
 

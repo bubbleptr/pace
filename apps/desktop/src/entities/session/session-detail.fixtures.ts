@@ -1,4 +1,4 @@
-import type { SessionDetail, SessionTurn } from "@/pages/session-detail";
+import type { SessionDetail, SessionTurn } from "@pace/core";
 
 const largeOutputLine =
   "large fixture output line with enough text to resemble a verbose file read and tool result payload";

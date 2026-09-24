@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionDetail } from "@/pages/session-detail";
+import type { SessionDetail } from "@pace/core";
 import type { SessionSummary } from "@/entities/session/sessions";
 import {
   invoke,

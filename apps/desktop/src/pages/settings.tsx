@@ -42,7 +42,7 @@ import {
   saveVisibleModels,
 } from "@/entities/model/visible-models";
 import { useUpdateStatus } from "@/entities/update/use-update-status";
-import { isModelVisible } from "@/shared/ui/model-selector/model-selector-logic";
+import { isModelVisible } from "@/entities/model/model-selector/model-selector-logic";
 import { invoke, revealProjectInFinder } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
 import type {

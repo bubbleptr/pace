@@ -72,7 +72,7 @@ import {
 } from "@/entities/session/sessions";
 import { useSessionProjectionsOptional } from "@/entities/session/use-session-projections";
 import { useUpdateStatus } from "@/entities/update/use-update-status";
-import { shouldUseBrowserDevelopmentData } from "@/shared/browser-development-data";
+import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
 import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
 import {

@@ -285,7 +285,7 @@ describe("ChatPromptInput", () => {
     const trigger = readFileSync(
       join(
         process.cwd(),
-        "apps/desktop/src/shared/ui/model-selector/model-selector-control.tsx",
+        "apps/desktop/src/entities/model/model-selector/model-selector-control.tsx",
       ),
       "utf8",
     );

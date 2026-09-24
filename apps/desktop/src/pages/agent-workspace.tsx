@@ -29,7 +29,7 @@ import {
 } from "@/shared/ui/icons";
 import {
   shouldUseBrowserDevelopmentData,
-} from "@/shared/browser-development-data";
+} from "@/dev/browser-development-data";
 import {
   createExecutionCheckoutManager,
   type ExecutionCheckoutManager,

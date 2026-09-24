@@ -2,10 +2,10 @@ import { Button } from "@astryxdesign/core/Button";
 import { ChatConversation } from "@/shared/ui/chat/chat-conversation";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
-import { ModelSelectorControl } from "@/shared/ui/model-selector/model-selector-control";
+import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RuntimePromptImage } from "@pace/core";
-import { getBrowserDevelopmentSessionDraft } from "@/shared/browser-development-data";
+import { getBrowserDevelopmentSessionDraft } from "@/dev/browser-development-data";
 import { type ExecutionCheckoutManager } from "@/entities/checkout/execution-checkout";
 import {
   getProjectGitSummary,
