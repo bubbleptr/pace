@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { resolveAppLanding } from "@/app/app-landing";
+import { resolveAppLanding } from "@/pages/app-landing-route";
 import { getVisibleProjectRegistry } from "@/entities/project/visible-registry";
 import { ensureSessionDraft, getSessionDraft } from "@/entities/session/session-drafts";
 

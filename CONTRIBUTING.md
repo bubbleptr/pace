@@ -47,11 +47,12 @@ Before you open it:
 
 ```sh
 bun run typecheck
+bun run lint
 bun run test
 bun run build
 ```
 
-All three must be green. Also:
+All four must be green. Also:
 
 - An [ADR](docs/adr/) when the change moves an architectural boundary or a product term.
 - A [`CONTEXT.md`](CONTEXT.md) update in the same PR when vocabulary changes. Terms there are the names used in code, tests, and issues.

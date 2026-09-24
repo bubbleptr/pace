@@ -422,7 +422,6 @@ export function PiTrajectoryStrip({
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightRange?.[0], highlightRange?.[1], widthMode, turns.length]);
 
   const laneLabels = ["Input", "Model", "Tools"];

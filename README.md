@@ -217,13 +217,14 @@ Toolchain: Bun 1.3.x (workspaces and scripts), Node 24 (Electron's runtime and V
 
 ```bash
 bun run typecheck        # tsc --noEmit across the workspace
+bun run lint             # ESLint: FSD import direction in apps/desktop/src (ADR-0045)
 bun run test             # vitest: unit + contract tests (normalizer fixtures, gateway, persistence)
 bun run test:e2e         # Playwright smoke tests against the dev Electron build
 bun run test:release     # release script and publish behavior tests
 bun run build            # typecheck + electron-vite build
 ```
 
-Before opening a PR, `typecheck`, `test` and `build` must be green; the manual `Validate macOS ARM64` workflow runs packaging and the packaged-app E2E on demand.
+Before opening a PR, `typecheck`, `lint`, `test` and `build` must be green; the manual `Validate macOS ARM64` workflow runs packaging and the packaged-app E2E on demand.
 
 Packaging:
 
