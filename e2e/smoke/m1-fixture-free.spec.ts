@@ -109,7 +109,23 @@ test.describe("M2: Reliable lifecycle", () => {
   });
 
   test("restarts the killed backend and reloads persisted projections", async () => {
-    const testApp = await launchPace({ seedSession: true, seedPreflightAuth: true });
+    // A second Session this renderer never views: ADR-0044 §5 keeps a viewed
+    // (live-owned) projection wholesale across rehydrate, so only a record
+    // the renderer does not own proves the restart re-read the store.
+    const testApp = await launchPace({
+      seedSession: true,
+      seedPreflightAuth: true,
+      projections: (seeded) => [
+        seeded,
+        {
+          ...seeded,
+          sessionId: "e2e-background-session",
+          runtimeId: "e2e-background-runtime",
+          piSessionId: "e2e-background-pi-session",
+          initialPrompt: "Background before restart",
+        },
+      ],
+    });
 
     try {
       await openSession(
@@ -117,6 +133,9 @@ test.describe("M2: Reliable lifecycle", () => {
         testApp.project!,
         testApp.projection!,
       );
+      await expect(
+        sessionRowButton(testApp.window, "Background before restart"),
+      ).toBeVisible();
       await testApp.window.evaluate(() => {
         window.__paceE2EBackendLifecycle = [];
         window.pace!.onBackendEvent((event) => {
@@ -131,13 +150,16 @@ test.describe("M2: Reliable lifecycle", () => {
         });
       });
 
-      const reloadedProjection = {
+      // The row above means the backend's startup list (the one pass that
+      // re-saves records) is done; this record has no journal to heal anyway.
+      await testApp.writeProjection({
         ...testApp.projection!,
+        sessionId: "e2e-background-session",
+        runtimeId: "e2e-background-runtime",
+        piSessionId: "e2e-background-pi-session",
         initialPrompt: "Reloaded after backend restart",
         updatedAt: "2026-07-19T00:02:00.000Z",
-      };
-
-      await testApp.writeProjection(reloadedProjection);
+      });
       const killedGeneration = await testApp.window.evaluate(() =>
         window.pace!.invoke<{ generation: number }>("__e2e_kill_backend"),
       );
@@ -162,6 +184,12 @@ test.describe("M2: Reliable lifecycle", () => {
         ]);
       await expect(
         sessionRowButton(testApp.window, "Reloaded after backend restart"),
+      ).toBeVisible();
+      await expect(
+        sessionRowButton(testApp.window, testApp.projection!.initialPrompt),
+      ).toBeVisible();
+      await expect(
+        testApp.window.getByRole("heading", { name: testApp.projection!.initialPrompt }),
       ).toBeVisible();
       await expect(testApp.window).toHaveTitle(/Pace/);
     } finally {

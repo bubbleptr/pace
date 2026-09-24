@@ -58,6 +58,11 @@ export default function(pi) {
 }`,
       "../data/sessions/e2e-pi-session.jsonl": history.map(event => JSON.stringify(event)).join("\n") + "\n",
     },
+    projections: (seeded, root) => [
+      { ...seeded, initialPrompt: "Historical question", modelSelection: { provider: "pace-test", modelId: "probe", thinkingLevel: "off" } },
+      ...["second", "third"].map(suffix => ({ ...seeded, sessionId: `cold-${suffix}`, piSessionId: `pi-${suffix}`,
+        initialPrompt: `Saved ${suffix} question`, sessionFile: join(root, `missing-${suffix}.jsonl`) })),
+    ],
   });
   const { window, projection } = application;
   const root = dirname(application.project!.path);
@@ -70,15 +75,6 @@ export default function(pi) {
     return state;
   };
   try {
-    await application.writeProjection({ ...projection!, initialPrompt: "Historical question", modelSelection: { provider: "pace-test", modelId: "probe", thinkingLevel: "off" } });
-    for (const suffix of ["second", "third"]) {
-      await application.writeProjection({ ...projection!, sessionId: `cold-${suffix}`, piSessionId: `pi-${suffix}`,
-        initialPrompt: `Saved ${suffix} question`, sessionFile: join(root, `missing-${suffix}.jsonl`) });
-    }
-    // Fixture edits happen outside the store; restart to discard its read cache.
-    await window.evaluate(() => window.pace!.invoke("__e2e_kill_backend").catch(() => undefined));
-    await expect.poll(async () => snapshot().then(state => state.executionState, () => "restarting")).toBe("cold");
-    await window.reload();
     for (const suffix of ["second", "third"]) {
       await window.getByRole("button", { name: new RegExp(`^Saved ${suffix} question`) }).click();
       await expect(window.getByLabel("Live Chat messages")).toContainText(`Saved ${suffix} question`);

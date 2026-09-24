@@ -68,6 +68,11 @@ export type PaceTestApplication = {
   projection: E2ESessionProjection | null;
   readProjection(): Promise<E2ESessionProjection | null>;
   resizeWindow(width: number, height: number): Promise<void>;
+  /**
+   * Overwrites a projection file under the running backend, which may still
+   * re-save its cached copy over it. Seed with `projections` when the spec
+   * does not need the backend alive at write time.
+   */
   writeProjection(projection: E2ESessionProjection): Promise<void>;
   close(): Promise<void>;
 };
@@ -89,6 +94,16 @@ type LaunchPaceOptions = {
   emptyPath?: boolean;
   environment?: Record<string, string>;
   agentFiles?: Record<string, string>;
+  /**
+   * Replaces the seeded Session Projection with these records before the app
+   * starts. The backend owns the projection files once it runs (its first
+   * list heals and re-saves them from its cache), so records a spec needs up
+   * front must land here rather than through `writeProjection`.
+   */
+  projections?: (
+    seeded: E2ESessionProjection,
+    testRoot: string,
+  ) => E2ESessionProjection[];
 };
 
 async function git(cwd: string, ...args: string[]) {
@@ -266,11 +281,12 @@ export async function launchPace(
     });
   }
 
-  if (projection) {
-    await writeJson(
-      projectionFilePath(dataDirectory, projection.sessionId),
-      projection,
-    );
+  const seededProjections = projection
+    ? options.projections?.(projection, testRoot) ?? [projection]
+    : [];
+
+  for (const record of seededProjections) {
+    await writeJson(projectionFilePath(dataDirectory, record.sessionId), record);
   }
 
   for (const [relative, contents] of Object.entries(options.agentFiles ?? {})) {
@@ -320,7 +336,9 @@ export async function launchPace(
     app,
     window,
     project,
-    projection,
+    projection:
+      seededProjections.find((record) => record.sessionId === projection?.sessionId) ??
+      projection,
     async readProjection() {
       if (!projection) {
         return null;
