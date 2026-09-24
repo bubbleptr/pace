@@ -16,7 +16,7 @@
 每个 surface 的第一行用 `SessionSurfaceBar`（`h-10`，左槽状态 `children`、右槽 `actions`；动作槽暂时为空也保留）。多实例 surface 的实例条用 `SessionSurfaceTabs`（每 tab 自带关闭、末尾新建、`isExited` 态）。**不用 Astryx `Toolbar` / `Tab`**：前者高度钉不到 40px 且 roving tabindex 与实例条的方向键打架，后者渲染为单个 `<button>` 装不下关闭按钮。
 
 ```tsx
-// 正确 — session-terminal-panel.tsx:306
+// 正确 — widgets/session-dock/session-terminal-panel.tsx:306
 <SessionSurfaceBar>
   <SessionSurfaceTabs activeId={activeTerminalId} addLabel="New terminal" icon={Terminal}
     items={instances.map((i, n) => ({ id: i.terminalId, label: `Terminal ${n + 1}`, hint: i.cwd, isExited: i.status === "exited" }))}
