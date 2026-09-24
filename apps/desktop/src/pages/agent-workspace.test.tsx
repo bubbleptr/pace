@@ -59,7 +59,21 @@ import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 import { footerOf } from "@/test/composer-footer";
-import { FixtureSessionsView, render } from "@/test/render";
+import { render } from "@/test/render";
+import { fixtureWorkspace } from "@/dev/fixtures/agent-workspace";
+
+type SessionsViewProps = ComponentProps<typeof AgentWorkspaceSessionsView>;
+
+// The View requires its Project; tests that do not care which one render the
+// fixture Workspace.
+function FixtureSessionsView({
+  projectId = fixtureWorkspace.id,
+  workspace = fixtureWorkspace,
+  ...props
+}: Omit<SessionsViewProps, "projectId" | "workspace"> &
+  Partial<Pick<SessionsViewProps, "projectId" | "workspace">>) {
+  return <AgentWorkspaceSessionsView projectId={projectId} workspace={workspace} {...props} />;
+}
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
 // project sessions live in the aria-controls group owned by the project

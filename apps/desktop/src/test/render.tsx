@@ -1,10 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as renderWithoutQuery } from "@testing-library/react";
-import type { ComponentProps } from "react";
-import { fixtureWorkspace } from "@/dev/fixtures/agent-workspace";
 import { SessionProjectionsStoreProvider } from "@/entities/session/use-session-projections";
 import { type SessionProjectionsStore } from "@/entities/session/session-projections-store";
-import { AgentWorkspaceSessionsView } from "@/pages/agent-workspace";
 
 // `store` hands the view a Session Projections store the test drives, as the
 // app provider does.
@@ -25,17 +22,4 @@ export function render(
     ),
   });
   return Object.assign(result, { queryClient });
-}
-
-type SessionsViewProps = ComponentProps<typeof AgentWorkspaceSessionsView>;
-
-// The View requires its Project; tests that do not care which one render the
-// fixture Workspace.
-export function FixtureSessionsView({
-  projectId = fixtureWorkspace.id,
-  workspace = fixtureWorkspace,
-  ...props
-}: Omit<SessionsViewProps, "projectId" | "workspace"> &
-  Partial<Pick<SessionsViewProps, "projectId" | "workspace">>) {
-  return <AgentWorkspaceSessionsView projectId={projectId} workspace={workspace} {...props} />;
 }
