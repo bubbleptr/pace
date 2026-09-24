@@ -7,7 +7,7 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { ModelCatalogRefreshResult, RuntimeModelControls } from "@pace/core";
 import { invoke, onBackendEvent as onRuntimeBackendEvent } from "@/shared/runtime";
-import { visibleModelsOf } from "@/shared/ui/model-selector/model-selector-logic";
+import { visibleModelsOf } from "@/entities/model/model-selector/model-selector-logic";
 import { useVisibleModels } from "./visible-models";
 
 const modelCatalogQueryKey = ["available-model-controls"] as const;

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ComponentStackEntry } from "./fiber-stack";
@@ -21,6 +21,25 @@ describe("uiRegions registry", () => {
       expect(context, `missing CONTEXT.md term: ${region.term}`).toContain(
         `**${region.term}**:`,
       );
+    }
+  });
+
+  it("only binds component names declared under apps/desktop/src", () => {
+    // Bindings are display-name strings, so a rename or a lost component would
+    // otherwise leave a region silently unmatched.
+    const root = resolve(process.cwd(), "apps/desktop/src");
+    const source = readdirSync(root, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.tsx?$/.test(file))
+      .map((file) => readFileSync(resolve(root, file), "utf8"))
+      .join("\n");
+
+    for (const region of uiRegions) {
+      for (const name of region.match.components ?? []) {
+        expect(
+          new RegExp(`\\b(?:function|const)\\s+${name}\\b`).test(source),
+          `no declaration of component ${name} (region ${region.term})`,
+        ).toBe(true);
+      }
     }
   });
 

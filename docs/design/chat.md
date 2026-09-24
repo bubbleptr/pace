@@ -1,6 +1,6 @@
 # 对话、Composer、思维链
 
-三类自建组件都住在 `apps/desktop/src/shared/ui/chat/`、`composer-attachments/`、`model-selector/`。**页面不直接 import `@astryxdesign/core/Chat`**：Astryx 的 ChatMessage / ChatComposer 已被下面的组件包住并修正了字号（Astryx 根字号 16px，我们钉到 14px）与滚动行为。
+三类自建组件住在 `apps/desktop/src/shared/ui/chat/`、`shared/ui/composer-attachments/` 与 `entities/model/model-selector/`（模型选择器依赖 Provider 领域值，ADR-0045 后归入 `entities/model`）。**页面不直接 import `@astryxdesign/core/Chat`**：Astryx 的 ChatMessage / ChatComposer 已被下面的组件包住并修正了字号（Astryx 根字号 16px，我们钉到 14px）与滚动行为。
 
 ## 对话流
 
@@ -9,7 +9,7 @@
 消息列表用 `ChatConversation`（粘底滚动、"新消息"按钮），每条消息用复合件 `ChatMessage.User` / `.Assistant` → `.Body` → `.Content`；动作行是 `ChatMessageActions` 及其 `.Copy` / `.ThumbsUp` / `.ThumbsDown`。没有 `sender` prop，角色由子组件名决定。
 
 ```tsx
-// 正确 — agent-workspace.tsx:406
+// 正确 — widgets/live-chat/live-chat-message.tsx
 <ChatMessage.Assistant>
   <ChatMessage.Body>
     <ChatMessage.Content>…</ChatMessage.Content>
@@ -45,7 +45,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 `status: "ready" | "submitted" | "streaming" | "error"`，默认 `"ready"`。没有 `"idle"`、没有 `"loading"`。两组布尔决定运行中的行为：`allowSubmitWhileRunning`（队列模式允许提交）、`lockInputOnRun`（普通发送锁定输入）。提交正在等待接受时，统一关闭队列提交并锁定输入，使用已有 `submitted` 状态；下方用 `<TextShimmer>Sending message…</TextShimmer>` 表示等待。失败保留草稿和历史，错误留在 composer。插槽：`startActions`（Plus 菜单 + 模型选择器）、`endActions`、`drawer`（附件抽屉）、`footer`（见下）。
 
 ```tsx
-// 正确 — agent-workspace.tsx:833
+// 正确 — widgets/live-chat/full-chat-composer.tsx
 <PromptInput allowSubmitWhileRunning={queueMode} lockInputOnRun={!queueMode} status={promptStatus} … />
 
 // 错误 — status 集合里没有 "loading"，TS 会拒绝，别去扩这个联合
@@ -54,9 +54,9 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 
 外壳使用 Astryx `ChatComposer elevation="low"`，保留既有底色、24px 外观圆角对应的 token 计算和内容间距；不再使用 flat 变体的 border / inset ring。纯外阴影仅在 `chat.css` 的 Composer 作用域内定义，不影响 TextInput；neutral 默认 elevation token 在深色下带 inset 高光，因此这里用 `--color-shadow` 与 spacing token 组合替代。默认、悬停、聚焦保持同一层阴影，文件拖入时外阴影带强调色，不另加描边；强制颜色模式保留系统色聚焦轮廓。Design 的既有 ready / streaming / error 示例直接反映当前样式。
 
-`footer` 是一条**恒定高度**的插槽（`min-height: var(--size-element-sm)`，一行控件），不是"有内容才出现"的行。`agent-workspace.tsx` 用它装 **Location 行**：`[Location] [Branch] …… (用量环)`，空 draft 和会话内**内容完全一致**，提交时不做任何替换，composer 因此不会改变高度。三个轴不能混：
+`footer` 是一条**恒定高度**的插槽（`min-height: var(--size-element-sm)`，一行控件），不是"有内容才出现"的行。两个 composer（`features/session-draft/session-draft-composer.tsx` 与 `widgets/live-chat/full-chat-composer.tsx`）用它装 **Location 行**（`ComposerLocationRow`，与各 picker 同住 `entities/checkout/`）：`[Location] [Branch] …… (用量环)`，空 draft 和会话内**内容完全一致**，提交时不做任何替换，composer 因此不会改变高度。三个轴不能混：
 
-- **Project**（在哪个项目）是 draft 的输入，会话建好后已隐含，所以 `ProjectPicker` 放在**标题下方、composer 上方**，随 hero 一起淡出，不进 footer。
+- **Project**（在哪个项目）是 draft 的输入，会话建好后已隐含，所以 `ProjectPicker`（`features/session-draft/project-picker.tsx`）放在**标题下方、composer 上方**，随 hero 一起淡出，不进 footer。
 - **Location**（在哪跑）draft 时是 `CheckoutStrategyPicker`（Project folder / Git worktree），会话内冻结为标签（`ComposerStaticChip`，`chrome="selector"` 复刻 ghost Selector 的 28px 高、14px/500 字、12px 横向内边距与图标尺寸，chevron 用 `invisible` 保留占位（只是不画出来）——draft 的 Location 选择器交接后变成这个标签，少掉 16px + gap 会把右边的 Branch chip 往左拽，行内任何东西都不许移动；Branch 侧的静态标签用 `chrome="button"` 复刻 ghost Button 的 8px 内边距与 muted 色）。Location 的图标是"地方"不是 ref：Project folder 用 `Computer`，Git worktree 用 `FolderLibrary`，**不要用 `GitBranch`**（会和旁边的 Branch chip 撞图形）。Chat 工作区两态都显示 "Chat"，且不渲染 Branch。
 - **Branch** draft 时：Project folder 显示当前分支（可切，即原目录 checkout）；Git worktree 显示基准分支 "from main"，同样是 `GitBranchPicker`（`triggerLabel` 加 "from " 前缀），选项来自 `get_project_git_summary` 的 `branches`；选中只写进 draft 的 `baseRef`，**不** checkout 原目录，worktree 以该分支为起点（remote-only 分支按其 remote-tracking ref），未选时仍从 HEAD 切出；切换项目时 `baseRef` 清空，项目已不再列出的 `baseRef` 视为未选。Git 回答了但没有分支（非仓库或 detached HEAD，`branch: null`）时，两种 Location 都显示静态 "No branch"（`ComposerStaticChip chrome="button"`），不可点；读取失败则不渲染 Branch，并在控制台 `console.warn` 项目路径与错误。会话内是既有 `GitBranchPicker`；Git 还没回答新 checkout 时，保持 draft 的分支值，不出现空槽。
 - 用量环两态都在：draft 是空的灰环（`usage={null}`），会话内填充。
@@ -67,7 +67,7 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 
 ### 其余 Composer 件
 
-- `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态，composer 下方，`SESSION_DRAFT_SUGGESTED_PROMPTS`），点选后把文案填入草稿并聚焦输入框。文案是编码任务示例（`Explain this repo's architecture` / `Fix the failing test` / `Add a CLI flag with docs` / `Review my uncommitted changes`），不是通用文案——Pace 是编码 agent 工作台，README 截图里不该出现 "Design a launch page" 这类无关示例。
+- `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（Session Draft 的空态，composer 下方，`SESSION_DRAFT_SUGGESTED_PROMPTS`，住在 `features/session-draft/session-draft-composer.tsx`），点选后把文案填入草稿并聚焦输入框。文案是编码任务示例（`Explain this repo's architecture` / `Fix the failing test` / `Add a CLI flag with docs` / `Review my uncommitted changes`），不是通用文案——Pace 是编码 agent 工作台，README 截图里不该出现 "Design a launch page" 这类无关示例。
 - `ChatQueuedMessage`：队列里的一条；`presence: "none" | "enter" | "exit"` 由 `usePresenceList` 给，不要自己传 `"enter"`。只有 `pending` 的整卡 `draggable`；拖动中 `isDragging`（45% 透明），目标位 `dropTarget: "before" | "after"`（顶/底边 accent 线，由指针落在卡片上半或下半决定）。`isWithdrawn` 显示 "Withdrawn"，`isSteered` 显示 "Steered"；两者都是终态，无动作、不可拖。重排 RPC 进行中卡片不可拖、drop 忽略。Pi follow-up mode 为 `all` 时整卡不可拖、drop 忽略。
 - `ModelSelectorControl`：选中项来自 projection；冷会话缺少目录时异步读取 `list_available_model_controls`，不启动 Agent，读取失败不阻塞历史或发送。Session 创建期间 projection 还没有自己的 controls，此时选中项回落到 draft 提交时写入的 `last model selection`，目录则复用本次 renderer 已读到的那份，选择器因此在 Draft → Live 交接中不会消失；创建期 `isDisabled`。真正切换模型会准备运行环境。`isDisabled` 在队列模式或提交等待期间为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
 - `ComposerInsertMenu`：一级只有 Add files / Use skill / Chat commands / Use plugin 四项；技能与插件走 `CommandPalette` 搜索。`commands` 默认 `/compact` `/clear`。
@@ -80,7 +80,7 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 `phase: "hidden" | "thinking" | "acting" | "answering" | "settled"` 必填，`"hidden"` 返回 null。计时只有一个入口：run 期间传 `startedAtMs`（组件自己走表），结束后传 `elapsedMs`；两者不同时传。没有 `startedAtMs` 就不显示数字，因为"从挂载起算"会把页面打开时长当成等待。`hasSteps={false}` 时头部退化为纯标签。`outcome` 只有 `"failed"` 一个值，用于「Failed after Ns」。
 
 ```tsx
-// 正确 — agent-workspace.tsx:471
+// 正确 — widgets/live-chat/live-chat-message.tsx
 <ChainOfThought {...(ticking ? { startedAtMs: view.anchorMs } : { elapsedMs: view.elapsedMs })}
   hasSteps={view.steps.length > 0} phase={view.phase} outcome={view.outcome}>
   <ChainOfThought.Steps>{steps}</ChainOfThought.Steps>
@@ -107,4 +107,4 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 
 `TextShimmer` 默认 `tone="default"`：灰色扫光，`Thinking…` / `Loading history…` / `Sending message…` 等运行态占位都用它，`prefers-reduced-motion` 下退化为静态灰字。`tone="brand"` 是 home-hero 专属：珊瑚→黄→蓝扫光，唯一用处是空 draft 态标题里的 "Pace" 字样，reduced motion 下退化为静态三色渐变（不是灰色）。不要把 `tone="brand"` 用在运行态占位上——颜色只标记"Pi 在场"，见 docs/design/brand.md。
 
-打开已有 Session 时先读历史快照；`agent-workspace.tsx` 在消息列表末尾渲染一行 `role="status"` 的 `<TextShimmer>Loading history…</TextShimmer>`（`data-testid="session-history-status"`），与创建阶段的 `session-creation-status` 同一形态；读取成功或失败后移除。已有时间线保持可见，冷会话不因此恢复运行环境。历史读取失败使用原有 Retry；执行准备失败在 composer 显示。不要为它引入骨架屏或 Spinner。
+打开已有 Session 时先读历史快照；`LiveSessionColumn`（`widgets/live-chat/live-session-column.tsx`）在消息列表末尾渲染一行 `role="status"` 的 `<TextShimmer>Loading history…</TextShimmer>`（`data-testid="session-history-status"`），与创建阶段的 `session-creation-status` 同一形态；读取成功或失败后移除。已有时间线保持可见，冷会话不因此恢复运行环境。历史读取失败使用原有 Retry；执行准备失败在 composer 显示。不要为它引入骨架屏或 Spinner。

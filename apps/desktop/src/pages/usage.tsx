@@ -5,7 +5,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { useMemo, useState, type ReactNode } from "react";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import { RefreshCw } from "@/shared/ui/icons";
 import { PiHeatmap } from "@/shared/ui/pi-heatmap";
 import { PiKpi } from "@/shared/ui/pi-kpi";

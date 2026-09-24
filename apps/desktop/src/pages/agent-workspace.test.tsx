@@ -1,8 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as renderWithoutQuery, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { useLayoutEffect, useState, type ComponentProps } from "react";
 import {
   Outlet,
@@ -22,14 +19,9 @@ import type {
 import {
   AgentWorkspaceSessionsPage,
   AgentWorkspaceSessionsView,
-  SessionChangesPanel,
-  SessionToolbarActions,
 } from "@/pages/agent-workspace";
 import { addProjectToRegistry } from "@/entities/project/project-registry";
-import {
-  SessionProjectionsProvider,
-  SessionProjectionsStoreProvider,
-} from "@/entities/session/use-session-projections";
+import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
 import {
   createSessionProjectionsStore,
   type SessionProjectionsStore,
@@ -44,6 +36,7 @@ import {
   type PiRuntimeBridge,
 } from "@/entities/runtime/pi-runtime-bridge";
 import * as inMemoryBridgeModule from "@/entities/runtime/in-memory-pi-runtime-bridge";
+import * as runtimeFactoryModule from "@/entities/runtime/pi-runtime-factory";
 import {
   createInMemoryPiRuntimeBridge,
   type InMemoryPiRuntimeBridge,
@@ -60,37 +53,31 @@ import { createSessionRuntimeModel } from "@/entities/session/session-runtime-mo
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
-import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
 import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
+import { footerOf } from "@/test/composer-footer";
+import { render } from "@/test/render";
+import { fixtureWorkspace } from "@/dev/fixtures/agent-workspace";
 
-// `store` hands the view a Session Projections store the test drives, as the
-// app provider does.
-function render(
-  ui: Parameters<typeof renderWithoutQuery>[0],
-  { store }: { store?: SessionProjectionsStore } = {},
-) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const result = renderWithoutQuery(ui, {
-    wrapper: ({ children }) => (
-      <QueryClientProvider client={queryClient}>
-        {store ? (
-          <SessionProjectionsStoreProvider store={store} runtimeGeneration={0}>
-            {children}
-          </SessionProjectionsStoreProvider>
-        ) : children}
-      </QueryClientProvider>
-    ),
-  });
-  return Object.assign(result, { queryClient });
+type SessionsViewProps = ComponentProps<typeof AgentWorkspaceSessionsView>;
+
+// The View requires its Project; tests that do not care which one render the
+// fixture Workspace.
+function FixtureSessionsView({
+  projectId = fixtureWorkspace.id,
+  workspace = fixtureWorkspace,
+  ...props
+}: Omit<SessionsViewProps, "projectId" | "workspace"> &
+  Partial<Pick<SessionsViewProps, "projectId" | "workspace">>) {
+  return <AgentWorkspaceSessionsView projectId={projectId} workspace={workspace} {...props} />;
 }
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
 // project sessions live in the aria-controls group owned by the project
-// header row. These helpers mirror app-shell.test.tsx.
+// header row. These helpers mirror widgets/app-frame/app-frame.test.tsx.
 function isAstryxSideNavRow(candidate: HTMLElement) {
   return candidate.classList.contains("astryx-side-nav-item");
 }
@@ -337,7 +324,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         event: { ...event, piSessionId: "retry-pi", timestamp: "2026-09-07T10:00:00.000Z" } });
     }
     saveFollowUpDraft(projection.id, "An unsent follow-up");
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" sessionProjection={projection}
       runtimeBridge={bridge} onOpenProviderSettings={onProviders} />);
     await user.click(screen.getByRole("button", { name: "Provider settings" }));
     expect(onProviders).toHaveBeenCalledOnce();
@@ -373,7 +360,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       projection = applySessionProjectionEvent(projection, { type: "runtime-event-received",
         event: { ...event, piSessionId: "retry-model-pi", timestamp: "2026-09-07T10:00:00.000Z" } });
     }
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" sessionProjection={projection}
       runtimeBridge={{ ...baseBridge, configureModel }} />);
     await user.click(screen.getAllByTestId("model-thinking-trigger")[0]);
     await user.click(within(screen.getByRole("dialog")).getByText("Second model"));
@@ -402,12 +389,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     // sessions view mounts; the toolbar appears once a session is selected.
     const navbarActions = await screen.findByTestId("navbar-actions");
 
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/pages/agent-workspace.tsx"), "utf8");
-
-    expect(source).toContain(
-      "Project Sessions keep live Pi work separate from Trajectory and Usage evidence.",
-    );
-    expect(source).not.toContain("Analyze evidence");
     expect(within(liveColumn).queryByText("Evidence preserved")).not.toBeInTheDocument();
     expect(within(liveColumn).queryByText("Analyze preserved")).not.toBeInTheDocument();
 
@@ -1763,7 +1744,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -1828,25 +1809,13 @@ describe("AgentWorkspaceSessionsPage", () => {
       }));
     }
 
-    function footerOf(composerTestId: string) {
-      const footer = screen
-        .getByTestId(composerTestId)
-        .querySelector<HTMLElement>('[data-slot="prompt-input-footer"]');
-
-      if (!footer) {
-        throw new Error(`${composerTestId} has no Location row`);
-      }
-
-      return footer;
-    }
-
     it("names where a Session Draft would run and which branch it would start on", async () => {
       const user = userEvent.setup();
       const loadProjectGitSummary = projectGitLoader("main", ["main", "feat/location-row"]);
       saveSessionDraft("pig-docs", "Draft the Location row");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -1894,7 +1863,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("pig-docs", "Start from the feature branch");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={projectGitLoader("main", ["main", "feat/location-row"])}
@@ -1936,7 +1905,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("chat", "Draft a chat");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="chat"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -1959,38 +1928,13 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(loadProjectGitSummary).not.toHaveBeenCalled();
     });
 
-    it("says there is no branch when the Project is not a repository or its HEAD is detached", async () => {
-      const loadProjectGitSummary = projectGitLoader(null);
-      saveSessionDraft("pig-docs", "Draft outside a branch");
-
-      render(
-        <AgentWorkspaceSessionsView
-          projectId="pig-docs"
-          showDraft
-          loadProjectGitSummary={loadProjectGitSummary}
-          workspace={docsWorkspace}
-        />,
-      );
-
-      await screen.findByTestId("session-draft-composer");
-      const footer = footerOf("session-draft-composer");
-
-      const placeholder = await within(footer).findByTestId("composer-branch-label");
-      expect(placeholder).toHaveTextContent("No branch");
-      // A placeholder, not a way to pick a branch that does not exist.
-      expect(placeholder.closest("button")).toBeNull();
-      expect(
-        within(footer).queryByTestId("git-branch-status-trigger"),
-      ).not.toBeInTheDocument();
-    });
-
     it("keeps the draft Location and branch while the Session is being created", async () => {
       const user = userEvent.setup();
       const loadProjectGitSummary = projectGitLoader("main", ["main"]);
       saveSessionDraft("pig-docs", "Carry the Location row over");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -2038,7 +1982,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft(pigProjectPath, "Retarget the Location row");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId={pigProjectPath}
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -2071,7 +2015,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft(pigProjectPath, "Retarget the base branch");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId={pigProjectPath}
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -2371,7 +2315,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       },
     };
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -2430,15 +2374,25 @@ describe("AgentWorkspaceSessionsPage", () => {
   });
 
   it("creates default Sessions through the runtime bridge factory instead of a fake bridge", () => {
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/pages/agent-workspace.tsx"), "utf8");
+    const createFakeBridge = inMemoryBridgeModule.createInMemoryPiRuntimeBridge;
+    const fakeBridgeSpy = vi.spyOn(inMemoryBridgeModule, "createInMemoryPiRuntimeBridge");
+    const factorySpy = vi
+      .spyOn(runtimeFactoryModule, "createDefaultPiRuntimeBridge")
+      .mockImplementation(() => createFakeBridge());
+    onTestFinished(() => {
+      fakeBridgeSpy.mockRestore();
+      factorySpy.mockRestore();
+    });
 
-    expect(source).toContain("createDefaultPiRuntimeBridge");
-    expect(source).not.toContain("createInMemoryPiRuntimeBridge");
+    render(<FixtureSessionsView projectId="pig" />);
+
+    expect(factorySpy).toHaveBeenCalled();
+    expect(fakeBridgeSpy).not.toHaveBeenCalled();
   });
 
   it("renders completion and failure results inside Live Chat", async () => {
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-results"
         workspace={{
           id: "pig-results",
@@ -2527,7 +2481,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -2680,7 +2634,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       updatedAt: projection.updatedAt,
     });
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={{ ...projection, ...extras }}
@@ -3028,7 +2982,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:03.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3117,7 +3071,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:04.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3185,7 +3139,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:18.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3286,7 +3240,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -3376,7 +3330,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -3553,7 +3507,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={runtimeModelBridge}
         sessionProjection={projection}
@@ -3776,7 +3730,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={steerRaceBridge}
         sessionProjection={projection}
@@ -3864,7 +3818,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     window.pace = { ...createMockApi(), invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"] };
     const projection: SessionProjection = { ...createSessionProjection({ id: "cold-model", projectId: "pig-docs", initialPrompt: "Saved history", createdAt: "2026-09-14T00:00:00.000Z" }),
       status: "completed", creationStage: "accepted", piSessionId: "pi", modelControls: { models: [], selected: { provider: "openai", modelId: "gpt-5.5", thinkingLevel: "high" } } };
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection} runtimeBridge={createInMemoryPiRuntimeBridge()} />);
+    render(<FixtureSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection} runtimeBridge={createInMemoryPiRuntimeBridge()} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_available_model_controls", undefined));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Model and Thinking" }));
@@ -3881,7 +3835,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       status: "completed", creationStage: "accepted", runtimeId: "runtime", piSessionId: "pi-cold",
       runtimeEvents: [{ id: "old", piSessionId: "pi-cold", kind: "message", role: "assistant", body: "Saved answer", timestamp: "2026-09-14T00:00:00.000Z" }],
     };
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
       runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), sendInitialPrompt: send }} />);
     const input = screen.getByPlaceholderText("What do you want to know?");
     await user.type(input, "Continue");
@@ -3907,7 +3861,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     const a = session("a");
     const b = session("b");
-    const view = (projection: SessionProjection) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+    const view = (projection: SessionProjection) => <FixtureSessionsView projectId="pig-docs" showDraft={false}
       sessionProjection={projection} runtimeBridge={runtimeBridge} />;
     const { rerender } = render(view(a));
     await user.type(screen.getByPlaceholderText("What do you want to know?"), "Continue A");
@@ -3944,7 +3898,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       ...createSessionProjection({ id, projectId: "pig-docs", initialPrompt: id, createdAt: "2026-09-14T00:00:00.000Z" }),
       status: "completed", creationStage: "accepted", piSessionId: `pi-${id}`, runtimeId: "runtime",
     });
-    const view = (sessionId: string) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+    const view = (sessionId: string) => <FixtureSessionsView projectId="pig-docs" showDraft={false}
       sessionId={sessionId} runtimeBridge={runtimeBridge} />;
     const { rerender } = render(view("a"), { store: storeWith(runtimeBridge, session("a"), session("b")) });
 
@@ -3999,7 +3953,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         modelControls: { models: [], selected },
       };
       const view = (showDraft = false) => (
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           runtimeBridge={resumingBridge}
           sessionProjection={{ ...projection }}
@@ -4069,7 +4023,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveFollowUpDraft("waiting-session", "Resume from the saved composer");
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         sessionProjection={projection}
         workspace={{
@@ -4144,7 +4098,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveFollowUpDraft("annotated-session", "Half a thought");
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         sessionProjection={projection}
         workspace={{
@@ -4254,7 +4208,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -4364,7 +4318,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -4683,18 +4637,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
-  it("focuses the draft after choosing a suggestion so typing continues at the end", async () => {
-    const user = userEvent.setup();
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-
-    await user.click(await screen.findByRole("button", { name: "Fix the failing test" }));
-
-    const prompt = screen.getByPlaceholderText("Do anything with Pi");
-    expect(prompt).toHaveFocus();
-    await user.keyboard(" for Friday");
-    expect(prompt).toHaveValue("Fix the failing test for Friday");
-  });
-
   it("clears target validation when another control selects a valid chat target", async () => {
     const user = userEvent.setup();
     saveSessionDraft(null, "Keep this draft while choosing its target");
@@ -4757,28 +4699,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.queryByRole("option", { name: "Select Project" })).not.toBeInTheDocument();
   });
 
-  it("explains how the two project execution choices affect files", async () => {
-    const user = userEvent.setup();
-    saveSessionDraft(pigProjectPath, "");
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-    await user.click(await screen.findByTestId("checkout-strategy-trigger"));
-
-    expect(screen.getByText("Edit files directly in the selected project.")).toBeInTheDocument();
-    expect(screen.getByText("Create a separate Git worktree for this chat.")).toBeInTheDocument();
-  });
-
-  it("associates missing-target validation with the project control", async () => {
-    const user = userEvent.setup();
-    saveSessionDraft(null, "Keep my draft after its project is removed");
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-    await user.click(await screen.findByRole("button", { name: "Send" }));
-
-    const target = screen.getByRole("combobox", { name: /Project/ });
-    expect(target).toHaveAttribute("aria-invalid", "true");
-    expect(target).toHaveAccessibleDescription("Choose a project or select No project to continue.");
-    expect(screen.queryByTestId("checkout-strategy-trigger")).not.toBeInTheDocument();
-  });
-
   it("restores the same global draft after repeated New Chat clicks and reload", async () => {
     const user = userEvent.setup();
     const firstRender = renderProjectSessions();
@@ -4805,127 +4725,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(await screen.findByPlaceholderText("Do anything with Pi")).toHaveValue(
       "Keep this initial prompt",
     );
-  });
-
-  it("restores the last selected model on a new Session Draft", async () => {
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "list_session_projections") {
-        return [];
-      }
-
-      if (command === "list_provider_auth_status") {
-        return {
-          agentDir: "",
-          authPath: "",
-          configuredCount: 1,
-          providers: [],
-        };
-      }
-
-      if (command === "list_available_model_controls") {
-        return {
-          models: [
-            {
-              provider: "deepseek",
-              modelId: "deepseek-chat",
-              name: "DeepSeek Chat",
-              thinkingLevels: ["off"],
-            },
-            {
-              provider: "openai-codex",
-              modelId: "gpt-5.6-sol",
-              name: "GPT-5.6 SOL",
-              thinkingLevels: ["off", "low", "medium", "high"],
-            },
-          ],
-          selected: {
-            provider: "deepseek",
-            modelId: "deepseek-chat",
-            thinkingLevel: "off",
-          },
-        };
-      }
-
-      if (command === "get_config_inventory") {
-        return {
-          skills: [],
-          extensions: [],
-          packages: [],
-          promptTemplates: [],
-        };
-      }
-
-      throw new Error(`unexpected backend command ${command}`);
-    });
-    window.pace = {
-      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
-      onBackendEvent: vi.fn(() => vi.fn()),
-      onBrowserEvent: vi.fn(() => vi.fn()),
-      onUpdateEvent: vi.fn(() => vi.fn()),
-      onWindowFocusChanged: vi.fn(() => vi.fn()),
-      onNavigateRequest: vi.fn(() => vi.fn()),
-    };
-    saveLastModelSelection({
-      provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      thinkingLevel: "high",
-    });
-    saveSessionDraft(pigProjectPath, "");
-
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-
-    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent(
-      "GPT-5.6 SOL · High",
-    );
-  });
-
-  it("loads draft models when the first credential arrives and clears them when the last one leaves", async () => {
-    let configuredCount = 0;
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "list_session_projections") return [];
-      if (command === "list_provider_auth_status") {
-        return { agentDir: "", authPath: "", configuredCount, providers: [] };
-      }
-      if (command === "list_available_model_controls") {
-        return {
-          models: [{
-            provider: "anthropic",
-            modelId: "claude-sonnet-4",
-            name: "Claude Sonnet 4",
-            thinkingLevels: ["off", "high"],
-          }],
-          selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
-        };
-      }
-      if (command === "get_config_inventory") {
-        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
-      }
-      throw new Error(`unexpected backend command ${command}`);
-    });
-    window.pace = {
-      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
-      onBackendEvent: vi.fn(() => vi.fn()),
-      onBrowserEvent: vi.fn(() => vi.fn()),
-      onUpdateEvent: vi.fn(() => vi.fn()),
-      onWindowFocusChanged: vi.fn(() => vi.fn()),
-      onNavigateRequest: vi.fn(() => vi.fn()),
-    };
-    saveSessionDraft(pigProjectPath, "");
-    const { queryClient } = renderProjectSessions("/projects/pig/sessions?view=draft");
-    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
-
-    configuredCount = 1;
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
-    });
-    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
-
-    configuredCount = 0;
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
-    });
-    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
-    expect(screen.queryByTestId("model-thinking-trigger")).not.toBeInTheDocument();
   });
 
   it("lists only visible models and opens Models settings over the workspace", async () => {
@@ -5017,7 +4816,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         workspace={{
@@ -5079,7 +4878,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft(pigProjectPath, "Keep this prompt while switching target");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={pigProjectPath}
         showDraft
         workspace={{
@@ -5136,7 +4935,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft(studyProjectPath, "Run notes outside Git");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={studyProjectPath}
         showDraft
         workspace={{
@@ -5195,7 +4994,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft("/Users/void/DeletedProject", "Keep text after target removal");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={pigProjectPath}
         showDraft
         workspace={{
@@ -5243,7 +5042,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Start an active browser-backed Session");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         workspace={{
@@ -5343,7 +5142,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveSessionDraft("pig-docs", "Run in an isolated background checkout");
     const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
@@ -5457,7 +5256,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveSessionDraft("pig-docs", "Run beside an active Session in place");
     const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
@@ -5602,7 +5401,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       const [sessionId, setSessionId] = useState(sourceProjection.id);
 
       return (
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
@@ -5752,7 +5551,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     const store = storeWith(bridge, sourceProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
@@ -5809,7 +5608,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         onSessionCreated={onSessionCreated}
@@ -6038,7 +5837,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6185,7 +5984,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6305,7 +6104,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6420,7 +6219,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6590,7 +6389,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6669,7 +6468,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6877,7 +6676,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7082,7 +6881,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7200,7 +6999,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7257,7 +7056,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7307,7 +7106,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     const bridge = createInMemoryPiRuntimeBridge();
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -7383,7 +7182,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -7536,7 +7335,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7616,7 +7415,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7695,7 +7494,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7790,7 +7589,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7873,7 +7672,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7953,7 +7752,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8074,7 +7873,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8190,7 +7989,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8275,7 +8074,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8289,709 +8088,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(liveChat.querySelector('[data-slot="chain-of-thought"]')).not.toBeInTheDocument();
   });
 
-});
-
-// Context occupancy rides the composer footer line — the hint row under the
-// input — and never the Session toolbar. Issue #128.
-describe("Context usage placement", () => {
-  const workspace = {
-    id: "pig-docs",
-    name: "Pig Docs",
-    projectRoot: "/Users/void/code/opensource/Pig/docs",
-    repoRoot: "/Users/void/code/opensource/Pig",
-    selectedSessionId: "session-context",
-    liveMessages: [],
-    runTimeline: [],
-    checkout: {
-      mode: "Foreground local checkout",
-      root: "/Users/void/code/opensource/Pig",
-      runtimeCwd: "/Users/void/code/opensource/Pig/docs",
-    },
-    summary: {
-      model: "fixture-model",
-      totalCostUsd: 0,
-      totalTokens: 0,
-    },
-  };
-
-  function boundProjection(
-    overrides: Partial<SessionProjection> = {},
-  ): SessionProjection {
-    return {
-      ...createSessionProjection({
-        id: "session-context",
-        projectId: "pig-docs",
-        initialPrompt: "Watch the context window fill up",
-        createdAt: "2026-08-20T08:00:00.000Z",
-      }),
-      status: "completed" as const,
-      runtimeId: "pi-sdk:session-context",
-      piSessionId: "pi-session-context",
-      contextUsage: { tokens: 90_000, contextWindow: 200_000, percent: 45 },
-      ...overrides,
-    };
-  }
-
-  function renderSessionsView(
-    projection: SessionProjection,
-    sessionChanges?: {
-      changes: SessionChanges | null;
-      error: string | null;
-      loading: boolean;
-      refresh: () => void;
-      checkoutBranch: (branch: string) => Promise<void>;
-    },
-  ) {
-    render(
-      <AgentWorkspaceSessionsView
-        projectId="pig-docs"
-        workspace={workspace}
-        sessionProjection={projection}
-        sessionChanges={sessionChanges ? { ...sessionChanges, refreshing: false } : undefined}
-      />,
-    );
-
-    return screen
-      .getByTestId("full-chat-composer")
-      .querySelector('[data-slot="prompt-input-footer"]');
-  }
-
-  function gitChanges(overrides: Partial<SessionChanges> = {}): SessionChanges {
-    return {
-      sessionId: "session-context",
-      state: "clean",
-      checkoutRoot: "/work/Pace",
-      repositoryRoot: "/work/Pace",
-      generatedAt: "2026-09-04T00:00:00.000Z",
-      head: {
-        oid: "abc1234deadbeef",
-        branch: "feat/composer-git",
-        detached: false,
-      },
-      branches: ["feat/composer-git", "main", "fix/spacing", "feat/chat-chain-of-thought-rail"],
-      files: [],
-      totals: {
-        files: 0,
-        additions: 0,
-        deletions: 0,
-        binaryFiles: 0,
-        conflictedFiles: 0,
-      },
-      truncated: false,
-      omittedFileCount: 0,
-      ...overrides,
-    };
-  }
-
-  it("meters the context window as a ring on the composer footer line", () => {
-    const footer = renderSessionsView(boundProjection());
-
-    expect(footer?.querySelector('[data-slot="context-usage-meter"]')).toHaveAttribute(
-      "aria-label",
-      "Context 45% · 200K",
-    );
-  });
-
-  it("keeps the footer line while a run is queueing", () => {
-    const footer = renderSessionsView(boundProjection({ status: "running" }));
-
-    expect(
-      footer?.querySelector('[data-slot="context-usage-meter"]'),
-    ).toBeInTheDocument();
-  });
-
-  it("meters nothing until a runtime is bound, and keeps the Location row", () => {
-    const footer = renderSessionsView(boundProjection({ piSessionId: null }));
-
-    // The row survives Session Creation so the composer keeps its height
-    // through the Draft → Live handoff; only the share is unknown until a
-    // runtime has a context window to be a share of.
-    expect(footer).toBeInTheDocument();
-    expect(
-      footer?.querySelector('[data-slot="context-usage-meter"]'),
-    ).toHaveAttribute("aria-label", "Context usage not reported yet");
-  });
-
-  function idleSessionChanges(
-    changes: SessionChanges | null,
-    checkoutBranch: (branch: string) => Promise<void> = async () => {},
-  ) {
-    return {
-      changes,
-      error: null as string | null,
-      loading: false,
-      refresh: () => {},
-      checkoutBranch,
-    };
-  }
-
-  it("shows the Session git branch to the left of the context ring", () => {
-    const footer = renderSessionsView(boundProjection(), idleSessionChanges(gitChanges()));
-    const trigger = footer?.querySelector(
-      '[data-testid="git-branch-status-trigger"]',
-    );
-    const ring = footer?.querySelector('[data-slot="context-usage-meter"]');
-    const icon = footer?.querySelector('[data-testid="git-branch-status-icon"]');
-
-    expect(trigger).toHaveTextContent("feat/composer-git");
-    expect(icon).toBeInTheDocument();
-    expect(ring).toBeInTheDocument();
-    expect(
-      trigger && ring
-        ? Boolean(
-            trigger.compareDocumentPosition(ring) &
-              Node.DOCUMENT_POSITION_FOLLOWING,
-          )
-        : false,
-    ).toBe(true);
-  });
-
-  it("labels a detached HEAD with the short oid", () => {
-    const footer = renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(
-        gitChanges({
-          head: {
-            oid: "deadbeefcafebabe",
-            branch: null,
-            detached: true,
-          },
-        }),
-      ),
-    );
-
-    expect(
-      footer?.querySelector('[data-testid="git-branch-status-trigger"]'),
-    ).toHaveTextContent("deadbee");
-  });
-
-  it("lists local and remote-tracking branch names in the git selector", async () => {
-    const user = userEvent.setup();
-    renderSessionsView(boundProjection(), idleSessionChanges(gitChanges()));
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-
-    expect(
-      await screen.findByRole("option", { name: "feat/composer-git" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "main" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "fix/spacing" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "feat/chat-chain-of-thought-rail" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText("Search branches..."),
-    ).toBeInTheDocument();
-    // Same inset as the composer model selector popover (`gap-1 p-1`), not
-    // Astryx Selector's sm item padding which sits flush against the chrome.
-    expect(screen.getByTestId("git-branch-status-menu")).toHaveClass(
-      "flex",
-      "flex-col",
-      "gap-1",
-      "p-1",
-    );
-  });
-
-  it("disables a branch already checked out in another worktree and explains why", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {});
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(
-        gitChanges({
-          occupiedBranches: [
-            {
-              branch: "main",
-              path: "/work/.pig-worktrees/Pace/session-other",
-            },
-          ],
-        }),
-        checkoutBranch,
-      ),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-
-    const option = await screen.findByRole("option", { name: /main/ });
-    expect(option).toHaveAttribute("aria-disabled", "true");
-    expect(option).toHaveTextContent("Already checked out in session-other");
-
-    await user.click(option);
-    expect(checkoutBranch).not.toHaveBeenCalled();
-  });
-
-  it("checks out the selected local branch on the Session checkout", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {});
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(gitChanges(), checkoutBranch),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-    await user.click(await screen.findByRole("option", { name: "main" }));
-
-    expect(checkoutBranch).toHaveBeenCalledWith("main");
-  });
-
-  it("does not check out the branch the Session is already on", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {});
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(gitChanges(), checkoutBranch),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-    await user.click(
-      await screen.findByRole("option", { name: "feat/composer-git" }),
-    );
-
-    expect(checkoutBranch).not.toHaveBeenCalled();
-  });
-
-  it("surfaces a failed checkout on the composer", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {
-      throw new Error(
-        "Please commit your changes or stash them before you switch branches.",
-      );
-    });
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(gitChanges(), checkoutBranch),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-    await user.click(await screen.findByRole("option", { name: "main" }));
-
-    expect(
-      await screen.findByText(
-        /stash them before you switch branches/i,
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("hides the git branch chip when the checkout is not a repository", () => {
-    const footer = renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(
-        gitChanges({
-          state: "non-git",
-          repositoryRoot: null,
-          head: undefined,
-        }),
-      ),
-    );
-
-    expect(
-      footer?.querySelector('[data-testid="git-branch-status"]'),
-    ).not.toBeInTheDocument();
-    expect(
-      footer?.querySelector('[data-slot="context-usage-meter"]'),
-    ).toBeInTheDocument();
-  });
-
-  it("leaves the Session toolbar to the dock toggle", () => {
-    const { container } = render(
-      <SessionToolbarActions />,
-    );
-
-    expect(
-      container.querySelector('[data-slot="context-usage-meter"]'),
-    ).not.toBeInTheDocument();
-  });
-});
-
-describe("Session changes action surface", () => {
-  const projection = applySessionProjectionEvent(
-    createSessionProjection({
-      id: "session-changes",
-      projectId: "pigui",
-      initialPrompt: "Review the diff",
-      createdAt: "2026-07-19T00:00:00.000Z",
-    }),
-    {
-      type: "checkout-selected",
-      stage: "preparing checkout",
-      checkout: {
-        mode: "foreground-local",
-        root: "/work/Pace",
-        repoRoot: "/work/Pace",
-        projectRoot: "/work/Pace",
-        projectRelativePath: ".",
-        executionCheckoutRoot: "/work/Pace",
-        diffRoot: "/work/Pace",
-        runtimeCwd: "/work/Pace",
-      },
-      occurredAt: "2026-07-19T00:00:00.000Z",
-    },
-  );
-
-  function changes(overrides: Partial<SessionChanges> = {}): SessionChanges {
-    return {
-      sessionId: "session-changes",
-      state: "ready",
-      checkoutRoot: "/work/Pace",
-      repositoryRoot: "/work/Pace",
-      generatedAt: "2026-07-19T00:01:00.000Z",
-      files: [
-        {
-          path: "src/app.ts",
-          kind: "modified",
-          staged: false,
-          unstaged: true,
-          additions: 2,
-          deletions: 1,
-          binary: false,
-          patch: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n",
-          patchTruncated: false,
-        },
-        {
-          path: "assets/logo.png",
-          kind: "modified",
-          staged: false,
-          unstaged: true,
-          additions: null,
-          deletions: null,
-          binary: true,
-          patchTruncated: false,
-        },
-      ],
-      totals: {
-        files: 2,
-        additions: 2,
-        deletions: 1,
-        binaryFiles: 1,
-        conflictedFiles: 0,
-      },
-      truncated: false,
-      omittedFileCount: 0,
-      ...overrides,
-    };
-  }
-
-  function panel(
-    loaded: SessionChanges | null,
-    {
-      error = null,
-      loading = false,
-      onRefresh = () => {},
-      sessionId = projection.id as string | null,
-    }: {
-      error?: string | null;
-      loading?: boolean;
-      onRefresh?: () => void;
-      sessionId?: string | null;
-    } = {},
-  ) {
-    return (
-      <SessionChangesPanel
-        changes={loaded}
-        error={error}
-        loading={loading}
-        sessionId={sessionId}
-        stale={projection.stale}
-        onRefresh={onRefresh}
-      />
-    );
-  }
-
-  // ADR-0028 (2026-09-05): Changes is single-instance, so its first row is its
-  // own state on the left and its actions on the right — no "Diff summary"
-  // label, which the rail already says.
-  it("states the working tree in the surface's first row, with refresh beside it", async () => {
-    const user = userEvent.setup();
-    const onRefresh = vi.fn();
-    const bar = () => screen.getByTestId("session-surface-bar");
-    const view = render(panel(changes(), { onRefresh }));
-
-    expect(within(bar()).getByText("2 files ·", { exact: false })).toBeInTheDocument();
-    expect(screen.queryByText("Diff summary")).not.toBeInTheDocument();
-    await user.click(
-      within(bar()).getByRole("button", { name: "Refresh Session changes" }),
-    );
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    view.rerender(panel(null, { loading: true }));
-    expect(within(bar()).getByText("Loading…")).toBeInTheDocument();
-
-    view.rerender(
-      panel(
-        changes({
-          state: "clean",
-          files: [],
-          totals: {
-            files: 0,
-            additions: 0,
-            deletions: 0,
-            binaryFiles: 0,
-            conflictedFiles: 0,
-          },
-        }),
-      ),
-    );
-    expect(within(bar()).getByText("Working tree clean")).toBeInTheDocument();
-
-    view.rerender(panel(changes({ state: "non-git", files: [], repositoryRoot: null })));
-    expect(within(bar()).getByText("Not a Git repository")).toBeInTheDocument();
-
-    // A failed read has no state to report: the alert below carries the
-    // message, and the row keeps only the action that can fix it.
-    view.rerender(panel(null, { error: "Git is temporarily unavailable" }));
-    expect(
-      within(bar()).queryByText(/files|Working tree|Git repository|Loading/),
-    ).not.toBeInTheDocument();
-    expect(
-      within(bar()).getByRole("button", { name: "Refresh Session changes" }),
-    ).toBeInTheDocument();
-
-    // No Session: no state and no action, so no band at all.
-    view.rerender(panel(null, { sessionId: null }));
-    expect(screen.queryByTestId("session-surface-bar")).not.toBeInTheDocument();
-  });
-
-  /** A second text file so the stacked layout has more than one viewer. */
-  function twoTextFiles(): SessionChanges {
-    const base = changes();
-    return {
-      ...base,
-      files: [
-        base.files[0]!,
-        {
-          path: "src/util.ts",
-          kind: "added",
-          staged: true,
-          unstaged: false,
-          additions: 4,
-          deletions: 0,
-          binary: false,
-          patch: "diff --git a/src/util.ts b/src/util.ts\n@@ -0,0 +1 @@\n+util\n",
-          patchTruncated: false,
-        },
-        base.files[1]!,
-      ],
-      totals: { ...base.totals, files: 3, additions: 6 },
-    };
-  }
-
-  const sections = () => screen.getAllByTestId("session-change-section");
-  const outline = () => screen.getByRole("navigation", { name: "Changed files" });
-
-  it("keeps the outline available when review is bounded", () => {
-    render(panel(changes({ truncated: true, omittedFileCount: 3 })));
-
-    expect(screen.getByText("Review is bounded. 3 additional files were omitted.")).toBeInTheDocument();
-    expect(outline()).toBeInTheDocument();
-    // Physical ordering at narrow dock widths is covered by the Electron E2E.
-  });
-
-  it("shows each file's kind and stage in the outline", () => {
-    render(panel(twoTextFiles()));
-
-    const rows = within(outline()).getAllByRole("button");
-    expect(rows[0]).toHaveTextContent("Modified · Working tree");
-    expect(rows[1]).toHaveTextContent("Added · Staged");
-  });
-
-  it("stacks every file's diff unified, with binary notices inline", async () => {
-    render(panel(twoTextFiles()));
-
-    // Every text diff is on screen at once: nothing to select, only scroll.
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-    expect(
-      screen.getByText("Binary file changed. A textual diff is not available."),
-    ).toBeInTheDocument();
-    expect(sections()).toHaveLength(3);
-    expect(within(sections()[0]!).getByRole("button", { expanded: true })).toHaveTextContent(
-      "src/app.ts",
-    );
-
-    // No layout switch: every diff is the unified layout until Settings grows one.
-    expect(screen.queryByText("Split")).not.toBeInTheDocument();
-    for (const viewer of screen.getAllByTestId("session-diff-viewer")) {
-      expect(viewer).toHaveAttribute("data-style", "unified");
-    }
-  });
-
-  it("unmounts a collapsed section's viewer and brings it back from the outline", async () => {
-    const user = userEvent.setup();
-    // jsdom has no scrollIntoView; src/test/setup.ts stubs it on HTMLElement.
-    const scrollIntoView = vi
-      .spyOn(HTMLElement.prototype, "scrollIntoView")
-      .mockImplementation(() => {});
-    onTestFinished(() => scrollIntoView.mockRestore());
-
-    render(panel(twoTextFiles()));
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-
-    await user.click(within(sections()[0]!).getByRole("button", { expanded: true }));
-    expect(screen.getAllByTestId("session-diff-viewer")).toHaveLength(1);
-    expect(within(sections()[0]!).getByRole("button", { expanded: false })).toBeInTheDocument();
-
-    // The outline names every file and the count, at the density of a list.
-    expect(within(outline()).getByText("3 files")).toBeInTheDocument();
-    const rows = within(outline()).getAllByRole("button");
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("src/app.ts"),
-      expect.stringContaining("src/util.ts"),
-      expect.stringContaining("assets/logo.png"),
-    ]);
-
-    await user.click(rows[0]!);
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-    expect(scrollIntoView).toHaveBeenCalled();
-    expect(scrollIntoView.mock.instances[0]).toBe(sections()[0]);
-    expect(sections()[0]!.contains(document.activeElement)).toBe(true);
-    expect(rows[0]).toHaveAttribute("data-current", "true");
-    expect(rows[0]).not.toHaveAttribute("aria-current");
-    expect(rows[1]).not.toHaveAttribute("data-current");
-
-    await user.click(rows[2]!);
-    expect(rows[2]).toHaveAttribute("data-current", "true");
-    expect(sections()[2]!.contains(document.activeElement)).toBe(true);
-    expect(rows[0]).not.toHaveAttribute("data-current");
-  });
-
-  it("collapses and expands every section from the surface bar", async () => {
-    const user = userEvent.setup();
-    const bar = () => screen.getByTestId("session-surface-bar");
-
-    render(panel(twoTextFiles()));
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-
-    // The fold toggle lives in the bar's actions.
-    await user.click(within(bar()).getByRole("button", { name: "Collapse all" }));
-    expect(screen.queryByTestId("session-diff-viewer")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Binary file changed. A textual diff is not available."),
-    ).not.toBeInTheDocument();
-
-    await user.click(within(bar()).getByRole("button", { name: "Expand all" }));
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-    expect(within(bar()).getByRole("button", { name: "Collapse all" })).toBeInTheDocument();
-  });
-
-  it("keeps fold state across a refresh of the same Session and resets it for another", async () => {
-    const user = userEvent.setup();
-
-    const view = render(panel(twoTextFiles()));
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-    await user.click(within(sections()[0]!).getByRole("button", { expanded: true }));
-    expect(screen.getAllByTestId("session-diff-viewer")).toHaveLength(1);
-
-    // A refresh yields a new object with the same files: the fold survives.
-    view.rerender(panel({ ...twoTextFiles(), generatedAt: "2026-07-19T00:02:00.000Z" }));
-    expect(screen.getAllByTestId("session-diff-viewer")).toHaveLength(1);
-
-    view.rerender(
-      panel({ ...twoTextFiles(), sessionId: "session-other" }, { sessionId: "session-other" }),
-    );
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-  });
-
-  it("forgets a removed file's fold when it reappears after later refreshes", async () => {
-    const user = userEvent.setup();
-    const original = twoTextFiles();
-    const view = render(panel(original));
-    expect(await screen.findAllByTestId("session-diff-viewer")).toHaveLength(2);
-    await user.click(within(sections()[0]!).getByRole("button", { expanded: true }));
-    expect(within(sections()[0]!).queryByTestId("session-diff-viewer")).not.toBeInTheDocument();
-
-    view.rerender(panel({ ...original, files: original.files.slice(1) }));
-    expect(within(outline()).queryByRole("button", { name: /src\/app.ts/ })).not.toBeInTheDocument();
-
-    view.rerender(panel({ ...original, generatedAt: "2026-07-19T00:03:00.000Z" }));
-    expect(within(sections()[0]!).getByRole("button", { expanded: true })).toHaveTextContent("src/app.ts");
-    expect(await within(sections()[0]!).findByTestId("session-diff-viewer")).toBeInTheDocument();
-  });
-
-  it("keeps conflict and patch-limit notices in their sections with the tree-limit notice below", () => {
-    const original = twoTextFiles();
-    render(panel({
-      ...original,
-      files: [
-        { ...original.files[0]!, kind: "conflicted", patch: undefined },
-        { ...original.files[1]!, patchTruncated: true, patch: undefined },
-      ],
-      truncated: true,
-      omittedFileCount: 4,
-    }));
-
-    expect(within(sections()[0]!).getByText(/This file has unresolved merge conflicts/)).toBeInTheDocument();
-    expect(within(sections()[1]!).getByText(/This patch exceeds the review limit/)).toBeInTheDocument();
-    expect(screen.queryByTestId("session-diff-viewer")).not.toBeInTheDocument();
-    expect(screen.getByText("Review is bounded. 4 additional files were omitted.")).toBeInTheDocument();
-    expect(within(outline()).getAllByRole("button")).toHaveLength(2);
-  });
-
-  it("shows clean and non-Git states without treating them as failures", async () => {
-    const view = render(
-      panel(
-        changes({
-          state: "clean",
-          files: [],
-          totals: {
-            files: 0,
-            additions: 0,
-            deletions: 0,
-            binaryFiles: 0,
-            conflictedFiles: 0,
-          },
-        }),
-      ),
-    );
-
-    expect(
-      screen.getByRole("heading", { name: "No changes yet" }),
-    ).toBeInTheDocument();
-
-    view.rerender(
-      panel(changes({ state: "non-git", files: [], repositoryRoot: null })),
-    );
-    expect(
-      screen.getByRole("heading", { name: "No Git repository" }),
-    ).toBeInTheDocument();
-  });
-
-  it("exposes load errors, retry, and bounded-review warnings", async () => {
-    const user = userEvent.setup();
-    const onRefresh = vi.fn();
-
-    const view = render(
-      panel(null, { error: "Git is temporarily unavailable", onRefresh }),
-    );
-
-    expect(screen.getByText("Git is temporarily unavailable").closest("[role=alert]")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    view.rerender(
-      panel(
-        changes({
-          truncated: true,
-          omittedFileCount: 3,
-          files: [
-            {
-              ...changes().files[0]!,
-              patch: undefined,
-              patchTruncated: true,
-            },
-          ],
-        }),
-      ),
-    );
-    expect(
-      await screen.findByText(
-        "This patch exceeds the review limit and was omitted. Open the checkout for the full diff.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Review is bounded. 3 additional files were omitted."),
-    ).toBeInTheDocument();
-  });
 });
 
 // The ADR-0030 phase machine as Live Chat renders it: one flat step list while
@@ -9163,7 +8259,7 @@ describe("Chain of Thought phases in Live Chat", () => {
 
   function cotView(nowMs: number) {
     return (
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={cotT0 + nowMs}
         projectId="pig-docs"
         sessionId="session-cot"
@@ -9359,7 +8455,7 @@ describe("Chain of Thought phases in Live Chat", () => {
     ];
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={cotT0 + 999_999}
         projectId="pig-docs"
         sessionProjection={{ ...cotProjection(beats), stale: true }}

@@ -16,7 +16,7 @@
 每个 surface 的第一行用 `SessionSurfaceBar`（`h-10`，左槽状态 `children`、右槽 `actions`；动作槽暂时为空也保留）。多实例 surface 的实例条用 `SessionSurfaceTabs`（每 tab 自带关闭、末尾新建、`isExited` 态）。**不用 Astryx `Toolbar` / `Tab`**：前者高度钉不到 40px 且 roving tabindex 与实例条的方向键打架，后者渲染为单个 `<button>` 装不下关闭按钮。
 
 ```tsx
-// 正确 — session-terminal-panel.tsx:306
+// 正确 — widgets/session-dock/session-terminal-panel.tsx:306
 <SessionSurfaceBar>
   <SessionSurfaceTabs activeId={activeTerminalId} addLabel="New terminal" icon={Terminal}
     items={instances.map((i, n) => ({ id: i.terminalId, label: `Terminal ${n + 1}`, hint: i.cwd, isExited: i.status === "exited" }))}
@@ -105,7 +105,7 @@ Live Chat 中的本地文件链接由会话页面处理，流式与已完成回�
   Sidebar / Header 使用独立的 `AnimatedHistory`、`AnimatedChartPie`、`AnimatedPuzzle`、`AnimatedNewChat`、`AnimatedSettings`、`AnimatedSidebar`、`AnimatedSidebarRight`；新增按钮与三点菜单统一使用原有静态 `Plus`、`MoreHorizontal`，不使用动画；Usage 的饼图来自 Lucide，其余来自 Hugeicons。Settings 分类导航使用 `AnimatedKey`、`AnimatedRobot`、`AnimatedMessage`、`AnimatedFile`、`AnimatedInformationCircle`。静态导出与 Dock 内部栏位的图标保持不变，Header 右上角的 Dock 开关使用右侧镜像版本，具体范围及触发规则见 [animated-icons.md](animated-icons.md)。
   静态导出：`Activity Archive ArrowLeft ArrowRight ArrowUp BarChart3 Bot BotMessage Box Cancel ChatAdd Check ChevronDown ChevronRight Circle Command Computer Copy Crosshair FileDiff FileIcon Flash FolderClosed FolderOpen FolderOpenState GitBranch Globe ImageIcon LayoutAlignLeft LinkExternal ListTree LoaderCircle MoreHorizontal Palette Pencil Plus Puzzle RefreshCw Search Settings Settings2 SidebarLeft Sparkles SquareTerminal Stop Terminal ThumbsDown ThumbsUp Trash2 User Wrench`。名单之外的图标不存在，先加进 `icons.tsx` 再用。
 - `ChatToolKindIcon kind`：`"shell" | "search" | "web" | "file" | "edit" | "tool"`，由 `toolKindFromName()` 归类；未知工具退回 `tool`（扳手）。
-- `DotMatrix`：侧栏"正在运行"指示，`role="status"`，`label` 默认 "loading"，调用点应传更具体的 `aria-label`（`app-shell.tsx:341` 传 "Active run"）；颜色跟 `className="text-primary"`。
+- `DotMatrix`：侧栏"正在运行"指示，`role="status"`，`label` 默认 "loading"，调用点应传更具体的 `aria-label`（`widgets/app-frame/app-frame.tsx` 传 "Active run"）；颜色跟 `className="text-primary"`。
 - `ChatPixelLoader`：九格像素心跳，只在 `ChatStatusLine` 内。`periodMs` 默认 860ms，经内联 `--chat-pixel-period` 下发，样式表里只读不声明。
 - `ChatInlinePager`：一行视口翻页，`pageKey` 变化触发，`dwellMs` 默认 700ms、下限 300ms；全 `span` / `inline-flex`，塞进按钮不会让文字比箭头低。
 - `TextShimmer`：流式文字的扫光占位，包任意行内文字。

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { resolveAppLanding } from "@/app/app-landing";
+import { resolveAppLanding } from "@/pages/app-landing-route";
 
 const pigProjectId = "/Users/void/code/opensource/Pig";
 const studyProjectId = "/Users/void/Documents/study";

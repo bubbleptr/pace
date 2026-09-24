@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BackendRpcEvent } from "@pace/backend";
-import { SessionTerminalPanel } from "@/pages/session-terminal-panel";
+import { SessionTerminalPanel } from "./session-terminal-panel";
 
 type TerminalBridge = {
   emit: (type: string, payload: Record<string, unknown>) => void;

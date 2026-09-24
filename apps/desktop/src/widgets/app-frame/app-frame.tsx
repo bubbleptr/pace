@@ -45,12 +45,11 @@ import {
 } from "@/entities/project/chat-workspace";
 import {
   addProjectToRegistry,
-  getProjectRegistry,
   renameProjectInRegistry,
   removeProjectFromRegistry,
-  subscribeProjectRegistry,
   type ProjectRegistryEntry,
 } from "@/entities/project/project-registry";
+import { useVisibleProjectRegistry } from "@/entities/project/visible-registry";
 import {
   hasFollowUpDraft,
   subscribeFollowUpDrafts,
@@ -61,7 +60,6 @@ import {
   setSessionDraftTarget,
 } from "@/entities/session/session-drafts";
 import {
-  createSessionProjection,
   getSessionProjectionListItems,
   type SessionProjection,
   type SessionProjectionListItem,
@@ -74,11 +72,8 @@ import {
 } from "@/entities/session/sessions";
 import { useSessionProjectionsOptional } from "@/entities/session/use-session-projections";
 import { useUpdateStatus } from "@/entities/update/use-update-status";
-import {
-  browserDevelopmentProjectId,
-  getProjectRegistryWithBrowserDevelopmentFallback,
-  shouldUseBrowserDevelopmentData,
-} from "@/shared/browser-development-data";
+import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
+import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
 import {
   checkProjectDirectories,
@@ -104,135 +99,6 @@ type AppFrameProps = {
   onSelectedSessionIdChange?: (sessionId: string | null) => void;
   children: ReactNode;
 };
-
-const defaultSidebarProjectId = browserDevelopmentProjectId;
-
-function createSidebarProjection({
-  id,
-  title,
-  status,
-  updatedAt,
-  unreadResult = false,
-  archivedAt = null,
-  summary = {},
-}: {
-  id: string;
-  title: string;
-  status: SessionProjection["status"];
-  updatedAt: string;
-  unreadResult?: boolean;
-  archivedAt?: string | null;
-  summary?: Partial<SessionProjection["summary"]>;
-}): SessionProjection {
-  const projection = createSessionProjection({
-    id,
-    projectId: defaultSidebarProjectId,
-    initialPrompt: title,
-    createdAt: "2026-06-26T08:00:00.000Z",
-  });
-
-  return {
-    ...projection,
-    status,
-    creationStage: "accepted",
-    checkout:
-      status === "running"
-        ? {
-            mode: "foreground-local",
-            root: "/Users/void/code/opensource/Pig",
-            runtimeCwd: "/Users/void/code/opensource/Pig",
-          }
-        : projection.checkout,
-    runtimeId: status === "running" ? `${id}-runtime` : projection.runtimeId,
-    piSessionId: status === "running" ? `${id}-pi-session` : projection.piSessionId,
-    runtimeEvents:
-      status === "running"
-        ? [
-            {
-              id: `${id}-runtime-event`,
-              piSessionId: `${id}-pi-session`,
-              kind: "message",
-              role: "assistant",
-              body: title,
-              timestamp: updatedAt,
-            },
-          ]
-        : [],
-    unreadResult,
-    archivedAt,
-    summary: {
-      ...projection.summary,
-      ...summary,
-    },
-    modelControls: {
-      models: [
-        {
-          provider: "openai",
-          modelId: "gpt-5-codex",
-          name: "GPT-5 Codex",
-          thinkingLevels: ["off", "low", "medium", "high"],
-        },
-        {
-          provider: "anthropic",
-          modelId: "claude-sonnet-4",
-          name: "Claude Sonnet 4",
-          thinkingLevels: ["off", "low", "medium", "high"],
-        },
-      ],
-      selected: {
-        provider: "openai",
-        modelId: "gpt-5-codex",
-        thinkingLevel: "high",
-      },
-    },
-    lastUserMessageAt: updatedAt,
-    updatedAt,
-  };
-}
-
-export const defaultSidebarProjectSessionProjections: SessionProjection[] = [
-  createSidebarProjection({
-    id: "session-usage-review",
-    title: "Usage evidence review",
-    status: "completed",
-    summary: {
-      model: "gpt-5-codex",
-      totalCostUsd: 0.042137,
-      totalTokens: 18_420,
-    },
-    updatedAt: "2026-06-26T08:03:00.000Z",
-  }),
-  createSidebarProjection({
-    id: "session-control-plane-shell",
-    title: "Agent Workspace shell",
-    status: "running",
-    summary: {
-      model: "gpt-5-codex",
-      totalCostUsd: 0.042137,
-      totalTokens: 18_420,
-    },
-    updatedAt: "2026-06-26T08:06:00.000Z",
-  }),
-  createSidebarProjection({
-    id: "session-archived-checkout",
-    title: "Archived checkout snapshot",
-    status: "completed",
-    archivedAt: "2026-06-26T08:05:00.000Z",
-    updatedAt: "2026-06-26T08:05:00.000Z",
-  }),
-  createSidebarProjection({
-    id: "session-analyze-boundary",
-    title: "Trace boundary pass",
-    status: "completed",
-    unreadResult: true,
-    summary: {
-      model: "gpt-5-codex",
-      totalCostUsd: 0.042137,
-      totalTokens: 18_420,
-    },
-    updatedAt: "2026-06-26T08:02:00.000Z",
-  }),
-];
 
 const trajectoryUsageNavigationItems = [
   {
@@ -294,10 +160,6 @@ const titlebarControlStyle = {
 const trafficWidth = "88px";
 const chromeSafeLeft = "132px";
 const sidebarAnimationMs = 220;
-
-function getVisibleProjectRegistry() {
-  return getProjectRegistryWithBrowserDevelopmentFallback(getProjectRegistry());
-}
 
 function getActiveTab(pathname: string) {
   if (pathname === "/") {
@@ -1297,7 +1159,7 @@ export function AppFrame({
       ? defaultSidebarProjectSessionProjections
       : [],
   );
-  const [projects, setProjects] = useState(() => getVisibleProjectRegistry());
+  const projects = useVisibleProjectRegistry();
   const [expandedProjects, setExpandedProjects] = useState(() =>
     readProjectExpansionState(),
   );
@@ -1361,11 +1223,6 @@ export function AppFrame({
         clearTimeout(sidebarAnimationTimeoutRef.current);
       }
     },
-    [],
-  );
-
-  useEffect(
-    () => subscribeProjectRegistry(() => setProjects(getVisibleProjectRegistry())),
     [],
   );
 

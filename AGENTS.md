@@ -17,7 +17,7 @@ Process conventions, each documented in its own file:
 
 ## Verification
 
-Before opening a PR, `bun run typecheck`, `bun run test` and `bun run build` must be green (see "Development and verification" in `README.md` for the full command list, including E2E and packaging).
+Before opening a PR, `bun run typecheck`, `bun run lint`, `bun run test` and `bun run build` must be green (see "Development and verification" in `README.md` for the full command list, including E2E and packaging).
 
 ## Design system discipline
 

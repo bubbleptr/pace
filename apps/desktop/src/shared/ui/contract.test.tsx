@@ -29,7 +29,7 @@ import { ComposerInsertMenu } from "@/shared/ui/composer-attachments/composer-in
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
 import { Activity, AnimatedHistory } from "@/shared/ui/icons";
-import { ModelSelectorControl } from "@/shared/ui/model-selector/model-selector-control";
+import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
 import { PiHeatmap } from "@/shared/ui/pi-heatmap";
 import { PiKpi } from "@/shared/ui/pi-kpi";
 import { PiLineChart, PiSparkline } from "@/shared/ui/pi-line-chart";

@@ -3,7 +3,7 @@ import type { BackendRpcEvent } from "@pace/backend";
 import type { BrowserEvent } from "@/shared/browser-protocol";
 import type { NavigateRequest } from "@/shared/navigate-protocol";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type { SessionDetail } from "@/pages/session-detail";
+import type { SessionDetail } from "@pace/core";
 import type { SessionSummary } from "@/entities/session/sessions";
 
 declare global {

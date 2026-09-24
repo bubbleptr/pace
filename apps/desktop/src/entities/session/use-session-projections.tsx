@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { PersistedSessionProjection } from "@pace/backend";
 import { onBackendEvent } from "@/shared/runtime";
-import { shouldUseBrowserDevelopmentData } from "@/shared/browser-development-data";
+import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
 import {
   defaultRuntimeSummary,
   type ExecutionCheckout,
