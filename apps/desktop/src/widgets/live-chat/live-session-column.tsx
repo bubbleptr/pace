@@ -62,7 +62,6 @@ import {
   runTimelineFromProjection,
   runtimeModelIsActive,
   type LiveMessage,
-  type RunTimelineItem,
 } from "@/entities/session/live-chat-model";
 import {
   SessionCreationFailureDetail,
@@ -72,27 +71,11 @@ import {
 } from "@/features/session-draft";
 import { LiveChatMessage, settledCotViewFromTimeline } from "./live-chat-message";
 import { FullChatComposer } from "./full-chat-composer";
-import { messageFromError, restoreProjectionRuntimeState } from "./restore-runtime-state";
-
-export type AgentWorkspaceFixture = {
-  id: string;
-  name: string;
-  projectRoot: string;
-  repoRoot: string;
-  selectedSessionId: string | null;
-  liveMessages: LiveMessage[];
-  runTimeline: RunTimelineItem[];
-  checkout: {
-    mode: string;
-    root: string;
-    runtimeCwd: string;
-  };
-  summary: {
-    model: string;
-    totalCostUsd: number;
-    totalTokens: number;
-  };
-};
+import {
+  messageFromError,
+  restoreProjectionRuntimeState,
+  type AgentWorkspaceFixture,
+} from "./restore-runtime-state";
 
 export type SessionCreatorInput = Omit<CreateSessionFromDraftInput, "bridge">;
 

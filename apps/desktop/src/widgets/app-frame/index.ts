@@ -1,1 +1,1 @@
-export { AppFrame, defaultSidebarProjectSessionProjections } from "./app-frame";
+export { AppFrame } from "./app-frame";

@@ -30,7 +30,7 @@ import 方向规则一直靠约定维持，已有反向 import 存在一段时�
 | `widgets/live-chat/` | `LiveSessionColumn`、`FullChatComposer`（Follow-up Draft）、`QueuedMessageList`、`LiveChatMessage`、`AssistantRunTrajectory`、`AssistantMessageContent`、runtime state 恢复助手。Queue / Steer / Stop / Fork / Retry / 改模型是共享 `liveProjection` 与 `apply` 的闭包，随 widget 走，在目录内按文件拆，不硬切成 feature 造 prop drilling |
 | `widgets/session-dock/` | `SessionSurfaceContent`、`SessionToolbarActions`、Changes panel；`session-files-panel` / `session-terminal-panel` / `session-browser-panel` 从 pages 搬入 |
 | `widgets/app-frame/` | `AppFrame` 依赖同文件内的侧栏导航、`HeaderChrome` 与 `getActiveTab`，与之不可分，所以 `app/app-shell.tsx` 整个文件原样移为 `widgets/app-frame/app-frame.tsx`；六个 page 改为向下 import |
-| `dev/fixtures/agent-workspace.ts` | `fixtureWorkspace`、`workspaceFromProject`、`AgentWorkspaceFixture`、`defaultSidebarProjectSessionProjections`；生产 props 不再有 fixture 默认值 |
+| `dev/fixtures/agent-workspace.ts` | `fixtureWorkspace`、`defaultSidebarProjectSessionProjections`；生产 props 不再有 fixture 默认值。`workspaceFromProject` 由 registry 条目构造真实 workspace，不是 fixture，留在 page；`AgentWorkspaceFixture` 类型是生产类型，移到 `widgets/live-chat/restore-runtime-state.ts` 并由 barrel 导出，消除类型环 |
 | `pages/agent-workspace.tsx` | 只剩 `AgentWorkspaceSessionsView`、`AgentWorkspaceSessionsPage`、`TitlebarBand`、`firstSessionIdForProject` |
 
 组件名全程不改：`regions.ts` 按显示名绑定。`regions.test.ts` 补一条断言，每个绑定的组件名在 `apps/desktop/src` 里存在为 `function X` 或 `const X` 声明，以后改名会挂。

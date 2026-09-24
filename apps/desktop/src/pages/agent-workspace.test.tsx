@@ -59,7 +59,7 @@ import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 import { footerOf } from "@/test/composer-footer";
-import { render } from "@/test/render";
+import { FixtureSessionsView, render } from "@/test/render";
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
 // project sessions live in the aria-controls group owned by the project
@@ -310,7 +310,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         event: { ...event, piSessionId: "retry-pi", timestamp: "2026-09-07T10:00:00.000Z" } });
     }
     saveFollowUpDraft(projection.id, "An unsent follow-up");
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" sessionProjection={projection}
       runtimeBridge={bridge} onOpenProviderSettings={onProviders} />);
     await user.click(screen.getByRole("button", { name: "Provider settings" }));
     expect(onProviders).toHaveBeenCalledOnce();
@@ -346,7 +346,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       projection = applySessionProjectionEvent(projection, { type: "runtime-event-received",
         event: { ...event, piSessionId: "retry-model-pi", timestamp: "2026-09-07T10:00:00.000Z" } });
     }
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" sessionProjection={projection}
       runtimeBridge={{ ...baseBridge, configureModel }} />);
     await user.click(screen.getAllByTestId("model-thinking-trigger")[0]);
     await user.click(within(screen.getByRole("dialog")).getByText("Second model"));
@@ -1730,7 +1730,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -1801,7 +1801,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("pig-docs", "Draft the Location row");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -1849,7 +1849,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("pig-docs", "Start from the feature branch");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={projectGitLoader("main", ["main", "feat/location-row"])}
@@ -1891,7 +1891,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("chat", "Draft a chat");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="chat"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -1920,7 +1920,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft("pig-docs", "Carry the Location row over");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -1968,7 +1968,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft(pigProjectPath, "Retarget the Location row");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId={pigProjectPath}
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -2001,7 +2001,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       saveSessionDraft(pigProjectPath, "Retarget the base branch");
 
       render(
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId={pigProjectPath}
           showDraft
           loadProjectGitSummary={loadProjectGitSummary}
@@ -2301,7 +2301,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       },
     };
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -2370,7 +2370,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       factorySpy.mockRestore();
     });
 
-    render(<AgentWorkspaceSessionsView projectId="pig" />);
+    render(<FixtureSessionsView projectId="pig" />);
 
     expect(factorySpy).toHaveBeenCalled();
     expect(fakeBridgeSpy).not.toHaveBeenCalled();
@@ -2378,7 +2378,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   it("renders completion and failure results inside Live Chat", async () => {
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-results"
         workspace={{
           id: "pig-results",
@@ -2467,7 +2467,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -2620,7 +2620,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       updatedAt: projection.updatedAt,
     });
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={{ ...projection, ...extras }}
@@ -2968,7 +2968,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:03.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3057,7 +3057,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:04.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3125,7 +3125,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={Date.parse("2026-06-26T08:00:18.000Z")}
         projectId="pig-docs"
         sessionProjection={projection}
@@ -3226,7 +3226,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -3316,7 +3316,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -3493,7 +3493,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={runtimeModelBridge}
         sessionProjection={projection}
@@ -3716,7 +3716,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={steerRaceBridge}
         sessionProjection={projection}
@@ -3804,7 +3804,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     window.pace = { ...createMockApi(), invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"] };
     const projection: SessionProjection = { ...createSessionProjection({ id: "cold-model", projectId: "pig-docs", initialPrompt: "Saved history", createdAt: "2026-09-14T00:00:00.000Z" }),
       status: "completed", creationStage: "accepted", piSessionId: "pi", modelControls: { models: [], selected: { provider: "openai", modelId: "gpt-5.5", thinkingLevel: "high" } } };
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection} runtimeBridge={createInMemoryPiRuntimeBridge()} />);
+    render(<FixtureSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection} runtimeBridge={createInMemoryPiRuntimeBridge()} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_available_model_controls", undefined));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Model and Thinking" }));
@@ -3821,7 +3821,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       status: "completed", creationStage: "accepted", runtimeId: "runtime", piSessionId: "pi-cold",
       runtimeEvents: [{ id: "old", piSessionId: "pi-cold", kind: "message", role: "assistant", body: "Saved answer", timestamp: "2026-09-14T00:00:00.000Z" }],
     };
-    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
+    render(<FixtureSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
       runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), sendInitialPrompt: send }} />);
     const input = screen.getByPlaceholderText("What do you want to know?");
     await user.type(input, "Continue");
@@ -3847,7 +3847,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     const a = session("a");
     const b = session("b");
-    const view = (projection: SessionProjection) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+    const view = (projection: SessionProjection) => <FixtureSessionsView projectId="pig-docs" showDraft={false}
       sessionProjection={projection} runtimeBridge={runtimeBridge} />;
     const { rerender } = render(view(a));
     await user.type(screen.getByPlaceholderText("What do you want to know?"), "Continue A");
@@ -3884,7 +3884,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       ...createSessionProjection({ id, projectId: "pig-docs", initialPrompt: id, createdAt: "2026-09-14T00:00:00.000Z" }),
       status: "completed", creationStage: "accepted", piSessionId: `pi-${id}`, runtimeId: "runtime",
     });
-    const view = (sessionId: string) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+    const view = (sessionId: string) => <FixtureSessionsView projectId="pig-docs" showDraft={false}
       sessionId={sessionId} runtimeBridge={runtimeBridge} />;
     const { rerender } = render(view("a"), { store: storeWith(runtimeBridge, session("a"), session("b")) });
 
@@ -3939,7 +3939,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         modelControls: { models: [], selected },
       };
       const view = (showDraft = false) => (
-        <AgentWorkspaceSessionsView
+        <FixtureSessionsView
           projectId="pig-docs"
           runtimeBridge={resumingBridge}
           sessionProjection={{ ...projection }}
@@ -4009,7 +4009,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveFollowUpDraft("waiting-session", "Resume from the saved composer");
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         sessionProjection={projection}
         workspace={{
@@ -4084,7 +4084,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveFollowUpDraft("annotated-session", "Half a thought");
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         sessionProjection={projection}
         workspace={{
@@ -4194,7 +4194,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -4304,7 +4304,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -4802,7 +4802,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         workspace={{
@@ -4864,7 +4864,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft(pigProjectPath, "Keep this prompt while switching target");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={pigProjectPath}
         showDraft
         workspace={{
@@ -4921,7 +4921,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft(studyProjectPath, "Run notes outside Git");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={studyProjectPath}
         showDraft
         workspace={{
@@ -4980,7 +4980,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveSessionDraft("/Users/void/DeletedProject", "Keep text after target removal");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId={pigProjectPath}
         showDraft
         workspace={{
@@ -5028,7 +5028,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Start an active browser-backed Session");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         workspace={{
@@ -5128,7 +5128,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveSessionDraft("pig-docs", "Run in an isolated background checkout");
     const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
@@ -5242,7 +5242,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     saveSessionDraft("pig-docs", "Run beside an active Session in place");
     const store = storeWith(createInMemoryPiRuntimeBridge(), activeProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         showDraft
@@ -5387,7 +5387,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       const [sessionId, setSessionId] = useState(sourceProjection.id);
 
       return (
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
@@ -5537,7 +5537,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     const store = storeWith(bridge, sourceProjection);
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         checkoutManager={checkoutManager}
         projectId="pig-docs"
         runtimeBridge={bridge}
@@ -5594,7 +5594,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     saveSessionDraft("pig-docs", "Summarize the docs ADR");
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         showDraft
         onSessionCreated={onSessionCreated}
@@ -5823,7 +5823,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -5970,7 +5970,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6090,7 +6090,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6205,7 +6205,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6375,7 +6375,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6454,7 +6454,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6662,7 +6662,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6867,7 +6867,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     }
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -6985,7 +6985,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7042,7 +7042,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7092,7 +7092,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     const bridge = createInMemoryPiRuntimeBridge();
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -7168,7 +7168,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
         sessionProjection={projection}
@@ -7321,7 +7321,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7401,7 +7401,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7480,7 +7480,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7575,7 +7575,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7658,7 +7658,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7738,7 +7738,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7859,7 +7859,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -7975,7 +7975,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8060,7 +8060,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         projectId="pig-docs"
         workspace={workspace}
         sessionProjection={projection}
@@ -8245,7 +8245,7 @@ describe("Chain of Thought phases in Live Chat", () => {
 
   function cotView(nowMs: number) {
     return (
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={cotT0 + nowMs}
         projectId="pig-docs"
         sessionId="session-cot"
@@ -8441,7 +8441,7 @@ describe("Chain of Thought phases in Live Chat", () => {
     ];
 
     render(
-      <AgentWorkspaceSessionsView
+      <FixtureSessionsView
         clockNowMs={cotT0 + 999_999}
         projectId="pig-docs"
         sessionProjection={{ ...cotProjection(beats), stale: true }}

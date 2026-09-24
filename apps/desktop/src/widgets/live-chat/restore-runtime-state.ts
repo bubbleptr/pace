@@ -1,6 +1,26 @@
 import { type PiRuntimeBridge, type PiSessionState } from "@/entities/runtime/pi-runtime-bridge";
 import { type SessionProjection } from "@/entities/session/session-projection";
-import type { AgentWorkspaceFixture } from "./live-session-column";
+import type { LiveMessage, RunTimelineItem } from "@/entities/session/live-chat-model";
+
+export type AgentWorkspaceFixture = {
+  id: string;
+  name: string;
+  projectRoot: string;
+  repoRoot: string;
+  selectedSessionId: string | null;
+  liveMessages: LiveMessage[];
+  runTimeline: RunTimelineItem[];
+  checkout: {
+    mode: string;
+    root: string;
+    runtimeCwd: string;
+  };
+  summary: {
+    model: string;
+    totalCostUsd: number;
+    totalTokens: number;
+  };
+};
 
 type RestorablePiRuntimeBridge = PiRuntimeBridge & {
   restoreSessionState(state: PiSessionState): Promise<PiSessionState>;

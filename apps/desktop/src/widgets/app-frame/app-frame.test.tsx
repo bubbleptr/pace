@@ -11,10 +11,8 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AppFrame,
-  defaultSidebarProjectSessionProjections,
-} from "@/widgets/app-frame";
+import { AppFrame } from "@/widgets/app-frame";
+import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
 import type { SessionProjection } from "@/entities/session/session-projection";
 import { addProjectToRegistry, getProjectRegistry } from "@/entities/project/project-registry";
 import { saveFollowUpDraft } from "@/entities/session/follow-up-drafts";

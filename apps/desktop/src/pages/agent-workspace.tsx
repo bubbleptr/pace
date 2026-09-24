@@ -22,7 +22,8 @@ import {
   useEffect,
   useState,
 } from "react";
-import { AppFrame, defaultSidebarProjectSessionProjections } from "@/widgets/app-frame";
+import { AppFrame } from "@/widgets/app-frame";
+import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
 import {
   Stop,
 } from "@/shared/ui/icons";
@@ -94,53 +95,6 @@ import {
 } from "@/widgets/live-chat";
 import { SessionSurfaceContent, SessionToolbarActions } from "@/widgets/session-dock";
 
-const fixtureWorkspace: AgentWorkspaceFixture = {
-  id: "pig",
-  name: "Pig",
-  projectRoot: "/Users/void/code/opensource/Pig",
-  repoRoot: "/Users/void/code/opensource/Pig",
-  selectedSessionId: "session-control-plane-shell",
-  liveMessages: [
-    {
-      id: "message-user",
-      role: "user",
-      body: "Create the Agent Workspace entry shape for this Project.",
-    },
-    {
-      id: "message-assistant",
-      role: "assistant",
-      body: "Project Sessions keep live Pi work separate from Trajectory and Usage evidence.",
-    },
-  ],
-  runTimeline: [
-    {
-      id: "timeline-read-context",
-      title: "Project context loaded",
-      meta: "Pace workspace and recent session evidence",
-    },
-    {
-      id: "timeline-render-shell",
-      title: "Workspace view prepared",
-      meta: "Session list, live chat, timeline, and action surface",
-    },
-    {
-      id: "timeline-analyze",
-      title: "Evidence preserved",
-      meta: "Trajectory and Usage stay as historical evidence views",
-    },
-  ],
-  checkout: {
-    mode: "Foreground local checkout",
-    root: "/Users/void/code/opensource/Pig",
-    runtimeCwd: "/Users/void/code/opensource/Pig",
-  },
-  summary: {
-    model: "gpt-5-codex",
-    totalCostUsd: 0.042137,
-    totalTokens: 18_420,
-  },
-};
-
 function workspaceFromProject(project: ProjectRegistryEntry): AgentWorkspaceFixture {
   return {
     id: project.id,
@@ -186,9 +140,9 @@ function TitlebarBand() {
 }
 
 export function AgentWorkspaceSessionsView({
-  projectId = fixtureWorkspace.id,
+  projectId,
   showDraft = false,
-  workspace = fixtureWorkspace,
+  workspace,
   aside,
   asideOpen = true,
   onDraftSubmit = () => {},
@@ -206,9 +160,9 @@ export function AgentWorkspaceSessionsView({
   onManageModels,
   onOpenProviderSettings,
 }: {
-  projectId?: string;
+  projectId: string;
   showDraft?: boolean;
-  workspace?: AgentWorkspaceFixture;
+  workspace: AgentWorkspaceFixture;
   aside?: ReactNode;
   /** False while the dock plays its exit; the pane closes on the same clock. */
   asideOpen?: boolean;
