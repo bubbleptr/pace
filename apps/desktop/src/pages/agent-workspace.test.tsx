@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as renderWithoutQuery, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,10 +25,7 @@ import {
   SessionToolbarActions,
 } from "@/pages/agent-workspace";
 import { addProjectToRegistry } from "@/entities/project/project-registry";
-import {
-  SessionProjectionsProvider,
-  SessionProjectionsStoreProvider,
-} from "@/entities/session/use-session-projections";
+import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
 import {
   createSessionProjectionsStore,
   type SessionProjectionsStore,
@@ -60,33 +56,13 @@ import { createSessionRuntimeModel } from "@/entities/session/session-runtime-mo
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
-import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
 import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
-
-// `store` hands the view a Session Projections store the test drives, as the
-// app provider does.
-function render(
-  ui: Parameters<typeof renderWithoutQuery>[0],
-  { store }: { store?: SessionProjectionsStore } = {},
-) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const result = renderWithoutQuery(ui, {
-    wrapper: ({ children }) => (
-      <QueryClientProvider client={queryClient}>
-        {store ? (
-          <SessionProjectionsStoreProvider store={store} runtimeGeneration={0}>
-            {children}
-          </SessionProjectionsStoreProvider>
-        ) : children}
-      </QueryClientProvider>
-    ),
-  });
-  return Object.assign(result, { queryClient });
-}
+import { footerOf } from "@/test/composer-footer";
+import { render } from "@/test/render";
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
 // project sessions live in the aria-controls group owned by the project
@@ -1828,18 +1804,6 @@ describe("AgentWorkspaceSessionsPage", () => {
       }));
     }
 
-    function footerOf(composerTestId: string) {
-      const footer = screen
-        .getByTestId(composerTestId)
-        .querySelector<HTMLElement>('[data-slot="prompt-input-footer"]');
-
-      if (!footer) {
-        throw new Error(`${composerTestId} has no Location row`);
-      }
-
-      return footer;
-    }
-
     it("names where a Session Draft would run and which branch it would start on", async () => {
       const user = userEvent.setup();
       const loadProjectGitSummary = projectGitLoader("main", ["main", "feat/location-row"]);
@@ -1957,31 +1921,6 @@ describe("AgentWorkspaceSessionsPage", () => {
         within(footer).queryByTestId("composer-branch-label"),
       ).not.toBeInTheDocument();
       expect(loadProjectGitSummary).not.toHaveBeenCalled();
-    });
-
-    it("says there is no branch when the Project is not a repository or its HEAD is detached", async () => {
-      const loadProjectGitSummary = projectGitLoader(null);
-      saveSessionDraft("pig-docs", "Draft outside a branch");
-
-      render(
-        <AgentWorkspaceSessionsView
-          projectId="pig-docs"
-          showDraft
-          loadProjectGitSummary={loadProjectGitSummary}
-          workspace={docsWorkspace}
-        />,
-      );
-
-      await screen.findByTestId("session-draft-composer");
-      const footer = footerOf("session-draft-composer");
-
-      const placeholder = await within(footer).findByTestId("composer-branch-label");
-      expect(placeholder).toHaveTextContent("No branch");
-      // A placeholder, not a way to pick a branch that does not exist.
-      expect(placeholder.closest("button")).toBeNull();
-      expect(
-        within(footer).queryByTestId("git-branch-status-trigger"),
-      ).not.toBeInTheDocument();
     });
 
     it("keeps the draft Location and branch while the Session is being created", async () => {
@@ -4683,18 +4622,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
-  it("focuses the draft after choosing a suggestion so typing continues at the end", async () => {
-    const user = userEvent.setup();
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-
-    await user.click(await screen.findByRole("button", { name: "Fix the failing test" }));
-
-    const prompt = screen.getByPlaceholderText("Do anything with Pi");
-    expect(prompt).toHaveFocus();
-    await user.keyboard(" for Friday");
-    expect(prompt).toHaveValue("Fix the failing test for Friday");
-  });
-
   it("clears target validation when another control selects a valid chat target", async () => {
     const user = userEvent.setup();
     saveSessionDraft(null, "Keep this draft while choosing its target");
@@ -4757,28 +4684,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.queryByRole("option", { name: "Select Project" })).not.toBeInTheDocument();
   });
 
-  it("explains how the two project execution choices affect files", async () => {
-    const user = userEvent.setup();
-    saveSessionDraft(pigProjectPath, "");
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-    await user.click(await screen.findByTestId("checkout-strategy-trigger"));
-
-    expect(screen.getByText("Edit files directly in the selected project.")).toBeInTheDocument();
-    expect(screen.getByText("Create a separate Git worktree for this chat.")).toBeInTheDocument();
-  });
-
-  it("associates missing-target validation with the project control", async () => {
-    const user = userEvent.setup();
-    saveSessionDraft(null, "Keep my draft after its project is removed");
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-    await user.click(await screen.findByRole("button", { name: "Send" }));
-
-    const target = screen.getByRole("combobox", { name: /Project/ });
-    expect(target).toHaveAttribute("aria-invalid", "true");
-    expect(target).toHaveAccessibleDescription("Choose a project or select No project to continue.");
-    expect(screen.queryByTestId("checkout-strategy-trigger")).not.toBeInTheDocument();
-  });
-
   it("restores the same global draft after repeated New Chat clicks and reload", async () => {
     const user = userEvent.setup();
     const firstRender = renderProjectSessions();
@@ -4805,127 +4710,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(await screen.findByPlaceholderText("Do anything with Pi")).toHaveValue(
       "Keep this initial prompt",
     );
-  });
-
-  it("restores the last selected model on a new Session Draft", async () => {
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "list_session_projections") {
-        return [];
-      }
-
-      if (command === "list_provider_auth_status") {
-        return {
-          agentDir: "",
-          authPath: "",
-          configuredCount: 1,
-          providers: [],
-        };
-      }
-
-      if (command === "list_available_model_controls") {
-        return {
-          models: [
-            {
-              provider: "deepseek",
-              modelId: "deepseek-chat",
-              name: "DeepSeek Chat",
-              thinkingLevels: ["off"],
-            },
-            {
-              provider: "openai-codex",
-              modelId: "gpt-5.6-sol",
-              name: "GPT-5.6 SOL",
-              thinkingLevels: ["off", "low", "medium", "high"],
-            },
-          ],
-          selected: {
-            provider: "deepseek",
-            modelId: "deepseek-chat",
-            thinkingLevel: "off",
-          },
-        };
-      }
-
-      if (command === "get_config_inventory") {
-        return {
-          skills: [],
-          extensions: [],
-          packages: [],
-          promptTemplates: [],
-        };
-      }
-
-      throw new Error(`unexpected backend command ${command}`);
-    });
-    window.pace = {
-      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
-      onBackendEvent: vi.fn(() => vi.fn()),
-      onBrowserEvent: vi.fn(() => vi.fn()),
-      onUpdateEvent: vi.fn(() => vi.fn()),
-      onWindowFocusChanged: vi.fn(() => vi.fn()),
-      onNavigateRequest: vi.fn(() => vi.fn()),
-    };
-    saveLastModelSelection({
-      provider: "openai-codex",
-      modelId: "gpt-5.6-sol",
-      thinkingLevel: "high",
-    });
-    saveSessionDraft(pigProjectPath, "");
-
-    renderProjectSessions("/projects/pig/sessions?view=draft");
-
-    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent(
-      "GPT-5.6 SOL · High",
-    );
-  });
-
-  it("loads draft models when the first credential arrives and clears them when the last one leaves", async () => {
-    let configuredCount = 0;
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "list_session_projections") return [];
-      if (command === "list_provider_auth_status") {
-        return { agentDir: "", authPath: "", configuredCount, providers: [] };
-      }
-      if (command === "list_available_model_controls") {
-        return {
-          models: [{
-            provider: "anthropic",
-            modelId: "claude-sonnet-4",
-            name: "Claude Sonnet 4",
-            thinkingLevels: ["off", "high"],
-          }],
-          selected: { provider: "anthropic", modelId: "claude-sonnet-4", thinkingLevel: "high" },
-        };
-      }
-      if (command === "get_config_inventory") {
-        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
-      }
-      throw new Error(`unexpected backend command ${command}`);
-    });
-    window.pace = {
-      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
-      onBackendEvent: vi.fn(() => vi.fn()),
-      onBrowserEvent: vi.fn(() => vi.fn()),
-      onUpdateEvent: vi.fn(() => vi.fn()),
-      onWindowFocusChanged: vi.fn(() => vi.fn()),
-      onNavigateRequest: vi.fn(() => vi.fn()),
-    };
-    saveSessionDraft(pigProjectPath, "");
-    const { queryClient } = renderProjectSessions("/projects/pig/sessions?view=draft");
-    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
-
-    configuredCount = 1;
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
-    });
-    expect(await screen.findByTestId("model-thinking-trigger")).toHaveTextContent("Claude Sonnet 4");
-
-    configuredCount = 0;
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: providerAuthStatusQueryKey });
-    });
-    expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
-    expect(screen.queryByTestId("model-thinking-trigger")).not.toBeInTheDocument();
   });
 
   it("lists only visible models and opens Models settings over the workspace", async () => {
@@ -8465,63 +8249,6 @@ describe("Context usage placement", () => {
     ).toHaveTextContent("deadbee");
   });
 
-  it("lists local and remote-tracking branch names in the git selector", async () => {
-    const user = userEvent.setup();
-    renderSessionsView(boundProjection(), idleSessionChanges(gitChanges()));
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-
-    expect(
-      await screen.findByRole("option", { name: "feat/composer-git" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "main" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "fix/spacing" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "feat/chat-chain-of-thought-rail" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText("Search branches..."),
-    ).toBeInTheDocument();
-    // Same inset as the composer model selector popover (`gap-1 p-1`), not
-    // Astryx Selector's sm item padding which sits flush against the chrome.
-    expect(screen.getByTestId("git-branch-status-menu")).toHaveClass(
-      "flex",
-      "flex-col",
-      "gap-1",
-      "p-1",
-    );
-  });
-
-  it("disables a branch already checked out in another worktree and explains why", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {});
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(
-        gitChanges({
-          occupiedBranches: [
-            {
-              branch: "main",
-              path: "/work/.pig-worktrees/Pace/session-other",
-            },
-          ],
-        }),
-        checkoutBranch,
-      ),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-
-    const option = await screen.findByRole("option", { name: /main/ });
-    expect(option).toHaveAttribute("aria-disabled", "true");
-    expect(option).toHaveTextContent("Already checked out in session-other");
-
-    await user.click(option);
-    expect(checkoutBranch).not.toHaveBeenCalled();
-  });
-
   it("checks out the selected local branch on the Session checkout", async () => {
     const user = userEvent.setup();
     const checkoutBranch = vi.fn(async () => {});
@@ -8534,22 +8261,6 @@ describe("Context usage placement", () => {
     await user.click(await screen.findByRole("option", { name: "main" }));
 
     expect(checkoutBranch).toHaveBeenCalledWith("main");
-  });
-
-  it("does not check out the branch the Session is already on", async () => {
-    const user = userEvent.setup();
-    const checkoutBranch = vi.fn(async () => {});
-    renderSessionsView(
-      boundProjection(),
-      idleSessionChanges(gitChanges(), checkoutBranch),
-    );
-
-    await user.click(screen.getByTestId("git-branch-status-trigger"));
-    await user.click(
-      await screen.findByRole("option", { name: "feat/composer-git" }),
-    );
-
-    expect(checkoutBranch).not.toHaveBeenCalled();
   });
 
   it("surfaces a failed checkout on the composer", async () => {
