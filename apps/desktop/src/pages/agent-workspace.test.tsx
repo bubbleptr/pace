@@ -1,7 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { useLayoutEffect, useState, type ComponentProps } from "react";
 import {
   Outlet,
@@ -38,6 +36,7 @@ import {
   type PiRuntimeBridge,
 } from "@/entities/runtime/pi-runtime-bridge";
 import * as inMemoryBridgeModule from "@/entities/runtime/in-memory-pi-runtime-bridge";
+import * as runtimeFactoryModule from "@/entities/runtime/pi-runtime-factory";
 import {
   createInMemoryPiRuntimeBridge,
   type InMemoryPiRuntimeBridge,
@@ -376,12 +375,6 @@ describe("AgentWorkspaceSessionsPage", () => {
     // sessions view mounts; the toolbar appears once a session is selected.
     const navbarActions = await screen.findByTestId("navbar-actions");
 
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/pages/agent-workspace.tsx"), "utf8");
-
-    expect(source).toContain(
-      "Project Sessions keep live Pi work separate from Trajectory and Usage evidence.",
-    );
-    expect(source).not.toContain("Analyze evidence");
     expect(within(liveColumn).queryByText("Evidence preserved")).not.toBeInTheDocument();
     expect(within(liveColumn).queryByText("Analyze preserved")).not.toBeInTheDocument();
 
@@ -2367,10 +2360,20 @@ describe("AgentWorkspaceSessionsPage", () => {
   });
 
   it("creates default Sessions through the runtime bridge factory instead of a fake bridge", () => {
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/pages/agent-workspace.tsx"), "utf8");
+    const createFakeBridge = inMemoryBridgeModule.createInMemoryPiRuntimeBridge;
+    const fakeBridgeSpy = vi.spyOn(inMemoryBridgeModule, "createInMemoryPiRuntimeBridge");
+    const factorySpy = vi
+      .spyOn(runtimeFactoryModule, "createDefaultPiRuntimeBridge")
+      .mockImplementation(() => createFakeBridge());
+    onTestFinished(() => {
+      fakeBridgeSpy.mockRestore();
+      factorySpy.mockRestore();
+    });
 
-    expect(source).toContain("createDefaultPiRuntimeBridge");
-    expect(source).not.toContain("createInMemoryPiRuntimeBridge");
+    render(<AgentWorkspaceSessionsView projectId="pig" />);
+
+    expect(factorySpy).toHaveBeenCalled();
+    expect(fakeBridgeSpy).not.toHaveBeenCalled();
   });
 
   it("renders completion and failure results inside Live Chat", async () => {
