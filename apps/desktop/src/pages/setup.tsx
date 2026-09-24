@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Button, EmptyState, VStack } from "@astryxdesign/core";
 import type { ConfigInventory } from "@pace/core";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import { invoke } from "@/shared/runtime";
 import { useRefreshOnWindowFocus } from "@/shared/refresh";
 import { Marketplace } from "./packages/marketplace";

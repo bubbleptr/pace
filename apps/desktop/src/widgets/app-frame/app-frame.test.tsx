@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AppFrame,
   defaultSidebarProjectSessionProjections,
-} from "@/app/app-shell";
+} from "@/widgets/app-frame";
 import type { SessionProjection } from "@/entities/session/session-projection";
 import { addProjectToRegistry, getProjectRegistry } from "@/entities/project/project-registry";
 import { saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
@@ -584,7 +584,7 @@ describe("AppFrame", () => {
   });
 
   it("uses folder state icons for Project expansion and swaps to a chevron affordance on hover", async () => {
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
     const iconSource = readFileSync(
       join(process.cwd(), "apps/desktop/src/shared/ui/icons.tsx"),
       "utf8",
@@ -1475,7 +1475,7 @@ describe("AppFrame", () => {
     expect(await screen.findByText("Main content")).toBeInTheDocument();
     const sidebar = container.querySelector<HTMLElement>('[data-testid="app-layout-sidebar"]');
     const styles = readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8");
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
 
     expect(sidebar).toHaveStyle({ width: "260px" });
     expect(styles).toContain("--pigui-sidebar-row-height: 1.875rem;");
@@ -1531,7 +1531,7 @@ describe("AppFrame", () => {
 
     expect(await screen.findByText("Main content")).toBeInTheDocument();
     const styles = readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8");
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
     const projectGroup = screen.getByTestId("sidebar-projects");
     const projectHeader = getProjectHeaderButton(projectGroup, "Pig");
     const projectNavigation = getProjectSessionsGroup(projectGroup, "Pig");
@@ -1628,7 +1628,7 @@ describe("AppFrame", () => {
 
     await screen.findByText("Main content");
     const shellRoot = document.querySelector(".astryx-app-shell");
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
     const styles = readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8");
 
     expect(shellRoot).not.toBeNull();
@@ -1676,7 +1676,7 @@ describe("AppFrame", () => {
   it("uses compact styling for sidebar and picker menus", () => {
     const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8");
     const appShellSource = readFileSync(
-      join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"),
+      join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"),
       "utf8",
     );
 
@@ -1722,7 +1722,7 @@ describe("AppFrame", () => {
 
   it("keeps primary sidebar navigation icons at the default compact size", () => {
     const source = readFileSync(
-      join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"),
+      join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"),
       "utf8",
     );
 
@@ -1734,7 +1734,7 @@ describe("AppFrame", () => {
 
   it("does not import standalone React Aria Heading into the app shell", () => {
     const source = readFileSync(
-      join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"),
+      join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"),
       "utf8",
     );
 
@@ -1754,7 +1754,7 @@ describe("AppFrame", () => {
   });
 
   it("does not replace macOS titlebar gestures with React window API handlers", () => {
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
 
     expect(source).not.toContain("startWindowDrag");
     expect(source).not.toContain("toggleWindowMaximize");
@@ -1762,7 +1762,7 @@ describe("AppFrame", () => {
 
   it("marks Electron drag regions with app-region CSS instead of renderer window commands", () => {
     const styles = readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8");
-    const source = readFileSync(join(process.cwd(), "apps/desktop/src/app/app-shell.tsx"), "utf8");
+    const source = readFileSync(join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"), "utf8");
 
     expect(styles).toContain("-webkit-app-region: drag;");
     expect(styles).toContain("-webkit-app-region: no-drag;");

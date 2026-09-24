@@ -5,7 +5,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { listSessions } from "@/entities/session/sessions";
 import { RefreshCw } from "@/shared/ui/icons";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-state";
 import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-status";
 import { SessionDetailPage } from "@/pages/session-detail";

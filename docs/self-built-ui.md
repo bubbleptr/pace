@@ -97,8 +97,8 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 
 - **2026-09-07 New Chat 交互修复**：新增 ChatRunFailure 组合；ChatPromptInput 增加可选 inputRef 并展示建议后的聚焦，ChatChainOfThought 展示失败时的 Failed after Ns；ComposerInsertMenu 展示可搜索技能和可读插件名称。Chats 扁平列表与项目/执行方式选择仍为页面组合。
 
-- **2026-09-07 侧栏分组折叠**：Chats / Projects 的整组折叠复用 Astryx SideNavSection、IconButton 与 Stack，在 `app-shell.tsx` 中做页面组合；独立记忆状态，两个标题栏统一为折叠箭头与加号，移除独立 Add Project 列表行；不新增共享 UI 原语。
-- **2026-09-07 projectless chat**：切片 2 的 Chats 分组、ProjectPicker 首项和 Settings Chats section 是页面组合（`app-shell` / `agent-workspace` / `settings`），未新增 `shared/ui/` 组件，本表无新行。
+- **2026-09-07 侧栏分组折叠**：Chats / Projects 的整组折叠复用 Astryx SideNavSection、IconButton 与 Stack，在 `app-shell.tsx`（ADR-0045 后整体移到 `widgets/app-frame/app-frame.tsx`）中做页面组合；独立记忆状态，两个标题栏统一为折叠箭头与加号，移除独立 Add Project 列表行；不新增共享 UI 原语。
+- **2026-09-07 projectless chat**：切片 2 的 Chats 分组、ProjectPicker 首项和 Settings Chats section 是页面组合（`app-shell`（ADR-0045 后为 `widgets/app-frame/`）/ `agent-workspace` / `settings`），未新增 `shared/ui/` 组件，本表无新行。
 
 - Design 页的 Components 使用 6 个用途分类与可搜索目录，每次挂载一个组件预览；现有 34 组示例，PiSheet 已移除；所有窗口统一使用 SessionDock 面板，不再按 1280px 断点切换 Sheet/Dialog，工具栏开关与右侧 rail 共用同一状态。目录元数据与示例入口在 `pages/design-components.tsx` 的 `componentExamples`，目录布局在 `pages/design-component-browser.tsx`，属于页面组合，不新增共享原语。新增组件时同时填写名称、用途分类、说明和预览入口，各状态采用顶部标签与独立展示区。
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import { DesignComponentsLayer } from "@/pages/design-components";
 
 /**

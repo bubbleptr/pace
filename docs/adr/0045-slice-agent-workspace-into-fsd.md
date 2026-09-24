@@ -29,7 +29,7 @@ import 方向规则一直靠约定维持，已有反向 import 存在一段时�
 | `features/session-draft/` | `SessionDraftComposer`、Hero、Suggestions、ExitEcho、`ProjectPicker`（Project Selector）、`SessionCreationFailureDetail` |
 | `widgets/live-chat/` | `LiveSessionColumn`、`FullChatComposer`（Follow-up Draft）、`QueuedMessageList`、`LiveChatMessage`、`AssistantRunTrajectory`、`AssistantMessageContent`、runtime state 恢复助手。Queue / Steer / Stop / Fork / Retry / 改模型是共享 `liveProjection` 与 `apply` 的闭包，随 widget 走，在目录内按文件拆，不硬切成 feature 造 prop drilling |
 | `widgets/session-dock/` | `SessionSurfaceContent`、`SessionToolbarActions`、Changes panel；`session-files-panel` / `session-terminal-panel` / `session-browser-panel` 从 pages 搬入 |
-| `widgets/app-frame/` | `AppFrame`（及不可分的 `HeaderChrome`）从 app-shell 搬出，六个 page 改为向下 import |
+| `widgets/app-frame/` | `AppFrame` 依赖同文件内的侧栏导航、`HeaderChrome` 与 `getActiveTab`，与之不可分，所以 `app/app-shell.tsx` 整个文件原样移为 `widgets/app-frame/app-frame.tsx`；六个 page 改为向下 import |
 | `dev/fixtures/agent-workspace.ts` | `fixtureWorkspace`、`workspaceFromProject`、`AgentWorkspaceFixture`、`defaultSidebarProjectSessionProjections`；生产 props 不再有 fixture 默认值 |
 | `pages/agent-workspace.tsx` | 只剩 `AgentWorkspaceSessionsView`、`AgentWorkspaceSessionsPage`、`TitlebarBand`、`firstSessionIdForProject` |
 

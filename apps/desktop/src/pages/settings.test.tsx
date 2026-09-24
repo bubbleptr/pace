@@ -10,7 +10,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsDialog } from "@/pages/settings";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import {
   getVisibleModels,
   saveVisibleModels,

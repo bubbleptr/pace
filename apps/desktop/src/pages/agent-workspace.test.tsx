@@ -64,7 +64,7 @@ import { render } from "@/test/render";
 
 // The app shell renders the sidebar with Astryx SideNav: rows are buttons,
 // project sessions live in the aria-controls group owned by the project
-// header row. These helpers mirror app-shell.test.tsx.
+// header row. These helpers mirror widgets/app-frame/app-frame.test.tsx.
 function isAstryxSideNavRow(candidate: HTMLElement) {
   return candidate.classList.contains("astryx-side-nav-item");
 }

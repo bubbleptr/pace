@@ -22,7 +22,7 @@ import {
   useEffect,
   useState,
 } from "react";
-import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
+import { AppFrame, defaultSidebarProjectSessionProjections } from "@/widgets/app-frame";
 import {
   Stop,
 } from "@/shared/ui/icons";
