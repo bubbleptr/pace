@@ -13,7 +13,7 @@ import {
   subscribeComposerInjections,
   type ComposerInjection,
 } from "@/entities/session/composer-injections";
-import { createBrowserHost } from "../../electron/browser-host";
+import { createBrowserHost } from "../../../electron/browser-host";
 import { SessionDockMotionContext } from "@/shared/ui/session-dock/session-dock";
 import { SessionBrowserPanel } from "./session-browser-panel";
 

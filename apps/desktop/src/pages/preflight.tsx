@@ -9,7 +9,7 @@ import type {
   EnvironmentPreflightReport,
   EnvironmentPreflightStatus,
 } from "@pace/core";
-import { AppFrame } from "@/app/app-shell";
+import { AppFrame } from "@/widgets/app-frame";
 import { invoke } from "@/shared/runtime";
 
 export const preflightReportQueryKey = ["environment-preflight-report"] as const;

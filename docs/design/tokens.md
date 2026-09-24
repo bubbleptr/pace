@@ -67,8 +67,8 @@ context: { label: "CONTEXT", color: "var(--success)" }
 - 间距只用 Astryx 刻度：`--spacing-0 … --spacing-12`（4px 基数，另有 `0-5`=2px、`1-5`=6px）。Tailwind 的 `p-4` / `gap-2` 与之同基数，可用；`p-[13px]` 不可用。Stack 的 `gap` 传数字：`gap={2}`，不是 `gap="2"`。
 - 圆角只有 `--radius-inner`(4) `--radius-element`(8，即 `--radius`) `--radius-container`(12) `--radius-page`/`--radius-chat`(28) `--radius-full`。`rounded-[3px]` 不存在于系统里。
 - 控件高度只有 `--size-element-sm/md/lg` = 28/32/36px。Surface 第一行的 40px（`h-10`）是唯一例外，理由见 `surface-bar.tsx`。
-- `--pigui-sidebar-*`（`styles.css:111-130`，20 个）只在 `app-shell.tsx` 与 `styles.css` 的侧栏规则里用，值被 `app-shell.test.tsx` 按字面冻结；别处不引用，也不新增 `--pigui-color-*`（同一测试禁止）。
-- 运行时注入的布局 token（`--pigui-header-height` `--pigui-main-left` `--pigui-chrome-safe-left` `--pigui-session-dock-width`）由 `app-shell.tsx` / `agent-workspace.tsx` 写在 style 上，CSS 只读不声明。
+- `--pigui-sidebar-*`（`styles.css:111-130`，20 个）只在 `widgets/app-frame/app-frame.tsx` 与 `styles.css` 的侧栏规则里用，值被 `app-frame.test.tsx` 按字面冻结；别处不引用，也不新增 `--pigui-color-*`（同一测试禁止）。
+- 运行时注入的布局 token（`--pigui-header-height` `--pigui-main-left` `--pigui-chrome-safe-left` `--pigui-session-dock-width`）由 `widgets/app-frame/app-frame.tsx` / `agent-workspace.tsx` 写在 style 上，CSS 只读不声明。
 
 ## 已知债务，不许再添
 
@@ -81,4 +81,4 @@ context: { label: "CONTEXT", color: "var(--success)" }
 
 ## 谁在守
 
-没有 ESLint / stylelint。守门的是源码字符串断言，命令 `bun run test`：`design-system.test.ts`（桥、层顺序、字体、图标粗细）、`pi-trajectory-ledger.test.tsx`（数据色不借语义色）、`app-shell.test.tsx`（侧栏 token 冻结、禁 `--pigui-color-*`）、`pages/design.test.tsx`（/design 页展示全部桥与数据色）。
+没有 ESLint / stylelint。守门的是源码字符串断言，命令 `bun run test`：`design-system.test.ts`（桥、层顺序、字体、图标粗细）、`pi-trajectory-ledger.test.tsx`（数据色不借语义色）、`widgets/app-frame/app-frame.test.tsx`（侧栏 token 冻结、禁 `--pigui-color-*`）、`pages/design.test.tsx`（/design 页展示全部桥与数据色）。

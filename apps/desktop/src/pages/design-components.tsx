@@ -66,7 +66,7 @@ import {
   TerminalView,
   type TerminalViewHandle,
 } from "@/shared/ui/terminal/terminal-view";
-import { ModelSelectorControl } from "@/shared/ui/model-selector/model-selector-control";
+import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
 import { ComposerAttachmentDrawer } from "@/shared/ui/composer-attachments/composer-attachment-drawer";
 import { ComposerInsertMenu } from "@/shared/ui/composer-attachments/composer-insert-menu";
 import { Button } from "@astryxdesign/core/Button";

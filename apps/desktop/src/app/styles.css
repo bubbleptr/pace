@@ -503,7 +503,7 @@ body {
   }
 }
 
-/* Model selector options flyout (shared/ui/model-selector). Position and
+/* Model selector options flyout (entities/model/model-selector). Position and
    width come from the component; the 32px ::before bridge keeps hover alive
    across the gap between the panel and the flyout. Open/close is a CSS
    transition (interruptible) driven by [data-open]; @starting-style covers

@@ -193,7 +193,7 @@ describe("Design page dev-only gating", () => {
 
   it("adds a dev-only Design entry to system navigation with a Design title", () => {
     const appShell = readFileSync(
-      join(repoRoot, "apps/desktop/src/app/app-shell.tsx"),
+      join(repoRoot, "apps/desktop/src/widgets/app-frame/app-frame.tsx"),
       "utf8",
     );
 
