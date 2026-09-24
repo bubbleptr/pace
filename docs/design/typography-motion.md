@@ -33,7 +33,7 @@
 | 其余进场 / 退场 | `--duration-fast`(175) / `--duration-medium`(410) + `--ease-standard` | Astryx |
 | Session Dock 开合 | 进 `250ms` / 出 `180ms`（`sessionDockExitMs`） | `styles.css:554-586` |
 | 思维链翻页 | `--cot-flip-duration: 300ms` / 退出 `220ms` | `chat.css:255-256` |
-| Draft → Live 交接（composer 从居中下沉到底部、Live Chat 淡入） | `--duration-medium` + `--ease-standard`；`transform` 只在 `[data-draft-handoff]` 期间存在，JS 侧 `draftHandoffMs` 同步为 410ms | `styles.css` `.pigui-draft-handoff__*`、`agent-workspace.tsx` |
+| Draft → Live 交接（composer 从居中下沉到底部、Live Chat 淡入） | `--duration-medium` + `--ease-standard`；`transform` 只在 `[data-draft-handoff]` 期间存在，JS 侧 `draftHandoffMs` 同步为 410ms | `styles.css` `.pigui-draft-handoff__*`、`widgets/live-chat/live-session-column.tsx` |
 | 列表行进出场（队列、Surface tab） | `200ms` / `150ms`，退场兜底 `exitTimeoutMs` | `chat.css:1148-1176`、`surface-bar.tsx:88` |
 | 像素心跳 | `860ms` 周期（`ChatPixelLoader` 的 `periodMs`） | ADR-0030 |
 
