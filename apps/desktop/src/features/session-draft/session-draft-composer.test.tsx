@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -8,32 +8,107 @@ import {
 } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectGitSummary } from "@pace/core";
+import type { ProjectGitSummary, PromptCommandCatalog } from "@pace/core";
+import type { ProjectRegistryEntry } from "@/entities/project/project-registry";
+import { invokeBrowserFallback } from "@/shared/runtime";
 import { saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { saveSessionDraft, type SessionDraft } from "@/entities/session/session-drafts";
 import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import { footerOf } from "@/test/composer-footer";
-import { getPromptInput, promptValue } from "@/test/prompt-input";
+import { findPromptInput, getPromptInput, promptValue } from "@/test/prompt-input";
 import { render } from "@/test/render";
-import { SessionDraftComposer } from "./session-draft-composer";
+import { SessionDraftComposer, type SessionDraftSubmitEvent } from "./session-draft-composer";
 
 const pigProjectPath = "/Users/void/code/opensource/Pig";
+
+const pigProject: ProjectRegistryEntry = {
+  id: pigProjectPath,
+  path: pigProjectPath,
+  displayName: "Pig",
+  addedAt: "2026-01-01T00:00:00.000Z",
+};
+
+const promptCatalog: PromptCommandCatalog = {
+  source: "static",
+  commands: [
+    { kind: "skill", name: "review-pr", invocation: "skill:review-pr", description: "Review a pull request" },
+    { kind: "skill", name: "write-docs", invocation: "skill:write-docs", description: "Write documentation" },
+    { kind: "prompt", name: "fix", invocation: "fix", description: "Fix a bug" },
+    { kind: "extension", name: "deploy", invocation: "deploy", description: "Deploy the app" },
+  ],
+};
+
+function mockPromptCommands(catalog: PromptCommandCatalog = promptCatalog) {
+  const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === "list_prompt_commands") {
+      return catalog;
+    }
+    if (command === "get_config_inventory") {
+      return { skills: [], extensions: [], packages: [], promptTemplates: [] };
+    }
+    return invokeBrowserFallback(command, args);
+  });
+  window.pace = {
+    invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+    onBackendEvent: vi.fn(() => vi.fn()),
+    onBrowserEvent: vi.fn(() => vi.fn()),
+    onUpdateEvent: vi.fn(() => vi.fn()),
+    onWindowFocusChanged: vi.fn(() => vi.fn()),
+    onNavigateRequest: vi.fn(() => vi.fn()),
+  };
+  return invoke;
+}
+
+/**
+ * Caret at the end of the contentEditable — what typing leaves behind.
+ * Astryx's trigger detection requires the caret inside a text node, so
+ * collapse into the last one rather than onto the editable element.
+ */
+function caretAtEnd(element: HTMLElement) {
+  element.focus();
+  const range = document.createRange();
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let lastText: Node | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    lastText = node;
+  }
+  if (lastText) {
+    range.setStart(lastText, lastText.textContent?.length ?? 0);
+    range.collapse(true);
+  } else {
+    range.selectNodeContents(element);
+    range.collapse(false);
+  }
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function typeAtCaret(element: HTMLElement, text: string) {
+  element.textContent = `${element.textContent ?? ""}${text}`;
+  caretAtEnd(element);
+  fireEvent.input(element);
+}
 
 // The column owns the draft store; this stands in for it so typing and a
 // picked suggestion land back in the composer's `draft` prop.
 function DraftComposer({
   draft: initialDraft,
   projectGitSummary = null,
+  projects = [],
+  onDraftSubmit = () => {},
 }: {
   draft: SessionDraft;
   projectGitSummary?: ProjectGitSummary | null;
+  projects?: ProjectRegistryEntry[];
+  onDraftSubmit?: (event: SessionDraftSubmitEvent) => void;
 }) {
   const [draft, setDraft] = useState(initialDraft);
 
   return (
     <SessionDraftComposer
       draft={draft}
-      projects={[]}
+      projects={projects}
       creationProjection={null}
       recommendedCheckoutMode="local"
       projectGit={{ summary: projectGitSummary, checkoutBranch: async () => {} }}
@@ -41,7 +116,7 @@ function DraftComposer({
       onDraftCheckoutModeChange={() => {}}
       onDraftBaseRefChange={() => {}}
       onDraftTargetChange={() => {}}
-      onDraftSubmit={() => {}}
+      onDraftSubmit={onDraftSubmit}
     />
   );
 }
@@ -242,5 +317,102 @@ describe("SessionDraftComposer", () => {
     });
     expect(await screen.findByTestId("session-draft-no-models-gate")).toBeInTheDocument();
     expect(screen.queryByTestId("model-thinking-trigger")).not.toBeInTheDocument();
+  });
+});
+
+describe("SessionDraftComposer slash commands", () => {
+  it("opens the catalog on '/' and submits the picked skill with a plain space", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands();
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "/");
+    const option = await screen.findByRole("option", { name: /review-pr/ });
+    await user.click(option);
+
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:review-pr\u00A0"));
+    // Continue the prompt after the token's trailing NBSP.
+    input.appendChild(document.createTextNode("参数"));
+    fireEvent.input(input);
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:review-pr\u00A0参数"));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onDraftSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "/skill:review-pr 参数" }),
+    );
+  });
+
+  it("does not offer completion for a slash mid-sentence", async () => {
+    mockPromptCommands();
+    const draft = saveSessionDraft(pigProjectPath, "hello ");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+    await waitFor(() => expect(promptValue(input)).toBe("hello "));
+
+    typeAtCaret(input, "/");
+
+    expect(promptValue(input)).toBe("hello /");
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: /review-pr/ })).not.toBeInTheDocument();
+    });
+  });
+
+  it("inserts a skill token at the start from the + menu and replaces it on the next pick", async () => {
+    mockPromptCommands();
+    const draft = saveSessionDraft(pigProjectPath, "do the thing");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+    await waitFor(() => expect(promptValue(input)).toBe("do the thing"));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Skills" }));
+    await user.click(await screen.findByRole("option", { name: /review-pr/ }));
+
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:review-pr\u00A0do the thing"));
+
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Skills" }));
+    await user.click(await screen.findByRole("option", { name: /write-docs/ }));
+
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:write-docs\u00A0do the thing"));
+    expect(input.querySelectorAll("[data-astryx-token]")).toHaveLength(1);
+  });
+
+  it("blocks a Pi terminal command and keeps the draft", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands();
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "/compact");
+    await waitFor(() => expect(promptValue(input)).toBe("/compact"));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(/Pi terminal command/),
+    ).toBeInTheDocument();
+    expect(onDraftSubmit).not.toHaveBeenCalled();
+    expect(promptValue(input)).toBe("/compact");
+  });
+
+  it("rehydrates a saved draft's leading command into a token", async () => {
+    mockPromptCommands();
+    const draft = saveSessionDraft(pigProjectPath, "/skill:review-pr 参数");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+
+    await waitFor(() =>
+      expect(input.querySelector("[data-astryx-token]")).toHaveAttribute(
+        "data-astryx-token-value",
+        "/skill:review-pr",
+      ),
+    );
+    expect(promptValue(input)).toBe("/skill:review-pr\u00A0参数");
   });
 });

@@ -14,7 +14,7 @@ test.describe("DF-011 draft model trigger screenshots", () => {
 
       // Open draft composer
       await testApp.window.getByRole("button", { name: "New Chat for E2E Project", exact: true }).click();
-      await expect(testApp.window.getByRole("textbox")).toBeVisible();
+      await expect(testApp.window.getByRole("combobox", { name: "Prompt" })).toBeVisible();
 
       // Model trigger should be present in draft (DF-011 fix)
       const trigger = testApp.window.getByTestId("model-thinking-trigger");

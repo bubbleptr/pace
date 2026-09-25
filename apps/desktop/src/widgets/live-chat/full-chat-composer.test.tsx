@@ -1,11 +1,15 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionChanges } from "@pace/core";
+import type { PromptCommandCatalog } from "@pace/core";
+import { invokeBrowserFallback } from "@/shared/runtime";
 import {
   createSessionProjection,
   type SessionProjection,
 } from "@/entities/session/session-projection";
+import { saveFollowUpDraft, clearFollowUpDraft } from "@/entities/session/follow-up-drafts";
+import { findPromptInput, promptValue } from "@/test/prompt-input";
 import { render } from "@/test/render";
 import { FullChatComposer } from "./full-chat-composer";
 
@@ -217,5 +221,157 @@ describe("Context usage placement", () => {
     expect(
       footer?.querySelector('[data-slot="context-usage-meter"]'),
     ).toBeInTheDocument();
+  });
+});
+
+describe("FullChatComposer slash commands", () => {
+  const catalog: PromptCommandCatalog = {
+    source: "runtime",
+    commands: [
+      { kind: "skill", name: "review-pr", invocation: "skill:review-pr", description: "Review a pull request" },
+      { kind: "prompt", name: "fix", invocation: "fix", description: "Fix a bug" },
+      { kind: "extension", name: "deploy", invocation: "deploy", description: "Deploy the app" },
+    ],
+  };
+
+  function mockCommands(next: PromptCommandCatalog = catalog) {
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_prompt_commands") {
+        return next;
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    return invoke;
+  }
+
+  function liveProjection(): SessionProjection {
+    return {
+      ...createSessionProjection({
+        id: "session-cmds",
+        projectId: "pig-docs",
+        initialPrompt: "start",
+        createdAt: "2026-08-20T08:00:00.000Z",
+      }),
+      status: "waiting" as const,
+      runtimeId: "pi-sdk:session-cmds",
+      piSessionId: "pi-session-cmds",
+    };
+  }
+
+  /**
+   * Caret inside the last text node — Astryx's trigger detection reads
+   * range.startContainer and only fires when it's a text node, matching
+   * where a real keystroke leaves the caret.
+   */
+  function caretAtEnd(element: HTMLElement) {
+    element.focus();
+    const range = document.createRange();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let lastText: Node | null = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      lastText = node;
+    }
+    if (lastText) {
+      range.setStart(lastText, lastText.textContent?.length ?? 0);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(element);
+      range.collapse(false);
+    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  function typeAtCaret(element: HTMLElement, text: string) {
+    element.textContent = `${element.textContent ?? ""}${text}`;
+    caretAtEnd(element);
+    fireEvent.input(element);
+  }
+
+  beforeEach(() => {
+    clearFollowUpDraft("session-cmds");
+    delete window.pace;
+  });
+
+  it("submits a picked command token with a plain space before the args", async () => {
+    const onPromptSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockCommands();
+    render(<FullChatComposer projection={liveProjection()} onPromptSubmit={onPromptSubmit} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "/");
+    await user.click(await screen.findByRole("option", { name: /review-pr/ }));
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:review-pr\u00A0"));
+
+    input.appendChild(document.createTextNode("参数"));
+    fireEvent.input(input);
+    await waitFor(() => expect(promptValue(input)).toBe("/skill:review-pr\u00A0参数"));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onPromptSubmit).toHaveBeenCalledWith("/skill:review-pr 参数", []);
+  });
+
+  it("hides extension commands in queue mode across both entry points", async () => {
+    const user = userEvent.setup();
+    mockCommands();
+    render(
+      <FullChatComposer
+        projection={{ ...liveProjection(), status: "running" }}
+        queueMode
+        onQueueSubmit={() => {}}
+      />,
+    );
+    const input = await findPromptInput();
+
+    // Slash completion keeps skills and prompts but drops extensions.
+    typeAtCaret(input, "/");
+    await screen.findByRole("option", { name: /review-pr/ });
+    expect(screen.queryByRole("option", { name: /deploy/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    // The + menu drops the whole Commands group.
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
+    expect(items).toEqual(["Add files", "Skills", "Prompts"]);
+  });
+
+  it("blocks submitting an existing extension token while a run queues", async () => {
+    const onQueueSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockCommands();
+    saveFollowUpDraft("session-cmds", "/deploy prod");
+    render(
+      <FullChatComposer
+        projection={{ ...liveProjection(), status: "running" }}
+        queueMode
+        onQueueSubmit={onQueueSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+
+    // The saved command still rehydrates into a token so the block is visible.
+    await waitFor(() =>
+      expect(input.querySelector("[data-astryx-token]")).toHaveAttribute(
+        "data-astryx-token-value",
+        "/deploy",
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(
+      await screen.findByText(/can't be queued/),
+    ).toBeInTheDocument();
+    expect(onQueueSubmit).not.toHaveBeenCalled();
+    expect(promptValue(input)).toBe("/deploy\u00A0prod");
   });
 });

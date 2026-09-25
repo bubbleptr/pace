@@ -338,7 +338,7 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
 
     // No comment was typed — the bubble lives in the closed shadow root, out of
     // reach of any driver — so this also covers the uncommented row.
-    await expect(composer.getByRole("textbox")).toHaveText(
+    await expect(composer.getByRole("combobox", { name: "Prompt" })).toHaveText(
       /#1 `#cta` \(button\) — \(no comment\)/,
     );
     await expect(
@@ -464,7 +464,7 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     await expect(aside.getByTestId("browser-snapshot")).toHaveCount(0);
     await aside.getByRole("button", { name: "Send to composer" }).click();
     await expect(
-      window.getByTestId("full-chat-composer").getByRole("textbox"),
+      window.getByTestId("full-chat-composer").getByRole("combobox", { name: "Prompt" }),
     ).toHaveText(/#cta/);
 
     const before = await readBrowserViews(app);

@@ -1,5 +1,5 @@
 import { type ReactNode, useRef, useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
   ChatPromptInput,
   type ChatPromptInputHandle,
 } from "@/shared/ui/chat/chat-prompt-input";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
 import {
   getPromptInput,
   promptValue,
@@ -23,6 +24,7 @@ function renderPromptInput({
   hasAttachments,
   drawer,
   accent,
+  triggers,
   onSubmit = () => {},
   onStop,
   onValueChange = () => {},
@@ -37,6 +39,7 @@ function renderPromptInput({
   hasAttachments?: boolean;
   drawer?: ReactNode;
   accent?: "brand";
+  triggers?: ChatComposerTrigger[];
   onSubmit?: () => void;
   onStop?: () => void;
   onValueChange?: (value: string) => void;
@@ -55,6 +58,7 @@ function renderPromptInput({
       placeholder={placeholder}
       startActions={<span>start</span>}
       status={status}
+      triggers={triggers}
       value={value}
       onFiles={onFiles}
       onStop={onStop}
@@ -80,11 +84,13 @@ describe("ChatPromptInput", () => {
     expect(screen.getByText("start")).toBeInTheDocument();
   });
 
-  it("keeps Astryx's textbox role and patches aria-placeholder onto the editable in sync", () => {
+  it("keeps a stable combobox role and patches aria-placeholder onto the editable in sync", () => {
     const { rerender } = renderPromptInput({ placeholder: "First hint" });
 
     const input = getPromptInput();
-    expect(input).toHaveAttribute("role", "textbox");
+    // A placeholder trigger keeps the role combobox even when no caller
+    // trigger is active, so it never flips between textbox and combobox.
+    expect(input).toHaveAttribute("role", "combobox");
     expect(input).toHaveAttribute("aria-placeholder", "First hint");
 
     rerender(
@@ -326,6 +332,103 @@ describe("ChatPromptInput", () => {
     expect(selection?.isCollapsed).toBe(true);
     const range = selection?.getRangeAt(0);
     expect(input.contains(range?.startContainer ?? null)).toBe(true);
+  });
+
+  it("keeps the combobox role when the caller's trigger list is empty", () => {
+    renderPromptInput({ triggers: [] });
+
+    expect(getPromptInput()).toHaveAttribute("role", "combobox");
+  });
+
+  it("insertLeadingToken inserts a token before existing text and emits the value", () => {
+    const onValueChange = vi.fn();
+    const inputRef = { current: null as ChatPromptInputHandle | null };
+    function Harness() {
+      const [value, setValue] = useState("原文本");
+      return (
+        <ChatPromptInput
+          inputRef={inputRef}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={(next) => {
+            onValueChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => {
+      inputRef.current!.insertLeadingToken({ value: "/x", label: "/x" });
+    });
+
+    expect(onValueChange).toHaveBeenCalledWith("/x\u00A0原文本");
+    expect(promptValue(input)).toBe("/x\u00A0原文本");
+    expect(input.firstElementChild).toHaveAttribute("data-astryx-token-value", "/x");
+    expect(input).toHaveFocus();
+  });
+
+  it("insertLeadingToken replaces the previous leading token and keeps the suffix", () => {
+    const inputRef = { current: null as ChatPromptInputHandle | null };
+    function Harness() {
+      const [value, setValue] = useState("keep this");
+      return (
+        <ChatPromptInput
+          inputRef={inputRef}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={setValue}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => {
+      inputRef.current!.insertLeadingToken({ value: "/a", label: "/a" });
+    });
+    act(() => {
+      inputRef.current!.insertLeadingToken({ value: "/b", label: "/b" });
+    });
+
+    expect(promptValue(input)).toBe("/b\u00A0keep this");
+    expect(input.querySelectorAll("[data-astryx-token]")).toHaveLength(1);
+  });
+
+  it("leadingTokenFor rehydrates a leading command string into a token once", () => {
+    const onValueChange = vi.fn();
+    const leadingTokenFor = (value: string) =>
+      value.startsWith("/skill:a ")
+        ? { length: "/skill:a ".length, token: { value: "/skill:a", label: "a" } }
+        : null;
+    function Harness() {
+      const [value, setValue] = useState("/skill:a hi");
+      return (
+        <ChatPromptInput
+          leadingTokenFor={leadingTokenFor}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={(next) => {
+            onValueChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    expect(input.firstElementChild).toHaveAttribute(
+      "data-astryx-token-value",
+      "/skill:a",
+    );
+    expect(promptValue(input)).toBe("/skill:a\u00A0hi");
+    // The rehydration emits exactly one change; once the leading token
+    // exists the effect leaves the DOM alone.
+    expect(onValueChange).toHaveBeenCalledTimes(1);
+    expect(onValueChange).toHaveBeenCalledWith("/skill:a\u00A0hi");
   });
 
   it("renders a drawer above the input", () => {

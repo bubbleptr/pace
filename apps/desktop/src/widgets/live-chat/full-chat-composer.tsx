@@ -1,4 +1,7 @@
-import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import {
+  ChatPromptInput as PromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
 import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
@@ -6,12 +9,20 @@ import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,
   buildPromptWithAttachments,
-  insertIntoDraft,
   useComposerAttachments,
-  useComposerInsertCatalog,
   useFilePicker,
 } from "@/shared/ui/composer-attachments";
-import { useEffect, useRef, useState } from "react";
+import {
+  INSERT_CATALOG_KIND,
+  commandToken,
+  insertCatalogs,
+  leadingCommandMatch,
+  slashTrigger,
+  slashTriggerActive,
+  usePromptCommands,
+  validateCommandSubmit,
+} from "@/entities/prompt-command";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RuntimePromptImage } from "@pace/core";
 import { ChatAdd, Computer, FolderLibrary, GitBranch } from "@/shared/ui/icons";
 import { CHAT_WORKSPACE_DISPLAY_NAME, isChatProjectId } from "@/entities/project/chat-workspace";
@@ -109,8 +120,25 @@ export function FullChatComposer({
   // Shelf drawer + footer Add-to-prompt menu. Images ride send_prompt /
   // queue_follow_up / steer_run. Decision: .scratch/composer-attachments/PRD.md
   const attachments = useComposerAttachments();
-  const catalog = useComposerInsertCatalog();
   const picker = useFilePicker(attachments.addFiles);
+  const inputRef = useRef<ChatPromptInputHandle | null>(null);
+  // Live Sessions query the runtime catalog — extension commands only exist
+  // once the Pi session has bound (see usePromptCommands' piSessionId key).
+  const commandQuery = usePromptCommands(sessionId ? { sessionId } : null);
+  const commands = useMemo(
+    () => commandQuery.data?.commands ?? [],
+    [commandQuery.data],
+  );
+  const slashActive = slashTriggerActive(draft);
+  const trigger = useMemo(
+    () => slashTrigger(commands, { active: slashActive, queueMode }),
+    [commands, slashActive, queueMode],
+  );
+  const inputTriggers = useMemo(() => (trigger ? [trigger] : []), [trigger]);
+  const leadingTokenFor = useCallback(
+    (value: string) => leadingCommandMatch(value, commands),
+    [commands],
+  );
   // Prefer the page-level read (shared with Changes / the rail badge) so Git
   // is only asked once. View-only tests that don't pass it still get a local
   // read, gated on a bound runtime — the same moment the footer exists.
@@ -189,6 +217,14 @@ export function FullChatComposer({
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
+      // Slash-command guard: TUI commands and queued extension commands are
+      // rejected here so the draft survives a refused submit.
+      const commandError = validateCommandSubmit(draft, { commands, queueMode });
+      if (commandError) {
+        setComposerError(commandError);
+        return;
+      }
+
       const built = await buildPromptWithAttachments(draft, attachments.items);
 
       if (!built.ok) {
@@ -350,15 +386,24 @@ export function FullChatComposer({
         error={attachments.error ?? composerError}
         footer={composerFooter}
         hasAttachments={attachments.items.length > 0}
+        inputRef={inputRef}
+        leadingTokenFor={leadingTokenFor}
         lockInputOnRun={!queueMode || isSubmitting}
         startActions={
           <>
             {picker.input}
             <ComposerInsertMenu
-              plugins={catalog.plugins}
-              skills={catalog.skills}
+              catalogs={insertCatalogs(commands, { queueMode })}
               onAttach={picker.open}
-              onInsert={(text) => updateDraft(insertIntoDraft(draft, text))}
+              onPick={(catalogId, itemId) => {
+                const kind = INSERT_CATALOG_KIND[catalogId];
+                const command = commands.find(
+                  (entry) => entry.kind === kind && entry.invocation === itemId,
+                );
+                if (command) {
+                  inputRef.current?.insertLeadingToken(commandToken(command));
+                }
+              }}
             />
             {composerModelControls && onModelConfigChange ? (
               <ModelSelectorControl
@@ -379,6 +424,7 @@ export function FullChatComposer({
               : "What do you want to know?"
         }
         status={promptStatus}
+        triggers={inputTriggers}
         value={draft}
         onFiles={attachments.addFiles}
         onStop={onStopRun ? () => void onStopRun() : undefined}

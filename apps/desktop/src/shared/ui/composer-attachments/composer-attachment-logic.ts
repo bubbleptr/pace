@@ -66,15 +66,6 @@ export function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function insertIntoDraft(current: string, text: string) {
-  if (!current) {
-    return text;
-  }
-
-  const pad = current.endsWith(" ") ? "" : " ";
-  return `${current}${pad}${text}`;
-}
-
 function imageMimeType(file: File) {
   if (file.type.startsWith("image/")) {
     return file.type;
@@ -106,7 +97,10 @@ export async function buildPromptWithAttachments(
 > {
   const chunks: string[] = [];
   const images: RuntimePromptImage[] = [];
-  const trimmed = draft.trim();
+  // Token spacing: the editable keeps the NBSP Astryx inserts after inline
+  // tokens, but Pi splits command arguments on plain spaces. Normalize on
+  // the way out only — writing back into the draft would flatten tokens.
+  const trimmed = draft.replace(/\u00A0/g, " ").trim();
 
   if (trimmed) {
     chunks.push(trimmed);

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { RuntimePromptImage } from "@pace/core";
 import {
   ChatPromptInput as PromptInput,
@@ -12,11 +12,20 @@ import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,
   buildPromptWithAttachments,
-  insertIntoDraft,
   useComposerAttachments,
-  useComposerInsertCatalog,
   useFilePicker,
 } from "@/shared/ui/composer-attachments";
+import {
+  INSERT_CATALOG_KIND,
+  commandToken,
+  insertCatalogs,
+  leadingCommandMatch,
+  slashTrigger,
+  slashTriggerActive,
+  useDraftPromptCommandTarget,
+  usePromptCommands,
+  validateCommandSubmit,
+} from "@/entities/prompt-command";
 import {
   ChatAdd,
   FileDiff,
@@ -242,8 +251,28 @@ export function SessionDraftComposer({
     ? `${recentSessionModel.provider}:${recentSessionModel.modelId}:${recentSessionModel.thinkingLevel}`
     : "";
   const attachments = useComposerAttachments();
-  const catalog = useComposerInsertCatalog();
   const picker = useFilePicker(attachments.addFiles);
+  // The Draft has no live runtime: the catalog resolves statically from the
+  // picked Project's root (or the Chat workspace root), so extension
+  // commands can only appear once the Session exists.
+  const commandTarget = useDraftPromptCommandTarget(draft.projectId, projects);
+  const commandQuery = usePromptCommands(commandTarget);
+  const commands = useMemo(
+    () => commandQuery.data?.commands ?? [],
+    [commandQuery.data],
+  );
+  // A draft never queues — the Session starts idle — so extension commands
+  // stay listed here; the Live composer applies its own queueMode filter.
+  const slashActive = slashTriggerActive(draft.prompt);
+  const trigger = useMemo(
+    () => slashTrigger(commands, { active: slashActive, queueMode: false }),
+    [commands, slashActive],
+  );
+  const inputTriggers = useMemo(() => (trigger ? [trigger] : []), [trigger]);
+  const leadingTokenFor = useCallback(
+    (value: string) => leadingCommandMatch(value, commands),
+    [commands],
+  );
 
   const draftCatalog =
     providerAuthLoading || !providersConfigured ? null : modelCatalog.catalog;
@@ -280,6 +309,15 @@ export function SessionDraftComposer({
 
     if (!draft.projectId) {
       setTargetValidationRequested(true);
+      return;
+    }
+
+    const commandError = validateCommandSubmit(draft.prompt, {
+      commands,
+      queueMode: false,
+    });
+    if (commandError) {
+      attachments.setError(commandError);
       return;
     }
 
@@ -417,17 +455,23 @@ export function SessionDraftComposer({
             footer={draftLocationRow}
             hasAttachments={attachments.items.length > 0}
             inputRef={draftInputRef}
+            leadingTokenFor={leadingTokenFor}
             placeholder="Do anything with Pi"
             startActions={
               <>
                 {picker.input}
                 <ComposerInsertMenu
-                  plugins={catalog.plugins}
-                  skills={catalog.skills}
+                  catalogs={insertCatalogs(commands, { queueMode: false })}
                   onAttach={picker.open}
-                  onInsert={(text) =>
-                    onDraftChange(insertIntoDraft(draft.prompt, text))
-                  }
+                  onPick={(catalogId, itemId) => {
+                    const kind = INSERT_CATALOG_KIND[catalogId];
+                    const command = commands.find(
+                      (entry) => entry.kind === kind && entry.invocation === itemId,
+                    );
+                    if (command) {
+                      draftInputRef.current?.insertLeadingToken(commandToken(command));
+                    }
+                  }}
                 />
                 {draftModelControls?.selected ? (
                   <ModelSelectorControl
@@ -443,6 +487,7 @@ export function SessionDraftComposer({
                 ) : null}
               </>
             }
+            triggers={inputTriggers}
             value={draft.prompt}
             onFiles={attachments.addFiles}
             onSubmit={submitDraft}

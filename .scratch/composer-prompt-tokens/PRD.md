@@ -36,7 +36,7 @@
 | --- | --- | --- | --- |
 | Skill | `/` | `/skill:<name>` | 一条消息最多一个命令 token,固定在开头;再选一个就替换 |
 | Prompt 模板 | `/` | `/<name>` | 同上 |
-| Extension 命令 | `/` | `/<invocationName>` | 同上;排队模式下置灰并说明原因(Pi 不允许把它放进队列:`cannot be queued`) |
+| Extension 命令 | `/` | `/<invocationName>` | 同上;排队模式下从 `/` 补全和 `+` 菜单里隐藏,已有 token 时提交会被拦下并说明原因(Pi 不允许把它放进队列:`cannot be queued`) |
 | 文件 / 目录 | `@` | `@<相对路径>`(目录带结尾 `/`) | 任意位置,可以有多个;纯聊天工作区不提供 |
 
 `+` 菜单与 `/`、`@` 共用同一份数据。选中后插入的 token 和手动触发得到的完全一样(命令 token 不管光标在哪都插到开头)。菜单项:Add files / Skills / Prompts / Commands / Reference file,某组为空就隐藏。
@@ -56,9 +56,20 @@
 - **不在 UI 上展开**任何 skill 或模板正文。
 - 自动标题改为使用原始输入,不再读 Pi 展开后的文本。
 
+### 实现约束(读 Astryx 0.3.0 源码确认)
+
+- `insertToken` 会在 token 后面补一个 NBSP(`\u00A0`)。Pi 按普通空格切分命令名(`text.indexOf(" ")`),所以发送前必须把 NBSP 换成空格。这一步只能在提交时做,不能回写到 value:回写后 value 和组件刚发出的不一致,组件会用 `textContent` 重写整个输入框,token 就被抹平了。
+- 外部写入 value 时组件用的是 `textContent`,会把 token 抹平成纯文本。因此菜单插入走 handle,不走 value;恢复草稿、injection 之后,再把开头的命令文本重新变回 token。
+- `/` 触发只看前一个字符是不是空白,不管位置。所以只有「目前整段输入就是 `/查询`」时才把 `/` trigger 传进去。
+- 只要传了 trigger,可编辑元素的 role 就是 `combobox`,不传时是 `textbox`。为了让 role 不随输入跳变,始终挂一个永远不会被触发的占位 trigger,role 固定为 `combobox`。
+
 ### 未发送草稿
 
-仍以序列化字符串保存,重新打开时通过 trigger 的 `deserialize` 还原成 token。
+仍以序列化字符串保存(含 NBSP)。重新打开时,如果开头是 catalog 里已有的命令,就重新变回 token。Astryx 在输入框内不会调用 trigger 的 `deserialize`,所以这一步由 Pace 自己做。
+
+### Pi TUI 内置命令
+
+`BUILTIN_SLASH_COMMANDS` 不在 Pi 的公开导出里,所以在 core 里维护一份名字清单,再用后端测试直接读 Pi 包里的 `dist/core/slash-commands.js` 做对照,防止漂移。提交时如果第一个词是这些命令、而 catalog 里又没有同名项,就拦下来,并提示「这是 Pi 终端命令,Pace 不执行」。
 
 ## 已知限制
 

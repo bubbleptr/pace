@@ -75,7 +75,8 @@ import { ComposerInsertMenu } from "@/shared/ui/composer-attachments/composer-in
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import * as Icons from "@/shared/ui/icons";
-import type { RuntimeModelControls } from "@pace/core";
+import type { PromptCommand, RuntimeModelControls } from "@pace/core";
+import { insertCatalogs } from "@/entities/prompt-command";
 
 /**
  * Layer 3 of the design gallery: every reusable Pace component in
@@ -2407,19 +2408,42 @@ const modelSelectorControls: RuntimeModelControls = {
 const galleryThumb =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+const insertMenuCommands: PromptCommand[] = [
+  { kind: "skill", name: "review-pr", invocation: "skill:review-pr", description: "Review a pull request for bugs and missing tests." },
+  { kind: "skill", name: "write-docs", invocation: "skill:write-docs", description: "Write project documentation." },
+  { kind: "prompt", name: "standup", invocation: "standup", description: "Summarize today's commits into a standup note." },
+  { kind: "extension", name: "snapshot", invocation: "snapshot", description: "Capture a screenshot of the current page." },
+];
+
+const insertMenuLongSkills: PromptCommand[] = Array.from(
+  { length: 80 },
+  (_, index) => ({
+    kind: "skill" as const,
+    name: `skill-${String(index + 1).padStart(2, "0")}`,
+    invocation: `skill:skill-${String(index + 1).padStart(2, "0")}`,
+    description: "Generated gallery entry exercising the menu at its longest realistic length.",
+  }),
+);
+
 function ComposerInsertMenuGallery() {
   return (
     <GallerySection title="ComposerInsertMenu">
       <VariantRow>
-        <Variant caption="files and commands">
-          <ComposerInsertMenu onAttach={() => {}} onInsert={() => {}} />
+        <Variant caption="files only">
+          <ComposerInsertMenu onAttach={() => {}} onPick={() => {}} />
         </Variant>
-        <Variant caption="with skills and plugins">
+        <Variant caption="skills, prompts, commands">
           <ComposerInsertMenu
-            plugins={[{ name: "../../.pi/extensions/browser-tools/index.ts" }]}
-            skills={[{ name: "review-pr", description: "Review a pull request for bugs and missing tests." }, { name: "write-docs", description: "Write project documentation." }]}
+            catalogs={insertCatalogs(insertMenuCommands, { queueMode: false })}
             onAttach={() => {}}
-            onInsert={() => {}}
+            onPick={() => {}}
+          />
+        </Variant>
+        <Variant caption="80 skills">
+          <ComposerInsertMenu
+            catalogs={insertCatalogs(insertMenuLongSkills, { queueMode: false })}
+            onAttach={() => {}}
+            onPick={() => {}}
           />
         </Variant>
       </VariantRow>

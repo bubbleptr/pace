@@ -26,7 +26,7 @@ async function openProjectDraft(window: import("@playwright/test").Page, project
   const newSession = window.getByRole("button", { name: "New Chat for E2E Project", exact: true });
   await expect(newSession).toBeVisible();
   await newSession.click();
-  await expect(window.getByRole("textbox")).toBeVisible();
+  await expect(window.getByRole("combobox", { name: "Prompt" })).toBeVisible();
 }
 
 async function openSession(
@@ -152,7 +152,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
     try {
       const page = testApp.window;
       await page.getByRole("button", { name: "New Chat for E2E Project", exact: true }).click();
-      const draft = page.getByRole("textbox");
+      const draft = page.getByRole("combobox", { name: "Prompt" });
       await draft.fill("Keep this unsent draft while I change settings");
       const url = page.url();
       const trigger = page.getByRole("button", { name: "Settings", exact: true });

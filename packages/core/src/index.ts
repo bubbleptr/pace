@@ -101,6 +101,7 @@ export {
 } from "./subagent";
 
 export {
+  PI_TUI_BUILTIN_COMMANDS,
   sortPromptCommands,
   type PromptCommand,
   type PromptCommandCatalog,

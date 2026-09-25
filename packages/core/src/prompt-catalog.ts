@@ -36,6 +36,40 @@ const PROMPT_COMMAND_KIND_ORDER: Record<PromptCommandKind, number> = {
   extension: 2,
 };
 
+/**
+ * Names declared by Pi 0.87.1's `dist/core/slash-commands.js`. These are TUI
+ * commands — Pi's session prompt path never sees them, so Pace must not send
+ * them as prompts (the composer blocks submit instead). Not publicly exported
+ * by Pi; `packages/backend/src/workspace/pi-tui-builtins.test.ts` guards
+ * against drift when the Pi dependency moves.
+ */
+export const PI_TUI_BUILTIN_COMMANDS: readonly string[] = [
+  "bug",
+  "changelog",
+  "clone",
+  "compact",
+  "copy",
+  "export",
+  "fork",
+  "hotkeys",
+  "import",
+  "login",
+  "logout",
+  "model",
+  "name",
+  "new",
+  "quit",
+  "reload",
+  "resume",
+  "scoped-models",
+  "session",
+  "settings",
+  "share",
+  "thinking",
+  "tree",
+  "trust",
+];
+
 /** Contract ordering: kind first (skill → prompt → extension), then name. */
 export function sortPromptCommands(commands: readonly PromptCommand[]): PromptCommand[] {
   return [...commands].sort(

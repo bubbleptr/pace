@@ -2,8 +2,10 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 
 /**
  * Locators for the ChatComposerInput-backed prompt composer. The editable is
- * a contentEditable div with role="textbox" (patched in ChatPromptInput),
- * aria-label "Prompt", and aria-placeholder carrying the placeholder copy.
+ * a contentEditable div labelled "Prompt" with aria-placeholder carrying the
+ * placeholder copy. Its role is combobox while triggers are configured (Pace
+ * always passes a placeholder trigger to keep the role stable) and textbox
+ * without any, so match by label instead of role.
  */
 
 export type PromptInputOptions = {
@@ -16,13 +18,14 @@ function promptInputsIn(
   options: PromptInputOptions,
 ): HTMLElement[] {
   const queries = within((scope as HTMLElement) ?? document.body);
-  return queries
-    .queryAllByRole("textbox", { name: "Prompt" })
-    .filter(
-      (element) =>
-        options.placeholder === undefined ||
-        element.getAttribute("aria-placeholder") === options.placeholder,
-    );
+  return [
+    ...queries.queryAllByRole("textbox", { name: "Prompt" }),
+    ...queries.queryAllByRole("combobox", { name: "Prompt" }),
+  ].filter(
+    (element) =>
+      options.placeholder === undefined ||
+      element.getAttribute("aria-placeholder") === options.placeholder,
+  );
 }
 
 export function getPromptInput(

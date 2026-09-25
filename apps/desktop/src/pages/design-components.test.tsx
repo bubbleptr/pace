@@ -36,7 +36,9 @@ describe("Design components layer", () => {
     expect(screen.getByText("Failed after 1s")).toBeInTheDocument();
     const input = screen.getByRole("group", { name: "suggestion restores input focus" });
     await user.click(within(input).getByRole("button", { name: "Summarize meeting notes" }));
-    expect(within(input).getByRole("textbox")).toHaveFocus();
+    // The editable is a combobox — the placeholder trigger keeps its role
+    // stable even when no suggestion trigger is configured.
+    expect(within(input).getByRole("combobox")).toHaveFocus();
   });
 
   it("registers a region for every shared/ui component", () => {
@@ -255,7 +257,7 @@ describe("Design components layer", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByRole("region", { name: "ComposerInsertMenu" })).getByText(
-        "with skills and plugins",
+        "skills, prompts, commands",
       ),
     ).toBeInTheDocument();
     expect(

@@ -99,7 +99,7 @@ test("Changes scrolls below its header and keeps the header controls usable", as
 
 async function openSeededSession(window: Page, title: string) {
   await window.getByRole("button", { name: "New Chat for E2E Project", exact: true }).click();
-  await expect(window.getByRole("textbox")).toBeVisible();
+  await expect(window.getByRole("combobox", { name: "Prompt" })).toBeVisible();
 
   const session = window.getByRole("button", { name: new RegExp(`^${title}`, "i") });
 

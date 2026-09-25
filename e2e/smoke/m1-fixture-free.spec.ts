@@ -28,7 +28,7 @@ async function openProjectDraft(window: Page, project: E2EProject) {
 
   await expect(newSession).toBeVisible();
   await newSession.click();
-  await expect(window.getByRole("textbox")).toBeVisible();
+  await expect(window.getByRole("combobox", { name: "Prompt" })).toBeVisible();
   await expect(window.getByText(project.displayName, { exact: true }).first()).toBeVisible();
 }
 
