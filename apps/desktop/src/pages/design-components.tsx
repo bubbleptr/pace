@@ -2446,6 +2446,33 @@ function ComposerInsertMenuGallery() {
             onPick={() => {}}
           />
         </Variant>
+        <Variant caption="async file search">
+          <ComposerInsertMenu
+            catalogs={[
+              {
+                id: "files",
+                label: "Reference file",
+                icon: <Icons.FolderClosed />,
+                searchLabel: "Search files",
+                emptyText: "No matching files",
+                search: async (query: string) =>
+                  [
+                    "src/main.ts",
+                    "src/components/button.tsx",
+                    "docs/deeply/nested/path/to/a/very/long/file/name.ts",
+                  ]
+                    .filter((path) => path.includes(query))
+                    .map((path) => ({
+                      id: path,
+                      label: path.slice(path.lastIndexOf("/") + 1),
+                      description: path,
+                    })),
+              },
+            ]}
+            onAttach={() => {}}
+            onPick={() => {}}
+          />
+        </Variant>
       </VariantRow>
     </GallerySection>
   );

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { RuntimePromptImage } from "@pace/core";
+import type { RuntimePromptImage, WorkspaceFileMatch } from "@pace/core";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
 import {
   ChatPromptInput as PromptInput,
   type ChatPromptInputHandle,
@@ -26,6 +27,14 @@ import {
   usePromptCommands,
   validateCommandSubmit,
 } from "@/entities/prompt-command";
+import {
+  FILE_INSERT_CATALOG_ID,
+  atTrigger,
+  fileInsertCatalog,
+  fileSearchItem,
+  fileToken,
+  useWorkspaceFileSearch,
+} from "@/entities/workspace-file";
 import {
   ChatAdd,
   FileDiff,
@@ -268,11 +277,44 @@ export function SessionDraftComposer({
     () => slashTrigger(commands, { active: slashActive, queueMode: false }),
     [commands, slashActive],
   );
-  const inputTriggers = useMemo(() => (trigger ? [trigger] : []), [trigger]);
+  // "@" file references search the same target the static command catalog
+  // resolves from — except the Chat workspace, which has no project files.
+  const fileSearch = useWorkspaceFileSearch(
+    isChatProjectId(draft.projectId) ? null : commandTarget,
+  );
+  const fileTrigger = useMemo(
+    () => (fileSearch ? atTrigger(fileSearch) : null),
+    [fileSearch],
+  );
+  const inputTriggers = useMemo(
+    () =>
+      [trigger, fileTrigger].filter(
+        (entry): entry is ChatComposerTrigger => entry !== null,
+      ),
+    [trigger, fileTrigger],
+  );
   const leadingTokenFor = useCallback(
     (value: string) => leadingCommandMatch(value, commands),
     [commands],
   );
+  // Palette picks come back as row ids (paths); the matches behind the last
+  // search are what onPick maps back to WorkspaceFileMatch.
+  const lastFileMatchesRef = useRef<readonly WorkspaceFileMatch[]>([]);
+  const fileSearchVersionRef = useRef(0);
+  const fileCatalogSearch = useMemo(() => {
+    if (!fileSearch) {
+      return null;
+    }
+    return async (query: string) => {
+      const version = ++fileSearchVersionRef.current;
+      const matches = await fileSearch(query);
+      // Match the palette's latest-query guard so picks use its visible rows.
+      if (version === fileSearchVersionRef.current) {
+        lastFileMatchesRef.current = matches;
+      }
+      return matches.map(fileSearchItem);
+    };
+  }, [fileSearch]);
 
   const draftCatalog =
     providerAuthLoading || !providersConfigured ? null : modelCatalog.catalog;
@@ -461,9 +503,23 @@ export function SessionDraftComposer({
               <>
                 {picker.input}
                 <ComposerInsertMenu
-                  catalogs={insertCatalogs(commands, { queueMode: false })}
+                  catalogs={[
+                    ...insertCatalogs(commands, { queueMode: false }),
+                    ...(fileCatalogSearch
+                      ? [fileInsertCatalog(fileCatalogSearch)]
+                      : []),
+                  ]}
                   onAttach={picker.open}
                   onPick={(catalogId, itemId) => {
+                    if (catalogId === FILE_INSERT_CATALOG_ID) {
+                      const match = lastFileMatchesRef.current.find(
+                        (entry) => entry.path === itemId,
+                      );
+                      if (match) {
+                        draftInputRef.current?.appendToken(fileToken(match));
+                      }
+                      return;
+                    }
                     const kind = INSERT_CATALOG_KIND[catalogId];
                     const command = commands.find(
                       (entry) => entry.kind === kind && entry.invocation === itemId,

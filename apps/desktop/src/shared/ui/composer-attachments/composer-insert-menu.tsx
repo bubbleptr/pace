@@ -10,6 +10,12 @@ import { ImageIcon, Plus } from "@/shared/ui/icons";
  * One searchable group in the composer's + menu — who fills it (prompt
  * commands, workspace files) is the caller's domain; the menu only renders.
  */
+export type ComposerInsertCatalogItem = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
 export type ComposerInsertCatalog = {
   /** Stable id passed back to onPick. */
   id: string;
@@ -20,7 +26,13 @@ export type ComposerInsertCatalog = {
   searchLabel: string;
   /** Empty-result text, e.g. "No matching skills". */
   emptyText: string;
-  items: readonly { id: string; label: string; description?: string }[];
+  /** Static entries — exactly one of `items` / `search` is given. */
+  items?: readonly ComposerInsertCatalogItem[];
+  /**
+   * Backend-backed lookup. A search catalog is always listed — its entries
+   * are unknown until the user types.
+   */
+  search?: (query: string) => Promise<readonly ComposerInsertCatalogItem[]>;
 };
 
 type ComposerInsertMenuOwnProps = {
@@ -47,20 +59,36 @@ export function ComposerInsertMenu({
   ...rest
 }: ComposerInsertMenuProps) {
   const [openCatalogId, setOpenCatalogId] = useState<string | null>(null);
-  const listedCatalogs = catalogs.filter((catalog) => catalog.items.length > 0);
-  const openCatalog = listedCatalogs.find((catalog) => catalog.id === openCatalogId);
-  const source = useMemo(
-    () =>
-      createStaticSource(
-        (openCatalog?.items ?? []).map((item) => ({
-          id: item.id,
-          label: item.label,
-          auxiliaryData: { description: item.description },
-        })),
-        { keywords: (item) => [item.auxiliaryData.description ?? ""] },
-      ),
-    [openCatalog],
+  // Static groups hide when empty; a search-backed group is always listed
+  // since its entries are only known by querying.
+  const listedCatalogs = catalogs.filter(
+    (catalog) => catalog.search !== undefined || (catalog.items?.length ?? 0) > 0,
   );
+  const openCatalog = listedCatalogs.find((catalog) => catalog.id === openCatalogId);
+  const source = useMemo(() => {
+    if (openCatalog?.search) {
+      const search = openCatalog.search;
+      // The palette already guards stale results by version, so a thin
+      // async source is enough.
+      return {
+        bootstrap: () => [],
+        search: async (query: string) =>
+          (await search(query)).map((item) => ({
+            id: item.id,
+            label: item.label,
+            auxiliaryData: { description: item.description },
+          })),
+      };
+    }
+    return createStaticSource(
+      (openCatalog?.items ?? []).map((item) => ({
+        id: item.id,
+        label: item.label,
+        auxiliaryData: { description: item.description },
+      })),
+      { keywords: (item) => [item.auxiliaryData.description ?? ""] },
+    );
+  }, [openCatalog]);
 
   return (
     <>
@@ -88,6 +116,9 @@ export function ComposerInsertMenu({
             <CommandPaletteInput
               label={openCatalog.searchLabel}
               placeholder={`${openCatalog.searchLabel}…`}
+              // Portal clicks still bubble to ChatComposer, whose body
+              // click handler would move focus back to the prompt.
+              onClick={(event) => event.stopPropagation()}
             />
           }
           searchSource={source}

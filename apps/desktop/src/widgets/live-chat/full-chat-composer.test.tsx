@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionChanges } from "@pace/core";
 import type { PromptCommandCatalog } from "@pace/core";
+import { CHAT_PROJECT_ID } from "@pace/core";
+import type { WorkspaceFileMatch } from "@pace/core";
 import { invokeBrowserFallback } from "@/shared/runtime";
 import {
   createSessionProjection,
@@ -240,10 +242,20 @@ describe("FullChatComposer slash commands", () => {
     ],
   };
 
-  function mockCommands(next: PromptCommandCatalog = catalog) {
+  function mockCommands(
+    next: PromptCommandCatalog = catalog,
+    workspaceFiles: WorkspaceFileMatch[] = [],
+  ) {
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
       if (command === "list_prompt_commands") {
         return next;
+      }
+      if (command === "search_workspace_files") {
+        const query = String(args?.query ?? "");
+        return {
+          matches: workspaceFiles.filter((match) => match.path.includes(query)),
+          truncated: false,
+        };
       }
       return invokeBrowserFallback(command, args);
     });
@@ -345,10 +357,11 @@ describe("FullChatComposer slash commands", () => {
     expect(screen.queryByRole("option", { name: /deploy/ })).not.toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Escape" });
 
-    // The + menu drops the whole Commands group.
+    // The + menu drops the whole Commands group; file references still work
+    // — queueing a file mention is just text.
     await user.click(screen.getByRole("button", { name: "Add to prompt" }));
     const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
-    expect(items).toEqual(["Add files", "Skills", "Prompts"]);
+    expect(items).toEqual(["Add files", "Skills", "Prompts", "Reference file"]);
   });
 
   it("blocks submitting an existing extension token while a run queues", async () => {
@@ -468,5 +481,183 @@ describe("FullChatComposer slash commands", () => {
     // The already-open slash menu picks up the refetched catalog.
     expect(await screen.findByRole("option", { name: /deploy/ })).toBeInTheDocument();
     expect(promptCommandCalls).toBeGreaterThan(callsBeforeRun);
+  });
+});
+
+describe("FullChatComposer file references", () => {
+  const files: WorkspaceFileMatch[] = [
+    { path: "apps/desktop/x.ts", kind: "file" },
+    { path: "src", kind: "directory" },
+  ];
+
+  function fileProjection(
+    overrides: Partial<SessionProjection> = {},
+  ): SessionProjection {
+    return {
+      ...createSessionProjection({
+        id: "session-files",
+        projectId: "pig-docs",
+        initialPrompt: "start",
+        createdAt: "2026-08-20T08:00:00.000Z",
+      }),
+      status: "waiting" as const,
+      runtimeId: "pi-sdk:session-files",
+      piSessionId: "pi-session-files",
+      ...overrides,
+    };
+  }
+
+  function caretAtEnd(element: HTMLElement) {
+    element.focus();
+    const range = document.createRange();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let lastText: Node | null = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      lastText = node;
+    }
+    if (lastText) {
+      range.setStart(lastText, lastText.textContent?.length ?? 0);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(element);
+      range.collapse(false);
+    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  function typeAtCaret(element: HTMLElement, text: string) {
+    element.textContent = `${element.textContent ?? ""}${text}`;
+    caretAtEnd(element);
+    fireEvent.input(element);
+  }
+
+  beforeEach(() => {
+    clearFollowUpDraft("session-files");
+    delete window.pace;
+  });
+
+  it("completes a file reference mid-sentence and submits the serialized path", async () => {
+    const onPromptSubmit = vi.fn();
+    const user = userEvent.setup();
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_prompt_commands") {
+        return { source: "runtime", commands: [] } satisfies PromptCommandCatalog;
+      }
+      if (command === "search_workspace_files") {
+        const query = String(args?.query ?? "");
+        return {
+          matches: files.filter((match) => match.path.includes(query)),
+          truncated: false,
+        };
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    render(
+      <FullChatComposer
+        projection={fileProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "look at @ap");
+    await user.click(await screen.findByRole("option", { name: /x\.ts/ }));
+
+    await waitFor(() =>
+      expect(promptValue(input)).toBe("look at @apps/desktop/x.ts\u00A0"),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onPromptSubmit).toHaveBeenCalledWith("look at @apps/desktop/x.ts", []);
+  });
+
+  it("inserts the visible file result when an older search finishes last", async () => {
+    const user = userEvent.setup();
+    const pendingSearches = new Map<string, (matches: WorkspaceFileMatch[]) => void>();
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "search_workspace_files") {
+        return new Promise((resolve) => {
+          pendingSearches.set(String(args?.query), (matches) => {
+            resolve({ matches, truncated: false });
+          });
+        });
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    render(<FullChatComposer projection={fileProjection()} onPromptSubmit={() => {}} />);
+    const input = await findPromptInput();
+
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Reference file" }));
+    const search = await screen.findByRole("combobox", { name: "Search files" });
+    await user.type(search, "a");
+    await waitFor(() => expect(pendingSearches.has("a")).toBe(true));
+    await user.type(search, "b");
+    await waitFor(() => expect(pendingSearches.has("ab")).toBe(true));
+
+    await act(async () => {
+      pendingSearches.get("ab")!([{ path: "ab.ts", kind: "file" }]);
+    });
+    await act(async () => {
+      pendingSearches.get("a")!([{ path: "a.ts", kind: "file" }]);
+    });
+    await user.click(await screen.findByRole("option", { name: /ab\.ts/ }));
+
+    expect(promptValue(input)).toBe("@ab.ts\u00A0");
+  });
+
+  it("offers no @ completion and no Reference file group in a Chat session", async () => {
+    const user = userEvent.setup();
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "search_workspace_files") {
+        return { matches: files, truncated: false };
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    render(
+      <FullChatComposer
+        projection={fileProjection({ projectId: CHAT_PROJECT_ID })}
+        onPromptSubmit={() => {}}
+      />,
+    );
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "@a");
+    await waitFor(() => expect(promptValue(input)).toBe("@a"));
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "search_workspace_files"),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Reference file" }),
+    ).not.toBeInTheDocument();
   });
 });

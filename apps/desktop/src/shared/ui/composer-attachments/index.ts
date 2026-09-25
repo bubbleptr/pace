@@ -13,6 +13,7 @@ export { ComposerAttachmentDrawer } from "./composer-attachment-drawer";
 export {
   ComposerInsertMenu,
   type ComposerInsertCatalog,
+  type ComposerInsertCatalogItem,
 } from "./composer-insert-menu";
 export {
   useComposerAttachments,

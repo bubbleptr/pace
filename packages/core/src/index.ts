@@ -101,6 +101,7 @@ export {
 } from "./subagent";
 
 export {
+  AUTOCOMPLETE_SEPARATOR_REGEX,
   PI_TUI_BUILTIN_COMMANDS,
   sortPromptCommands,
   type PromptCommand,

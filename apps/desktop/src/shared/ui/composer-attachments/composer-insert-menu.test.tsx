@@ -109,4 +109,45 @@ describe("ComposerInsertMenu", () => {
       expect(screen.queryByRole("dialog", { name: "Skills" })).not.toBeInTheDocument(),
     );
   });
+
+  it("lists an async catalog without items and searches it through the backend", async () => {
+    const search = vi.fn(async (query: string) =>
+      query === "main"
+        ? [{ id: "src/main.ts", label: "main.ts", description: "src/main.ts" }]
+        : [],
+    );
+    const onPick = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ComposerInsertMenu
+        catalogs={[
+          {
+            id: "files",
+            label: "Reference file",
+            icon: <Command />,
+            searchLabel: "Search files",
+            emptyText: "No matching files",
+            search,
+          },
+        ]}
+        onAttach={() => {}}
+        onPick={onPick}
+      />,
+    );
+
+    // A search-backed catalog is always listed — its contents are unknown
+    // until queried.
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    await user.click(screen.getByRole("menuitem", { name: "Reference file" }));
+
+    const input = await screen.findByRole("combobox", { name: "Search files" });
+    await waitFor(() => expect(input).toHaveFocus());
+    await user.type(input, "main");
+
+    expect(await screen.findByText("main.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/main.ts")).toBeInTheDocument();
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onPick).toHaveBeenCalledWith("files", "src/main.ts");
+  });
 });

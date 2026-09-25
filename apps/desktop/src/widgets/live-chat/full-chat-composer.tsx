@@ -22,8 +22,17 @@ import {
   usePromptCommands,
   validateCommandSubmit,
 } from "@/entities/prompt-command";
+import {
+  FILE_INSERT_CATALOG_ID,
+  atTrigger,
+  fileInsertCatalog,
+  fileSearchItem,
+  fileToken,
+  useWorkspaceFileSearch,
+} from "@/entities/workspace-file";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RuntimePromptImage } from "@pace/core";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
+import type { RuntimePromptImage, WorkspaceFileMatch } from "@pace/core";
 import { ChatAdd, Computer, FolderLibrary, GitBranch } from "@/shared/ui/icons";
 import { CHAT_WORKSPACE_DISPLAY_NAME, isChatProjectId } from "@/entities/project/chat-workspace";
 import {
@@ -134,7 +143,42 @@ export function FullChatComposer({
     () => slashTrigger(commands, { active: slashActive, queueMode }),
     [commands, slashActive, queueMode],
   );
-  const inputTriggers = useMemo(() => (trigger ? [trigger] : []), [trigger]);
+  // "@" file references search the Session's workspace; Chat Sessions have
+  // no project files, so the trigger stays off there.
+  const fileSearch = useWorkspaceFileSearch(
+    sessionId && !isChatProjectId(projection?.projectId ?? "")
+      ? { sessionId }
+      : null,
+  );
+  const fileTrigger = useMemo(
+    () => (fileSearch ? atTrigger(fileSearch) : null),
+    [fileSearch],
+  );
+  const inputTriggers = useMemo(
+    () =>
+      [trigger, fileTrigger].filter(
+        (entry): entry is ChatComposerTrigger => entry !== null,
+      ),
+    [trigger, fileTrigger],
+  );
+  // Palette picks come back as row ids (paths); the matches behind the last
+  // search are what onPick maps back to WorkspaceFileMatch.
+  const lastFileMatchesRef = useRef<readonly WorkspaceFileMatch[]>([]);
+  const fileSearchVersionRef = useRef(0);
+  const fileCatalogSearch = useMemo(() => {
+    if (!fileSearch) {
+      return null;
+    }
+    return async (query: string) => {
+      const version = ++fileSearchVersionRef.current;
+      const matches = await fileSearch(query);
+      // Match the palette's latest-query guard so picks use its visible rows.
+      if (version === fileSearchVersionRef.current) {
+        lastFileMatchesRef.current = matches;
+      }
+      return matches.map(fileSearchItem);
+    };
+  }, [fileSearch]);
   const leadingTokenFor = useCallback(
     (value: string) => leadingCommandMatch(value, commands),
     [commands],
@@ -393,9 +437,23 @@ export function FullChatComposer({
           <>
             {picker.input}
             <ComposerInsertMenu
-              catalogs={insertCatalogs(commands, { queueMode })}
+              catalogs={[
+                ...insertCatalogs(commands, { queueMode }),
+                ...(fileCatalogSearch
+                  ? [fileInsertCatalog(fileCatalogSearch)]
+                  : []),
+              ]}
               onAttach={picker.open}
               onPick={(catalogId, itemId) => {
+                if (catalogId === FILE_INSERT_CATALOG_ID) {
+                  const match = lastFileMatchesRef.current.find(
+                    (entry) => entry.path === itemId,
+                  );
+                  if (match) {
+                    inputRef.current?.appendToken(fileToken(match));
+                  }
+                  return;
+                }
                 const kind = INSERT_CATALOG_KIND[catalogId];
                 const command = commands.find(
                   (entry) => entry.kind === kind && entry.invocation === itemId,

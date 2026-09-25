@@ -584,6 +584,91 @@ describe("ChatPromptInput", () => {
     expect(input.querySelector("[data-astryx-token]")).toBeNull();
   });
 
+  it("appendToken inserts a token into an empty input", () => {
+    const onValueChange = vi.fn();
+    const inputRef = { current: null as ChatPromptInputHandle | null };
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <ChatPromptInput
+          inputRef={inputRef}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={(next) => {
+            onValueChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => {
+      inputRef.current!.appendToken({ value: "@a.ts", label: "a.ts" });
+    });
+
+    expect(onValueChange).toHaveBeenCalledWith("@a.ts\u00A0");
+    expect(promptValue(input)).toBe("@a.ts\u00A0");
+    expect(input).toHaveFocus();
+  });
+
+  it("appendToken separates the token from existing text with a plain space", () => {
+    const onValueChange = vi.fn();
+    const inputRef = { current: null as ChatPromptInputHandle | null };
+    function Harness() {
+      const [value, setValue] = useState("look at this");
+      return (
+        <ChatPromptInput
+          inputRef={inputRef}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={(next) => {
+            onValueChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => {
+      inputRef.current!.appendToken({ value: "@a.ts", label: "a.ts" });
+    });
+
+    expect(onValueChange).toHaveBeenCalledWith("look at this @a.ts\u00A0");
+    expect(promptValue(input)).toBe("look at this @a.ts\u00A0");
+  });
+
+  it("appendToken does not add a space when the input already ends with whitespace", () => {
+    const onValueChange = vi.fn();
+    const inputRef = { current: null as ChatPromptInputHandle | null };
+    function Harness() {
+      const [value, setValue] = useState("trailing ");
+      return (
+        <ChatPromptInput
+          inputRef={inputRef}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={(next) => {
+            onValueChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => {
+      inputRef.current!.appendToken({ value: "@a.ts", label: "a.ts" });
+    });
+
+    expect(onValueChange).toHaveBeenCalledWith("trailing @a.ts\u00A0");
+    expect(promptValue(input)).toBe("trailing @a.ts\u00A0");
+  });
+
   it("renders a drawer above the input", () => {
     renderPromptInput({ drawer: <div>2 attachments</div> });
 

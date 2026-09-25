@@ -8,7 +8,12 @@ import {
 } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectGitSummary, PromptCommandCatalog } from "@pace/core";
+import {
+  CHAT_PROJECT_ID,
+  type ProjectGitSummary,
+  type PromptCommandCatalog,
+  type WorkspaceFileMatch,
+} from "@pace/core";
 import type { ProjectRegistryEntry } from "@/entities/project/project-registry";
 import { invokeBrowserFallback } from "@/shared/runtime";
 import { saveLastModelSelection } from "@/entities/session/last-model-preference";
@@ -38,10 +43,20 @@ const promptCatalog: PromptCommandCatalog = {
   ],
 };
 
-function mockPromptCommands(catalog: PromptCommandCatalog = promptCatalog) {
+function mockPromptCommands(
+  catalog: PromptCommandCatalog = promptCatalog,
+  workspaceFiles: WorkspaceFileMatch[] = [],
+) {
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "list_prompt_commands") {
       return catalog;
+    }
+    if (command === "search_workspace_files") {
+      const query = String(args?.query ?? "");
+      return {
+        matches: workspaceFiles.filter((match) => match.path.includes(query)),
+        truncated: false,
+      };
     }
     if (command === "get_config_inventory") {
       return { skills: [], extensions: [], packages: [], promptTemplates: [] };
@@ -486,5 +501,158 @@ describe("SessionDraftComposer slash commands", () => {
       ),
     );
     expect(promptValue(input)).toBe("/skill:review-pr\u00A0参数");
+  });
+});
+
+describe("SessionDraftComposer file references", () => {
+  const files: WorkspaceFileMatch[] = [
+    { path: "apps/desktop/x.ts", kind: "file" },
+    { path: "a.ts", kind: "file" },
+    { path: "b.ts", kind: "file" },
+    { path: "src", kind: "directory" },
+  ];
+
+  it("completes a file reference mid-sentence and submits the serialized path", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(pigProjectPath, "look at ");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+    await waitFor(() => expect(promptValue(input)).toBe("look at "));
+
+    typeAtCaret(input, "@ap");
+    await user.click(await screen.findByRole("option", { name: /x\.ts/ }));
+
+    await waitFor(() =>
+      expect(promptValue(input)).toBe("look at @apps/desktop/x.ts\u00A0"),
+    );
+    expect(input.querySelector("[data-astryx-token]")).toHaveAttribute(
+      "data-astryx-token-value",
+      "@apps/desktop/x.ts",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    // The token's trailing NBSP is normalized to a plain space (then trimmed).
+    expect(onDraftSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "look at @apps/desktop/x.ts" }),
+    );
+  });
+
+  it("appends a directory token from the + menu and submits its slash form", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Reference file" }));
+    const paletteInput = await screen.findByRole("combobox", { name: "Search files" });
+    await waitFor(() => expect(paletteInput).toHaveFocus());
+    await user.type(paletteInput, "src");
+    expect(paletteInput).toHaveValue("src");
+    await screen.findByRole("option", { name: /src\// });
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    await waitFor(() => expect(promptValue(input)).toBe("@src/\u00A0"));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onDraftSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "@src/" }),
+    );
+  });
+
+  it("submits a leading skill token followed by two file tokens with plain spaces", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(pigProjectPath, "/skill:review-pr 请看 ");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+    await waitFor(() =>
+      expect(input.querySelector("[data-astryx-token]")).toHaveAttribute(
+        "data-astryx-token-value",
+        "/skill:review-pr",
+      ),
+    );
+
+    const pickFile = async (query: string) => {
+      await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Reference file" }));
+      const paletteInput = await screen.findByRole("combobox", { name: "Search files" });
+      await waitFor(() => expect(paletteInput).toHaveFocus());
+      await user.type(paletteInput, query);
+      // The query narrows to a single row; keyboard-select it.
+      await within(screen.getByRole("dialog", { name: "Reference file" })).findByRole("option");
+      await user.keyboard("{ArrowDown}{Enter}");
+    };
+
+    await pickFile("a.ts");
+    // NBSP after the first token already separates; type the connector text.
+    input.appendChild(document.createTextNode("和 "));
+    fireEvent.input(input);
+    await pickFile("b.ts");
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onDraftSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "/skill:review-pr 请看 @a.ts 和 @b.ts" }),
+    );
+  });
+
+  it("keeps a leading file reference when inserting and replacing a command", async () => {
+    const user = userEvent.setup();
+    mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "@ap");
+    await user.click(await screen.findByRole("option", { name: /x\.ts/ }));
+    for (const name of ["review-pr", "write-docs"]) {
+      await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Skills" }));
+      await user.click(await screen.findByRole("option", { name: new RegExp(name) }));
+      await waitFor(() =>
+        expect(promptValue(input)).toBe(`/skill:${name}\u00A0@apps/desktop/x.ts\u00A0`),
+      );
+    }
+    expect(input.querySelectorAll("[data-astryx-token]")).toHaveLength(2);
+  });
+
+  it("offers no @ completion and no Reference file group in the Chat workspace", async () => {
+    const user = userEvent.setup();
+    const invoke = mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(CHAT_PROJECT_ID, "");
+    render(<DraftComposer draft={draft} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "@a");
+    await waitFor(() => expect(promptValue(input)).toBe("@a"));
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "search_workspace_files"),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Add to prompt" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Reference file" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not complete an @ mid-word like an email address", async () => {
+    const invoke = mockPromptCommands(promptCatalog, files);
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+
+    typeAtCaret(input, "foo@bar");
+
+    await waitFor(() => expect(promptValue(input)).toBe("foo@bar"));
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "search_workspace_files"),
+    ).toHaveLength(0);
   });
 });

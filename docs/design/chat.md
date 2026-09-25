@@ -59,10 +59,11 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 - **受控**：`value` / `onValueChange` 不变，组件内把 `value` 映射到 `ChatComposerInput` 的 `value` / `onChange`。
 - **提交**：Enter、Cmd/Ctrl+Enter 走我们自己的 `onSubmitRequest`——在 `onKeyDown` 里 `preventDefault()` 拦掉组件内置提交（内置路径会自己清空输入框，违反"清空由调用方负责、提交失败保留草稿"的约定）。Shift+Enter 换行、IME 组字中（`isComposing` 或 keyCode 229）不提交。
 - **关掉的默认行为**：`hasHistory={false}`（↑ 调历史）、`pasteAsToken={false}`（长粘贴转 token），与旧 textarea 行为对齐。
-- **`inputRef`**：类型换成 `ChatPromptInputHandle`（`focus()` / `focusAtEnd()` / `insertLeadingToken(token)`），不再是 `HTMLTextAreaElement`。建议卡等场景统一用 `focusAtEnd()`；命令类调用方（`+` 菜单选中项）用 `insertLeadingToken` 把 token 插到最开头并替换掉已有的首位 token。
+- **`inputRef`**：类型为 `ChatPromptInputHandle`（`focus()` / `focusAtEnd()` / `insertLeadingToken(token)` / `appendToken(token)`）。建议卡用 `focusAtEnd()`；命令菜单用 `insertLeadingToken` 插到开头，只替换 `leadingTokenFor` 识别出的命令，保留已有文件 token。文件菜单用 `appendToken` 在末尾追加，必要时补空格；菜单占有焦点时不依赖旧光标位置。
 - **`triggers?: ChatComposerTrigger[]`**：原样透传给 `ChatComposerInput`。调用方给空数组时组件补一个不可见占位 trigger（`\u2063`，键盘打不出来），把可编辑元素的 role 钉在 `combobox`，避免 role 随输入在 `textbox`/`combobox` 间跳变。
 - **`leadingTokenFor?: (value) => { length, token } | null`**：草稿恢复、外部写入等把 token 拍平成文本之后，用它把开头的命令字符串补回成 token（Astryx 外部赋值走 `textContent`，token 会丢）。匹配只在最开头的文本节点上做，`length` 含紧跟的一个空格或 NBSP。
 - **token 的 NBSP**：`insertToken` 会在 token 后插 `\u00A0`；Pi 只用普通空格切命令参数，所以**只在提交时**（`buildPromptWithAttachments`）统一换成普通空格，不回写受控 value（回写会把 token 抹平）。
+- **文件引用**：项目草稿和 Live composer 的 `@` 补全与 `+ → Reference file` 共用 `search_workspace_files`，草稿按项目根、Live 按 Session 的 Execution Checkout 搜索；Chat 工作区不提供。token 显示文件名，序列化保留相对路径，目录带 `/`，含 Pi 分隔符的路径加双引号。输入框文件引用逻辑在 `entities/workspace-file/`，不读取或展开文件正文。
 - **无障碍**：`role` 由 Astryx 自己给——`useTriggerMenu` 的 `ariaProps` 落在可编辑元素上，无 trigger 是 `textbox`、有 trigger 是 `combobox`（带 `aria-expanded` 等）；**不要**在 effect 里 `setAttribute("role")`，会和 React 管理的属性打架。组件 effect 只补 Astryx 没给的两项：`aria-placeholder`（placeholder 本身在一个 `aria-hidden` div 上）与禁用时的 `aria-disabled`，随 placeholder / 禁用态更新。不要 swizzle Astryx 源码。
 - 文件拖放仍由外层 `prompt-input` div 处理；粘贴文件走 `onFiles`，粘贴文本只插纯文本。禁用 = `isDisabled`（`contentEditable="false"`）+ `aria-disabled` + CSS `cursor: not-allowed`。
 
@@ -84,6 +85,8 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 - `ModelSelectorControl`：选中项来自 projection；冷会话缺少目录时异步读取 `list_available_model_controls`，不启动 Agent，读取失败不阻塞历史或发送。Session 创建期间 projection 还没有自己的 controls，此时选中项回落到 draft 提交时写入的 `last model selection`，目录则复用本次 renderer 已读到的那份，选择器因此在 Draft → Live 交接中不会消失；创建期 `isDisabled`。真正切换模型会准备运行环境。`isDisabled` 在队列模式或提交等待期间为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
 - `ComposerInsertMenu`：`catalogs` 是通用分组目录（`ComposerInsertCatalog[]`：`id` / `label` / `icon` / `searchLabel` / `emptyText` / `items`），一级菜单先是 Add files，再按传入顺序列出非空组（空组隐藏），点组打开 `CommandPalette` 按 label/description 搜索，选中经 `onPick(catalogId, itemId)` 回给调用方。菜单本身不携带任何领域概念——skills/prompts/extension commands 的分组和 token 插入由 `entities/prompt-command` 的 `insertCatalogs` / `commandToken` 组装，提交前的校验走 `validateCommandSubmit`（拦 Pi TUI 内置命令和排队模式下的 extension 命令）。`/` 补全的数据来自 `list_prompt_commands`（`usePromptCommands`：草稿按项目根静态解析，会话内走运行时 catalog）。
 - `ComposerAttachmentDrawer`：`items` 为空返回 null；图片走 Thumbnail，文本走 Token。附件逻辑（大小上限、拒收文案、拼进 prompt）全在 `composer-attachment-logic.ts`，从 `composer-attachments/index.ts` 导入，不在页面里重算。
+
+`ComposerInsertCatalog` 可提供静态 `items` 或异步 `search(query)`。静态空组隐藏，异步组始终可见，打开后按输入检索。搜索框阻止点击冒泡，避免 portal 内点击被 Composer 的空白处点击逻辑抢走焦点。Design 页包含异步文件搜索示例。
 
 ## 思维链
 

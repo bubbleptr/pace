@@ -27,9 +27,17 @@ export type ChatPromptInputHandle = {
   focusAtEnd(): void;
   /**
    * Insert a token at the very start of the input, replacing the current
-   * leading token (if any) and keeping the rest of the text.
+   * leading token recognized by leadingTokenFor and keeping the rest of
+   * the content. Without a matcher, any leading token is replaced.
    */
   insertLeadingToken(token: ChatComposerToken): void;
+  /**
+   * Append a token after the existing content, separating it with a plain
+   * space when the input doesn't already end in whitespace. Appends rather
+   * than honoring the caret because pickers (the + menu's CommandPalette)
+   * hold focus while choosing — the composer's caret is gone by then.
+   */
+  appendToken(token: ChatComposerToken): void;
 };
 
 export type LeadingTokenMatch = {
@@ -196,7 +204,10 @@ function PromptComposerInput({
         // Drop the existing leading token and the NBSP insertToken added
         // after it — a command slot holds exactly one token.
         const first = firstMeaningfulChild(editable);
-        if (isTokenSpan(first)) {
+        if (
+          isTokenSpan(first) &&
+          (!leadingTokenFor || leadingTokenFor(first.getAttribute("data-astryx-token-value") ?? ""))
+        ) {
           const next = first.nextSibling;
           if (next?.nodeType === Node.TEXT_NODE && next.textContent === "\u00A0") {
             next.remove();
@@ -210,11 +221,33 @@ function PromptComposerInput({
         dispatchSyntheticInput(editable);
         editable.focus();
       },
+      appendToken: (token) => {
+        const editable = editableOf(rootRef.current);
+        if (!editable) {
+          return;
+        }
+        const selection = window.getSelection();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(editable);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        const text = editable.textContent ?? "";
+        const last = text[text.length - 1];
+        if (last && last !== " " && last !== "\u00A0" && last !== "\n") {
+          composerRef.current?.insertText(" ");
+        }
+        composerRef.current?.insertToken(token);
+        dispatchSyntheticInput(editable);
+        editable.focus();
+      },
     };
     return () => {
       inputRef.current = null;
     };
-  }, [inputRef]);
+  }, [inputRef, leadingTokenFor]);
 
   useEffect(() => {
     if (!leadingTokenFor) {

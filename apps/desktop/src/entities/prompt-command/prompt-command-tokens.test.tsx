@@ -160,9 +160,9 @@ describe("insertCatalogs", () => {
       "prompts",
       "commands",
     ]);
-    expect(catalogs[0]?.items.map((item) => item.id)).toEqual(["skill:review-pr"]);
-    expect(catalogs[1]?.items.map((item) => item.id)).toEqual(["fix"]);
-    expect(catalogs[2]?.items.map((item) => item.id)).toEqual(["deploy"]);
+    expect(catalogs[0]?.items?.map((item) => item.id)).toEqual(["skill:review-pr"]);
+    expect(catalogs[1]?.items?.map((item) => item.id)).toEqual(["fix"]);
+    expect(catalogs[2]?.items?.map((item) => item.id)).toEqual(["deploy"]);
   });
 
   it("drops the Commands group in queue mode", () => {

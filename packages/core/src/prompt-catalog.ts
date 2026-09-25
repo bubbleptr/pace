@@ -30,6 +30,16 @@ export type WorkspaceFileSearchResult = {
   truncated: boolean;
 };
 
+/**
+ * Verbatim copy of `autocompleteSeparatorRegex` from pi-tui 0.87.1
+ * `dist/utils.js` (it composes cjkPunctuationRegex there). A file reference
+ * whose path matches must serialize as `@"<path>"` — the same rule the Pi
+ * TUI's `buildCompletionValue` applies. Drift-guarded by
+ * packages/backend/src/workspace/pi-tui-separators.test.ts.
+ */
+export const AUTOCOMPLETE_SEPARATOR_REGEX =
+  /(?:\s|(?:(?=\p{Punctuation})[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]|[，．：；！？（）［］｛｝“”‘’…—]))/u;
+
 const PROMPT_COMMAND_KIND_ORDER: Record<PromptCommandKind, number> = {
   skill: 0,
   prompt: 1,
