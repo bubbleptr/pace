@@ -30,8 +30,10 @@ function editableOf(root: HTMLDivElement | null): HTMLElement | null {
 /**
  * Astryx contentEditable composer input. Submit is intercepted in onKeyDown
  * (the built-in Enter path force-clears the value before the caller can
- * keep a failed draft), and the component's a11y gaps are patched locally —
- * no swizzle.
+ * keep a failed draft), and the missing placeholder/disabled attributes are
+ * patched locally — no swizzle. The role stays Astryx-owned: useTriggerMenu
+ * spreads a React-managed `role` (textbox, or combobox when triggers exist)
+ * onto the editable, so setting one from an effect would fight React.
  */
 function PromptComposerInput({
   disabled = false,
@@ -83,15 +85,16 @@ function PromptComposerInput({
   }, [inputRef]);
 
   useEffect(() => {
-    // Astryx 0.3.0 puts only aria-multiline/aria-label on the editable and
-    // no role at all, while E2E and screen readers locate the composer by
-    // the textbox role. Patch the missing attributes here instead of
+    // Astryx 0.3.0 sets aria-multiline/aria-label (and the role, via
+    // useTriggerMenu's ariaProps) on the editable, but the placeholder lives
+    // on a separate aria-hidden div and disabled state only flips
+    // contentEditable. E2E and assistive tech look for aria-placeholder and
+    // aria-disabled on the editable, so patch those here instead of
     // swizzling the component.
     const editable = editableOf(rootRef.current);
     if (!editable) {
       return;
     }
-    editable.setAttribute("role", "textbox");
     if (placeholder) {
       editable.setAttribute("aria-placeholder", placeholder);
     } else {

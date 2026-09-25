@@ -60,7 +60,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 - **提交**：Enter、Cmd/Ctrl+Enter 走我们自己的 `onSubmitRequest`——在 `onKeyDown` 里 `preventDefault()` 拦掉组件内置提交（内置路径会自己清空输入框，违反"清空由调用方负责、提交失败保留草稿"的约定）。Shift+Enter 换行、IME 组字中（`isComposing` 或 keyCode 229）不提交。
 - **关掉的默认行为**：`hasHistory={false}`（↑ 调历史）、`pasteAsToken={false}`（长粘贴转 token），与旧 textarea 行为对齐；token 化留给后续 PR。
 - **`inputRef`**：类型换成 `ChatPromptInputHandle`（`focus()` / `focusAtEnd()`，后者把 caret 放到末尾），不再是 `HTMLTextAreaElement`。建议卡等场景统一用 `focusAtEnd()`。
-- **无障碍补丁**：Astryx 0.3.0 的可编辑 div 只有 `aria-multiline` / `aria-label`，没有 `role`。组件 effect 会补 `role="textbox"`、`aria-placeholder`、禁用时的 `aria-disabled`（E2E 与读屏依赖 textbox 角色）；placeholder / 禁用态变化跟着更新。不要 swizzle Astryx 源码。
+- **无障碍**：`role` 由 Astryx 自己给——`useTriggerMenu` 的 `ariaProps` 落在可编辑元素上，无 trigger 是 `textbox`、有 trigger 是 `combobox`（带 `aria-expanded` 等）；**不要**在 effect 里 `setAttribute("role")`，会和 React 管理的属性打架。组件 effect 只补 Astryx 没给的两项：`aria-placeholder`（placeholder 本身在一个 `aria-hidden` div 上）与禁用时的 `aria-disabled`，随 placeholder / 禁用态更新。不要 swizzle Astryx 源码。
 - 文件拖放仍由外层 `prompt-input` div 处理；粘贴文件走 `onFiles`，粘贴文本只插纯文本。禁用 = `isDisabled`（`contentEditable="false"`）+ `aria-disabled` + CSS `cursor: not-allowed`。
 
 `footer` 是一条**恒定高度**的插槽（`min-height: var(--size-element-sm)`，一行控件），不是"有内容才出现"的行。两个 composer（`features/session-draft/session-draft-composer.tsx` 与 `widgets/live-chat/full-chat-composer.tsx`）用它装 **Location 行**（`ComposerLocationRow`，与各 picker 同住 `entities/checkout/`）：`[Location] [Branch] …… (用量环)`，空 draft 和会话内**内容完全一致**，提交时不做任何替换，composer 因此不会改变高度。三个轴不能混：

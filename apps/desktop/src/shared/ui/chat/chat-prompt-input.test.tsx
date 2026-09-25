@@ -80,7 +80,7 @@ describe("ChatPromptInput", () => {
     expect(screen.getByText("start")).toBeInTheDocument();
   });
 
-  it("patches role and aria-placeholder onto the editable and keeps them in sync", () => {
+  it("keeps Astryx's textbox role and patches aria-placeholder onto the editable in sync", () => {
     const { rerender } = renderPromptInput({ placeholder: "First hint" });
 
     const input = getPromptInput();
