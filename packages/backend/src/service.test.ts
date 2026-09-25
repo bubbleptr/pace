@@ -440,11 +440,18 @@ describe("backend service", () => {
       listPromptCommands,
       onEvent: vi.fn(() => () => {}),
     } as unknown as PiRuntimeDriver;
+    const staticPromptCommands = vi.fn(async () => ({
+      source: "static" as const,
+      commands: [
+        { kind: "skill" as const, name: "stub", invocation: "skill:stub" },
+      ],
+    }));
     const service = createBackendService({
       agentDir: fixtureAgentDir(),
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       sessionProjectionStore: projections,
+      staticPromptCommands,
     });
 
     await expect(
@@ -455,10 +462,18 @@ describe("backend service", () => {
       }),
     ).resolves.toEqual({
       id: "req-cold",
-      result: { source: "static", commands: [] },
+      result: {
+        source: "static",
+        commands: [{ kind: "skill", name: "stub", invocation: "skill:stub" }],
+      },
     });
     expect(listPromptCommands).not.toHaveBeenCalled();
+    expect(staticPromptCommands).toHaveBeenCalledWith({
+      root,
+      agentDir: fixtureAgentDir(),
+    });
 
+    staticPromptCommands.mockClear();
     await expect(
       service.handleRequest({
         id: "req-root",
@@ -467,7 +482,14 @@ describe("backend service", () => {
       }),
     ).resolves.toEqual({
       id: "req-root",
-      result: { source: "static", commands: [] },
+      result: {
+        source: "static",
+        commands: [{ kind: "skill", name: "stub", invocation: "skill:stub" }],
+      },
+    });
+    expect(staticPromptCommands).toHaveBeenCalledWith({
+      root,
+      agentDir: fixtureAgentDir(),
     });
   });
 

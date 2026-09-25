@@ -49,6 +49,7 @@ import {
   type SessionFilesReader,
 } from "./workspace/session-files";
 import { resolveStaticPromptCommands } from "./workspace/prompt-commands";
+import type { ResolveStaticPromptCommandsInput } from "./workspace/prompt-commands";
 import {
   createWorkspaceFileSearcher,
   type WorkspaceFileSearcher,
@@ -118,6 +119,10 @@ export type BackendService = {
   dispose(): Promise<void>;
 };
 
+export type StaticPromptCommandsResolver = (
+  input: ResolveStaticPromptCommandsInput,
+) => Promise<PromptCommandCatalog>;
+
 export type BackendServiceOptions = {
   agentDir?: string;
   dataDir?: string;
@@ -130,6 +135,7 @@ export type BackendServiceOptions = {
   projectGitReader?: ProjectGitReader;
   sessionFilesReader?: SessionFilesReader;
   workspaceFileSearcher?: WorkspaceFileSearcher;
+  staticPromptCommands?: StaticPromptCommandsResolver;
   piSessionListAll?: () => Promise<PiSessionListItem[]>;
   environmentPreflight?: EnvironmentPreflightReader;
   providerAuth?: ProviderAuthService;
@@ -209,6 +215,8 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     options.sessionFilesReader ?? createNodeSessionFilesReader();
   const workspaceFileSearcher =
     options.workspaceFileSearcher ?? createWorkspaceFileSearcher();
+  const staticPromptCommands =
+    options.staticPromptCommands ?? resolveStaticPromptCommands;
   const environmentPreflight =
     options.environmentPreflight ??
     createEnvironmentPreflightReader({
@@ -362,6 +370,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             projectGitReader,
             sessionFilesReader,
             workspaceFileSearcher,
+            staticPromptCommands,
             environmentPreflight,
             providerAuth,
             piSessionListAll,
@@ -402,6 +411,7 @@ async function dispatchRequest(input: {
   projectGitReader: ProjectGitReader;
   sessionFilesReader: SessionFilesReader;
   workspaceFileSearcher: WorkspaceFileSearcher;
+  staticPromptCommands: StaticPromptCommandsResolver;
   environmentPreflight: EnvironmentPreflightReader;
   providerAuth: ProviderAuthService;
   piSessionListAll: () => Promise<PiSessionListItem[]>;
@@ -500,6 +510,7 @@ async function dispatchRequest(input: {
         agentDir: input.agentDir,
         store: input.sessionProjectionStore,
         driver: input.runtimeDriver,
+        staticResolver: input.staticPromptCommands,
       });
     case "search_workspace_files":
       return searchWorkspaceFiles({
@@ -741,13 +752,14 @@ async function listPromptCommands(input: {
   agentDir: string;
   store: SessionProjectionStore;
   driver: PiRuntimeDriver;
+  staticResolver: StaticPromptCommandsResolver;
 }): Promise<PromptCommandCatalog> {
   if ((input.sessionId === undefined) === (input.projectRoot === undefined)) {
     throw new Error('Exactly one of "sessionId" or "projectRoot" is required.');
   }
 
   if (input.projectRoot !== undefined) {
-    return resolveStaticPromptCommands({
+    return input.staticResolver({
       root: input.projectRoot,
       agentDir: input.agentDir,
     });
@@ -766,7 +778,7 @@ async function listPromptCommands(input: {
   }
 
   const { checkoutRoot } = checkoutRootsFromProjection(sessionId, projection);
-  return resolveStaticPromptCommands({ root: checkoutRoot, agentDir: input.agentDir });
+  return input.staticResolver({ root: checkoutRoot, agentDir: input.agentDir });
 }
 
 async function searchWorkspaceFiles(input: {

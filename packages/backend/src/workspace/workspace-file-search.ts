@@ -6,6 +6,7 @@ import { runGit } from "./session-changes";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const MAX_WALK_ENTRIES = 20_000;
+const PATH_CACHE_TTL_MS = 10_000;
 
 export type WorkspaceFileSearchInput = {
   root: string;
@@ -20,6 +21,8 @@ export type WorkspaceFileSearcher = {
 export type WorkspaceFileSearcherOptions = {
   /** Test seam: list root-relative posix file paths. Defaults to git ls-files with a bounded-walk fallback. */
   listPaths?: (root: string) => Promise<string[]>;
+  /** Test seam: clock for the path-list cache. */
+  now?: () => number;
 };
 
 async function listGitPaths(root: string): Promise<string[] | null> {
@@ -91,9 +94,23 @@ function matchTier(path: string, query: string) {
 export function createWorkspaceFileSearcher(
   options: WorkspaceFileSearcherOptions = {},
 ): WorkspaceFileSearcher {
-  const listPaths =
+  const readPaths =
     options.listPaths ??
     (async (root: string) => (await listGitPaths(root)) ?? (await listWalkedPaths(root)));
+  const now = options.now ?? Date.now;
+
+  // "@" completion queries on every keystroke, so path listings are cached
+  // per root for a short TTL. Concurrent callers share the in-flight
+  // promise; a failed listing is never cached.
+  const pathCache = new Map<string, { at: number; promise: Promise<string[]> }>();
+  const listPaths = (root: string): Promise<string[]> => {
+    const cached = pathCache.get(root);
+    if (cached && now() - cached.at < PATH_CACHE_TTL_MS) return cached.promise;
+    const promise = readPaths(root);
+    pathCache.set(root, { at: now(), promise });
+    promise.catch(() => pathCache.delete(root));
+    return promise;
+  };
 
   return {
     async search(input) {

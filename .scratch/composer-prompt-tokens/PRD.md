@@ -44,7 +44,7 @@
 ### 数据来源
 
 - **运行中的会话**:从 Pi 会话读取,和 Pi 内部 `getCommands()` 读的是同一份数据:`extensionRunner.getRegisteredCommands()`、`promptTemplates`、`resourceLoader.getSkills()`。
-- **草稿 / 冷会话**:按根目录静态解析,构造方式与 `session-process-entry.ts` 相同(`SettingsManager.create(root, agentDir)` + `DefaultResourceLoader`),但加 `noExtensions`,只返回 skills 和 prompt 模板。extension 命令要等运行时起来才有。
+- **草稿 / 冷会话**:按根目录静态解析。设置与 `session-process-entry.ts` 一样用 `SettingsManager.create(root, agentDir)`(经核实只读),但**不用 `DefaultResourceLoader`**:它的 `reload()` 调 `packageManager.resolve()` 时不传 `onMissing`,缺失或版本不符的包会被实际安装,只读查询不能有这种副作用。改用 `DefaultPackageManager.resolve(async () => "skip")`(与 `workspace/config.ts` 相同),再读 skill / 模板的元数据。只返回 skills 和 prompt 模板;extension 命令要等运行时起来才有。用一个与 `DefaultResourceLoader` 对照的测试防止两边结果漂移。
 - **Trust**:Pace 会话实际上总是信任项目(`SettingsManager.create` 默认 `projectTrusted = true`,loader 没有设置 `resolveProjectTrust`),静态解析保持一致。
 - **Worktree 草稿**:按项目目录解析。会话起来后改用运行时列表,两者的差异(例如项目目录里未提交的 `.pi/`)以运行时为准。
 - **文件搜索**:以 Pi 的 cwd(checkout root)为根,遵守 `.gitignore`(`git ls-files --cached --others --exclude-standard`),不是 git 仓库时退回到有上限的遍历。

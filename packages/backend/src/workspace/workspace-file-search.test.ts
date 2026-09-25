@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceFileSearcher } from "./workspace-file-search";
 
 const tempDirs: string[] = [];
@@ -115,5 +115,38 @@ describe("workspace file search", () => {
     });
     const result = await searcher.search({ root: "/anywhere", query: "" });
     expect(result.matches).toEqual([{ path: "ok.ts", kind: "file" }]);
+  });
+
+  it("caches the path listing per root for a short ttl", async () => {
+    let now = 1_000;
+    const listPaths = vi.fn(async () => ["a.ts"]);
+    const searcher = createWorkspaceFileSearcher({ listPaths, now: () => now });
+
+    await searcher.search({ root: "/repo", query: "a" });
+    await searcher.search({ root: "/repo", query: "ts" });
+    // A different root is cached independently.
+    await searcher.search({ root: "/other", query: "a" });
+    expect(listPaths).toHaveBeenCalledTimes(2);
+
+    now += 10_001;
+    await searcher.search({ root: "/repo", query: "a" });
+    expect(listPaths).toHaveBeenCalledTimes(3);
+  });
+
+  it("shares one listing between concurrent searches on the same root", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const listPaths = vi.fn(async () => {
+      await gate;
+      return ["a.ts", "b.ts"];
+    });
+    const searcher = createWorkspaceFileSearcher({ listPaths });
+
+    const first = searcher.search({ root: "/repo", query: "a" });
+    const second = searcher.search({ root: "/repo", query: "b" });
+    release();
+    await Promise.all([first, second]);
+
+    expect(listPaths).toHaveBeenCalledTimes(1);
   });
 });
