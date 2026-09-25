@@ -321,6 +321,78 @@ describe("SessionDraftComposer", () => {
 });
 
 describe("SessionDraftComposer slash commands", () => {
+  it("keeps a command typed out by hand as text and submits it unchanged", async () => {
+    const onDraftSubmit = vi.fn();
+    const user = userEvent.setup();
+    mockPromptCommands({
+      source: "static",
+      commands: [
+        { kind: "prompt", name: "review", invocation: "review", description: "Review something" },
+        { kind: "prompt", name: "review-pr", invocation: "review-pr", description: "Review a pull request" },
+      ],
+    });
+    const draft = saveSessionDraft(pigProjectPath, "");
+    render(<DraftComposer draft={draft} projects={[pigProject]} onDraftSubmit={onDraftSubmit} />);
+    const input = await findPromptInput();
+
+    act(() => input.focus());
+    // "/review" is complete once "w" lands, but the user keeps typing —
+    // the rehydrate path is for external writes, not in-progress input.
+    await user.keyboard("/review-pr hi");
+
+    await waitFor(() => expect(promptValue(input)).toBe("/review-pr hi"));
+    expect(input.querySelector("[data-astryx-token]")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onDraftSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "/review-pr hi" }),
+    );
+  });
+
+  it("rehydrates the leading command once a late catalog resolves", async () => {
+    let resolveCatalog!: (catalog: PromptCommandCatalog) => void;
+    const gate = new Promise<PromptCommandCatalog>((resolve) => {
+      resolveCatalog = resolve;
+    });
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_prompt_commands") {
+        return gate;
+      }
+      if (command === "get_config_inventory") {
+        return { skills: [], extensions: [], packages: [], promptTemplates: [] };
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    const draft = saveSessionDraft(pigProjectPath, "/skill:review-pr 参数");
+    render(<DraftComposer draft={draft} projects={[pigProject]} />);
+    const input = await findPromptInput();
+
+    // The catalog is still in flight — the restored draft stays text.
+    expect(promptValue(input)).toBe("/skill:review-pr 参数");
+    expect(input.querySelector("[data-astryx-token]")).toBeNull();
+
+    await act(async () => {
+      resolveCatalog(promptCatalog);
+      await gate;
+    });
+
+    await waitFor(() =>
+      expect(input.querySelector("[data-astryx-token]")).toHaveAttribute(
+        "data-astryx-token-value",
+        "/skill:review-pr",
+      ),
+    );
+    expect(promptValue(input)).toBe("/skill:review-pr\u00A0参数");
+  });
+
   it("opens the catalog on '/' and submits the picked skill with a plain space", async () => {
     const onDraftSubmit = vi.fn();
     const user = userEvent.setup();

@@ -16,22 +16,26 @@ const PROMPT_COMMANDS_STALE_MS = 15_000;
 
 export function usePromptCommands(target: PromptCommandTarget | null) {
   const projections = useSessionProjectionsOptional();
-  // piSessionId appears when a cold Session's runtime binds — keying on it
-  // makes the query refetch then, so extension commands (runtime-only)
-  // surface without a remount.
-  const piSessionId =
+  const sessionProjection =
     target && "sessionId" in target
       ? projections?.sessionProjections.find(
           (projection) => projection.id === target.sessionId,
-        )?.piSessionId ?? null
+        )
       : null;
+  // A cold Session already carries piSessionId, so binding alone never
+  // changes the key. Status flips to "running" when a run starts — the
+  // moment the runtime is guaranteed live — and keying on it refetches the
+  // catalog, picking up runtime-only extension commands without a remount.
+  // The RPC is cheap, so a refetch on every status transition is fine.
+  const piSessionId = sessionProjection?.piSessionId ?? null;
+  const status = sessionProjection?.status ?? null;
 
   return useQuery({
     queryKey:
       target === null
         ? ["prompt-commands", "off"]
         : "sessionId" in target
-          ? ["prompt-commands", "session", target.sessionId, piSessionId]
+          ? ["prompt-commands", "session", target.sessionId, piSessionId, status]
           : ["prompt-commands", "root", target.projectRoot],
     queryFn: () =>
       invoke<PromptCommandCatalog>("list_prompt_commands", target ?? {}),

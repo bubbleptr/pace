@@ -116,6 +116,25 @@ function PromptComposerInput({
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerInputHandle | null>(null);
+  // The last value emitted by a real user input event. The rehydrate effect
+  // below uses it to tell typed text from an external write: an emitted
+  // value echoing back through the `value` prop is typing in progress, and
+  // must never be turned into a token mid-word.
+  const lastUserValueRef = useRef<string | undefined>(undefined);
+  // Synthetic input events we dispatch ourselves (the trigger-refresh
+  // re-dispatch, insertLeadingToken, the rehydrate effect) replay the
+  // caller's value — flagging them keeps them out of lastUserValueRef.
+  const syntheticInputRef = useRef(false);
+  const dispatchSyntheticInput = (editable: HTMLElement) => {
+    syntheticInputRef.current = true;
+    try {
+      // dispatchEvent delivers listeners synchronously, so the flag covers
+      // the composer's emitChange.
+      editable.dispatchEvent(new Event("input", { bubbles: true }));
+    } finally {
+      syntheticInputRef.current = false;
+    }
+  };
   const effectiveTriggers = useMemo(
     () => (triggers?.length ? triggers : [PLACEHOLDER_TRIGGER]),
     [triggers],
@@ -128,13 +147,22 @@ function PromptComposerInput({
   // trigger; upstream the emit is a no-op because the serialized value is
   // unchanged. Skipped on mount — the input event there would be a spurious
   // onValueChange for a value the caller just rendered.
+  //
+  // Ordering matters: this effect is declared before the rehydrate effect
+  // below, so when a catalog arrives alongside a restored draft the
+  // re-dispatch runs first. Because the synthetic emit stays out of
+  // lastUserValueRef, rehydrate in the same commit still sees the draft as
+  // an external value and restores its leading token.
   const mountedTriggers = useRef(effectiveTriggers);
   useEffect(() => {
     if (mountedTriggers.current === effectiveTriggers) {
       return;
     }
     mountedTriggers.current = effectiveTriggers;
-    editableOf(rootRef.current)?.dispatchEvent(new Event("input", { bubbles: true }));
+    const editable = editableOf(rootRef.current);
+    if (editable) {
+      dispatchSyntheticInput(editable);
+    }
   }, [effectiveTriggers]);
 
   useEffect(() => {
@@ -179,7 +207,7 @@ function PromptComposerInput({
         composerRef.current?.insertToken(token);
         // insertToken only mutates the DOM; the input event makes the
         // composer serialize and emit the new value.
-        editable.dispatchEvent(new Event("input", { bubbles: true }));
+        dispatchSyntheticInput(editable);
         editable.focus();
       },
     };
@@ -190,6 +218,13 @@ function PromptComposerInput({
 
   useEffect(() => {
     if (!leadingTokenFor) {
+      return;
+    }
+    // A value identical to the last user-driven emit is typing echoing back
+    // through the controlled prop, not an external write — rehydrating it
+    // would trap "/review" into a token while the user is still typing
+    // "/review-pr".
+    if (value === lastUserValueRef.current) {
       return;
     }
     const editable = editableOf(rootRef.current);
@@ -222,7 +257,7 @@ function PromptComposerInput({
       selection.addRange(range);
     }
     composerRef.current?.insertToken(match.token);
-    editable.dispatchEvent(new Event("input", { bubbles: true }));
+    dispatchSyntheticInput(editable);
   }, [value, leadingTokenFor]);
 
   useEffect(() => {
@@ -283,7 +318,12 @@ function PromptComposerInput({
       placeholder={placeholder}
       triggers={effectiveTriggers}
       value={value}
-      onChange={onValueChange}
+      onChange={(next) => {
+        if (!syntheticInputRef.current) {
+          lastUserValueRef.current = next;
+        }
+        onValueChange?.(next);
+      }}
       onFiles={onFiles}
       onKeyDown={handleKeyDown}
     />

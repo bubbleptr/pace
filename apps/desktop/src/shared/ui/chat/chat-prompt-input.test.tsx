@@ -9,11 +9,36 @@ import {
   type ChatPromptInputHandle,
 } from "@/shared/ui/chat/chat-prompt-input";
 import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
+import { createStaticSource } from "@astryxdesign/core/Typeahead";
 import {
   getPromptInput,
   promptValue,
   typeIntoPrompt,
 } from "@/test/prompt-input";
+
+/**
+ * leadingTokenFor over a fixed catalog, mirroring leadingCommandMatch's
+ * word-boundary rule (end, space, or NBSP — so "/review" matches inside
+ * "/review-pr" only at a boundary, and a bare "/review" at end counts).
+ */
+function makeLeadingMatch(...invocations: string[]) {
+  return (value: string) => {
+    for (const invocation of invocations) {
+      const head = `/${invocation}`;
+      if (!value.startsWith(head)) {
+        continue;
+      }
+      const next = value.charAt(head.length);
+      if (next === "") {
+        return { length: head.length, token: { value: head, label: head } };
+      }
+      if (next === " " || next === "\u00A0") {
+        return { length: head.length + 1, token: { value: head, label: head } };
+      }
+    }
+    return null;
+  };
+}
 
 function renderPromptInput({
   value = "",
@@ -429,6 +454,134 @@ describe("ChatPromptInput", () => {
     // exists the effect leaves the DOM alone.
     expect(onValueChange).toHaveBeenCalledTimes(1);
     expect(onValueChange).toHaveBeenCalledWith("/skill:a\u00A0hi");
+  });
+
+  it("does not tokenize a command while the user is still typing it", async () => {
+    const user = userEvent.setup();
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <ChatPromptInput
+          leadingTokenFor={makeLeadingMatch("review", "review-pr")}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={setValue}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+
+    act(() => input.focus());
+    // "/review" is a complete command once the "w" lands, but the user is
+    // on their way to "/review-pr" — typed text must stay text.
+    await user.keyboard("/review-pr hi");
+
+    expect(promptValue(input)).toBe("/review-pr hi");
+    expect(input.querySelector("[data-astryx-token]")).toBeNull();
+  });
+
+  it("still rehydrates when the catalog resolves after the draft landed", () => {
+    // Both relevant props flip in one commit — the trigger list swapping in
+    // fires the re-dispatch effect first, and its emit must not make the
+    // rehydrate effect mistake the restored draft for user typing.
+    const slash = (names: string[]): ChatComposerTrigger => ({
+      character: "/",
+      searchSource: createStaticSource(
+        names.map((name) => ({ id: name, label: `/${name}` })),
+      ),
+      onSelect: () => "",
+    });
+    function Harness({ loaded }: { loaded: boolean }) {
+      const [value, setValue] = useState("/skill:x hi");
+      return (
+        <ChatPromptInput
+          leadingTokenFor={loaded ? makeLeadingMatch("skill:x") : undefined}
+          triggers={loaded ? [slash(["skill:x"])] : []}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={setValue}
+        />
+      );
+    }
+    const { rerender } = render(<Harness loaded={false} />);
+    const input = getPromptInput();
+    expect(promptValue(input)).toBe("/skill:x hi");
+
+    rerender(<Harness loaded />);
+
+    expect(input.firstElementChild).toHaveAttribute(
+      "data-astryx-token-value",
+      "/skill:x",
+    );
+    expect(promptValue(input)).toBe("/skill:x\u00A0hi");
+  });
+
+  it("rehydrates a leading token after an external write flattened it", () => {
+    function Harness() {
+      const [value, setValue] = useState("hi");
+      return (
+        <>
+          <ChatPromptInput
+            leadingTokenFor={makeLeadingMatch("skill:x")}
+            value={value}
+            onSubmit={() => {}}
+            onValueChange={setValue}
+          />
+          <button onClick={() => setValue("/skill:x hi")}>inject</button>
+        </>
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+    expect(promptValue(input)).toBe("hi");
+
+    fireEvent.click(screen.getByRole("button", { name: "inject" }));
+
+    expect(input.firstElementChild).toHaveAttribute(
+      "data-astryx-token-value",
+      "/skill:x",
+    );
+    expect(promptValue(input)).toBe("/skill:x\u00A0hi");
+  });
+
+  it("leaves command text alone after the user deletes the token and retypes it", async () => {
+    const user = userEvent.setup();
+    function Harness() {
+      const [value, setValue] = useState("/skill:x hi");
+      return (
+        <ChatPromptInput
+          leadingTokenFor={makeLeadingMatch("skill:x")}
+          value={value}
+          onSubmit={() => {}}
+          onValueChange={setValue}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = getPromptInput();
+    expect(input.firstElementChild).toHaveAttribute(
+      "data-astryx-token-value",
+      "/skill:x",
+    );
+
+    // The user deletes the token (and the NBSP insertToken left behind),
+    // then retypes the same command as plain text.
+    input.querySelector("[data-astryx-token]")!.remove();
+    input.textContent = "hi";
+    fireEvent.input(input);
+    const text = input.firstChild!;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    act(() => input.focus());
+    await user.keyboard("/skill:x ");
+
+    expect(promptValue(input)).toBe("/skill:x hi");
+    expect(input.querySelector("[data-astryx-token]")).toBeNull();
   });
 
   it("renders a drawer above the input", () => {

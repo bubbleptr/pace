@@ -123,7 +123,7 @@ export function FullChatComposer({
   const picker = useFilePicker(attachments.addFiles);
   const inputRef = useRef<ChatPromptInputHandle | null>(null);
   // Live Sessions query the runtime catalog — extension commands only exist
-  // once the Pi session has bound (see usePromptCommands' piSessionId key).
+  // once the runtime is live (see usePromptCommands' piSessionId+status key).
   const commandQuery = usePromptCommands(sessionId ? { sessionId } : null);
   const commands = useMemo(
     () => commandQuery.data?.commands ?? [],

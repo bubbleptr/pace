@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionChanges } from "@pace/core";
@@ -8,6 +8,12 @@ import {
   createSessionProjection,
   type SessionProjection,
 } from "@/entities/session/session-projection";
+import type { SessionProjectionsStore } from "@/entities/session/session-projections-store";
+import {
+  SessionProjectionsProvider,
+  useSessionProjections,
+} from "@/entities/session/use-session-projections";
+import type { PiRuntimeBridge } from "@/entities/runtime/pi-runtime-bridge";
 import { saveFollowUpDraft, clearFollowUpDraft } from "@/entities/session/follow-up-drafts";
 import { findPromptInput, promptValue } from "@/test/prompt-input";
 import { render } from "@/test/render";
@@ -373,5 +379,94 @@ describe("FullChatComposer slash commands", () => {
     ).toBeInTheDocument();
     expect(onQueueSubmit).not.toHaveBeenCalled();
     expect(promptValue(input)).toBe("/deploy\u00A0prod");
+  });
+
+  it("refetches the catalog when a cold session's run starts, surfacing extension commands", async () => {
+    // The first answer is the static catalog (no extension commands — the
+    // session is cold); the runtime answer includes them.
+    const staticCatalog: PromptCommandCatalog = {
+      source: "static",
+      commands: catalog.commands.filter((command) => command.kind !== "extension"),
+    };
+    // The backend answers with extension commands only once the runtime is
+    // live — before that the same RPC resolves the static catalog.
+    let runtimeLive = false;
+    let promptCommandCalls = 0;
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_prompt_commands") {
+        promptCommandCalls += 1;
+        return runtimeLive ? catalog : staticCatalog;
+      }
+      if (command === "list_session_projections") {
+        // A cold Session already carries piSessionId — the runtime binding
+        // key alone never moves when it goes live.
+        return [
+          {
+            sessionId: "session-cmds",
+            runtimeId: "pi-sdk:session-cmds",
+            piSessionId: "pi-session-cmds",
+            projectId: "pig-docs",
+            cwd: "/work/Pig",
+            status: "completed",
+            sessionFile: "/tmp/session-cmds.jsonl",
+            updatedAt: "2026-08-20T08:00:00.000Z",
+          },
+        ];
+      }
+      return invokeBrowserFallback(command, args);
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn(() => vi.fn()),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+
+    // usePromptCommands reads the projections context, so mount the real
+    // provider (rehydrating from the mocked list) and expose its store.
+    const bridge = {
+      subscribeToEvents: () => () => {},
+      subscribeToAgentEvents: () => () => {},
+      subscribeToModelControls: () => () => {},
+    } as unknown as PiRuntimeBridge;
+    let store: SessionProjectionsStore | null = null;
+    function Probe() {
+      store = useSessionProjections().store;
+      return null;
+    }
+    render(
+      <SessionProjectionsProvider bridge={bridge}>
+        <Probe />
+        <FullChatComposer projection={liveProjection()} onPromptSubmit={() => {}} />
+      </SessionProjectionsProvider>,
+    );
+    const input = await findPromptInput();
+    await waitFor(() => expect(store?.get("session-cmds")).toBeTruthy());
+
+    typeAtCaret(input, "/");
+    await screen.findByRole("option", { name: /review-pr/ });
+    expect(screen.queryByRole("option", { name: /deploy/ })).not.toBeInTheDocument();
+
+    const callsBeforeRun = promptCommandCalls;
+    // A run starting is the moment the runtime is guaranteed live.
+    act(() => {
+      runtimeLive = true;
+      store!.apply("session-cmds", {
+        type: "runtime-event-received",
+        event: {
+          id: "evt-1",
+          piSessionId: "pi-session-cmds",
+          kind: "thinking",
+          body: "working",
+          timestamp: "2026-08-20T08:01:00.000Z",
+        },
+      });
+    });
+
+    // The already-open slash menu picks up the refetched catalog.
+    expect(await screen.findByRole("option", { name: /deploy/ })).toBeInTheDocument();
+    expect(promptCommandCalls).toBeGreaterThan(callsBeforeRun);
   });
 });
