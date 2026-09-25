@@ -50,6 +50,7 @@ import {
 import { type SessionChangesView } from "@/entities/session/use-session-changes";
 import { saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { useVisibleModels } from "@/entities/model/visible-models";
+import { usePromptCommands } from "@/entities/prompt-command";
 import { useLiveSession } from "@/entities/session/use-session-projections";
 import { type SessionProjectionsStore } from "@/entities/session/session-projections-store";
 import {
@@ -188,6 +189,9 @@ export function LiveSessionColumn({
     apply,
     retryHistory,
   } = useLiveSession(showDraft ? creatingSessionId : sessionId);
+  const promptCommands = usePromptCommands(
+    liveProjection ? { sessionId: liveProjection.id } : null,
+  );
   // Set by a draft submit in this column; consumed when the route leaves the
   // draft so only that handoff plays the composer settle, not a sidebar click.
   const draftHandoffPendingRef = useRef(false);
@@ -913,6 +917,7 @@ export function LiveSessionColumn({
             <ChatConversation.Content className="mx-auto flex w-full max-w-[44rem] flex-col gap-8 px-4 pb-6 pt-2">
               {pendingInitialPrompt && liveProjection ? (
                 <LiveChatMessage
+                  promptCommands={promptCommands.data?.commands}
                   message={{
                     id: `${liveProjection.id}:pending-initial-prompt`,
                     role: "user",
@@ -923,6 +928,7 @@ export function LiveSessionColumn({
               {liveMessages.map((message) => (
                 <LiveChatMessage
                   key={message.id}
+                  promptCommands={promptCommands.data?.commands}
                   message={withLegacyCotView(message)}
                   recovery={message.controlLabel === "Run failed" ? (
                     <ChatRunFailure error={message.body}

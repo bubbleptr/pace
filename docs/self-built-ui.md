@@ -79,6 +79,8 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 
 ## 维护规则
 
+- **2026-09-26 用户消息 token 展示**：`widgets/live-chat/UserPromptContent` 组合已有 command / file token 与 Astryx `ChatTokenizedText`，折叠完整 Pi skill 包装；不新增领域相关的 shared 组件。Design 页 ChatMessage 增加命令/文件混排和 skill 折叠示例。复制与 Fork 保留消息原文。规则见 [对话与 Composer](design/chat.md)。
+
 - **2026-09-26 Composer 文件引用**：`ChatPromptInput` 增加 `appendToken`，首位命令替换保留文件 token；`ComposerInsertMenu` 支持异步 `search` catalog，并隔离搜索框点击，避免 Composer 抢焦点。文件搜索和 Pi 路径序列化位于 `entities/workspace-file/`，Draft / Live 共用。Design 页增加异步文件搜索示例。规则见 [对话与 Composer](design/chat.md)。
 
 - **2026-09-26 Composer 斜杠命令 token 与 + 菜单重组**：`ChatPromptInput` 新增 `triggers` / `leadingTokenFor` props 与 `insertLeadingToken` handle，输入框 role 用不可见占位 trigger（`\u2063`）钉死在 `combobox`；`+` 菜单改成通用分组目录 `ComposerInsertCatalog[]`（领域无关），skills/prompts/extension commands 由 `entities/prompt-command` 按 `list_prompt_commands` catalog 组装为结构化 token，提交时 `validateCommandSubmit` 拦截 Pi TUI 内置命令与排队模式下的 extension 命令，`buildPromptWithAttachments` 把 token 后的 NBSP 归一化为普通空格。删除 `useComposerInsertCatalog`（旧的全局 inventory 来源）与 `insertIntoDraft`。规则见 [对话与 Composer](design/chat.md)。

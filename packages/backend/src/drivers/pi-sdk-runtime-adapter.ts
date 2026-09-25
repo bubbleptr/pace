@@ -226,7 +226,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * through `setSessionName` — Pi then persists it and emits the event Pace
  * already bridges.
  */
-function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (event: unknown) => void {
+function createSessionAutoTitleObserver(
+  session: PublicPiSdkAgentSession,
+  readOriginalPrompt: () => string,
+): (event: unknown) => void {
   let attempted = false;
   let userText = "";
 
@@ -236,7 +239,8 @@ function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (even
     }
 
     if (event.message.role === "user") {
-      userText ||= sessionTitleTextFromContent(event.message.content);
+      // Pi has already expanded skills and prompt templates in this event.
+      userText ||= readOriginalPrompt();
       return;
     }
 
@@ -255,7 +259,7 @@ function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (even
     attempted = true;
     void generateSessionTitle(session, buildSessionTitlePrompt({ userText, assistantText }))
       .then((name) => {
-        if (name) {
+        if (name && !session.sessionName?.trim()) {
           session.setSessionName?.(name);
         }
       })
@@ -979,7 +983,8 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
     });
-    sessionEventListeners.add(createSessionAutoTitleObserver(session));
+    let originalPrompt = "";
+    sessionEventListeners.add(createSessionAutoTitleObserver(session, () => originalPrompt));
     const subagentShim = createTintinwebSubagentShim({
       events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
       subscribeSession: (listener) => {
@@ -1036,6 +1041,7 @@ async function createPublicPiSdkRuntime(context: {
         assertOpen();
         normalizer.noteRunTrigger("prompt");
         const piImages = piImagesFromPrompt(images);
+        originalPrompt = prompt;
 
         if (piImages) {
           await session.prompt(prompt, { images: piImages });

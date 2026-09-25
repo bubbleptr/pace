@@ -17,15 +17,19 @@ import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { GitBranch } from "@/shared/ui/icons";
 import { type CotStep, type CotView } from "@/entities/session/cot-view";
 import { type LiveMessage, type RunTimelineItem } from "@/entities/session/live-chat-model";
+import type { PromptCommand } from "@pace/core";
+import { UserPromptContent } from "./user-prompt-content";
 
 export function LiveChatMessage({
   message,
   onForkMessage,
   recovery,
+  promptCommands,
 }: {
   message: LiveMessage;
   onForkMessage?: (message: LiveMessage) => void;
   recovery?: ReactNode;
+  promptCommands?: readonly PromptCommand[];
 }) {
   if (message.kind === "context_change") {
     return (
@@ -64,7 +68,9 @@ export function LiveChatMessage({
                 </p>
               ) : null}
               {message.body ? (
-                <ChatMessage.Content>{message.body}</ChatMessage.Content>
+                <ChatMessage.Content>
+                  <UserPromptContent text={message.body} commands={promptCommands} />
+                </ChatMessage.Content>
               ) : null}
             </ChatMessage.Bubble>
           ) : null}

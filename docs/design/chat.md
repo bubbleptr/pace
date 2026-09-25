@@ -17,6 +17,14 @@
       <ChatMessageActions.Copy aria-label="Copy" onPress={copy} />
 ```
 
+### 用户消息的命令与文件 token
+
+用户气泡和待发送 initial prompt 使用 `widgets/live-chat/UserPromptContent`。只将开头且命中 Pi catalog 的完整命令、空白边界后的 `@path` 或 `@"含空格路径"` 渲染为 token；邮箱里的 `@`、正文里的斜杠、命令名前缀不匹配。文件 token 复用输入框的文件名与图标，目录保留 `/`；不会逐条查询历史文件是否仍然存在。
+
+完整的 Pi `<skill name="…" location="…">` 包装折叠为 skill token 和用户参数；不完整包装按原文显示。消息存储、复制和 Fork 仍使用原始 body，不展开 skill 或模板正文，也不新增 Pi-only 日志导入。Astryx `ChatTokenizedText` 在已识别的单个片段内渲染，避免它的全局匹配误伤正文或特殊路径。
+
+自动标题使用提交给 `sendPrompt` 的原始输入和首条助手回复，不读取 Pi 展开后的用户正文；无原始输入来源时只用助手回复。后台生成结束前如果用户或扩展已命名，会保留已有标题。
+
 ### 渲染文本：四个 Markdown 组件
 
 ```

@@ -49,6 +49,7 @@ import { ChatCodeBlock } from "@/shared/ui/chat/chat-code-block";
 import { ChatConversation } from "@/shared/ui/chat/chat-conversation";
 import { ChatMarkdown, ChatStreamMarkdown } from "@/shared/ui/chat/chat-markdown";
 import { ChatMessage, ChatMessageActions } from "@/shared/ui/chat/chat-message";
+import { UserPromptContent } from "@/widgets/live-chat/user-prompt-content";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
 import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
 import {
@@ -1256,6 +1257,23 @@ function ChatMessageGallery() {
         <Variant caption="User bubble">
           <ChatMessage.User>
             <ChatMessage.Bubble>Explain this trajectory, please.</ChatMessage.Bubble>
+          </ChatMessage.User>
+        </Variant>
+        <Variant caption="Command and file references">
+          <ChatMessage.User>
+            <ChatMessage.Bubble>
+              <UserPromptContent
+                text={'/skill:review-pr 请检查 @src/routes/[id].tsx 和 @"docs/设计 notes.md"'}
+                commands={[{ kind: "skill", name: "review-pr", invocation: "skill:review-pr" }]}
+              />
+            </ChatMessage.Bubble>
+          </ChatMessage.User>
+        </Variant>
+        <Variant caption="Expanded Pi skill shown as a token">
+          <ChatMessage.User>
+            <ChatMessage.Bubble>
+              <UserPromptContent text={'<skill name="review-pr" location="/project/.pi/skills/review-pr/SKILL.md">\nSkill instructions stay out of the bubble.\n</skill>\n\n检查 @src/main.ts'} />
+            </ChatMessage.Bubble>
           </ChatMessage.User>
         </Variant>
         <Variant caption="streaming, no action bar">
