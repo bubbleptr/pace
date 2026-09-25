@@ -1,6 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import type { RuntimePromptImage } from "@pace/core";
-import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import {
+  ChatPromptInput as PromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion as PromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
@@ -211,7 +214,7 @@ export function SessionDraftComposer({
 }) {
   const [targetValidationRequested, setTargetValidationRequested] = useState(false);
   const targetError = targetValidationRequested && !draft.projectId;
-  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftInputRef = useRef<ChatPromptInputHandle | null>(null);
   const visibleModels = useVisibleModels();
   const selectedCheckoutMode = draft.checkoutMode ?? recommendedCheckoutMode;
   const projectBranch = projectGit.summary?.branch ?? null;
@@ -268,8 +271,7 @@ export function SessionDraftComposer({
   };
   const applySuggestedPrompt = (prompt: string) => {
     onDraftChange(prompt);
-    draftInputRef.current?.focus();
-    draftInputRef.current?.setSelectionRange(prompt.length, prompt.length);
+    draftInputRef.current?.focusAtEnd();
   };
   const submitDraft = async () => {
     if (!providerAuthLoading && !providersConfigured) {

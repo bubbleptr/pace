@@ -96,7 +96,7 @@ export default function(pi) {
     await expect(window.getByLabel("Live Chat messages")).toContainText("Saved answer from history");
     expect(await starts()).toEqual([]);
 
-    await window.getByPlaceholder("What do you want to know?").fill("Continue once");
+    await window.locator('[aria-placeholder="What do you want to know?"]').fill("Continue once");
     const firstSubmitAt = Date.now();
     await window.getByRole("button", { name: "Send", exact: true }).click();
     await expect(window.getByLabel("Live Chat messages")).toContainText("First execution");

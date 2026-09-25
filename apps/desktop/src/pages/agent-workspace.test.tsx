@@ -59,6 +59,12 @@ import * as sessionsApi from "@/entities/session/sessions";
 import * as runtimeModule from "@/shared/runtime";
 import { createMockApi, mockProject } from "@/dev/mock/scenarios";
 import { footerOf } from "@/test/composer-footer";
+import {
+  findPromptInput,
+  getPromptInput,
+  promptValue,
+  typeIntoPrompt,
+} from "@/test/prompt-input";
 import { render } from "@/test/render";
 import { fixtureWorkspace } from "@/dev/fixtures/agent-workspace";
 
@@ -420,9 +426,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     const chatConversation = liveColumn.querySelector('[data-slot="chat-conversation"]');
     const promptInput = liveColumn.querySelector('[data-slot="prompt-input"]');
     const composer = liveColumn.querySelector('[data-testid="full-chat-composer"]');
-    const liveComposerInput = within(liveColumn).getByPlaceholderText(
-      "Queue the next task…",
-    );
+    const liveComposerInput = getPromptInput(liveColumn, { placeholder: "Queue the next task…" });
     const trajectorySidebarLabel = within(screen.getByRole("button", { name: "Trajectory" }))
       .getByText("Trajectory");
     const newSessionSidebarLabel = within(
@@ -503,9 +507,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(composer).toBeInTheDocument();
     expect(composer).toHaveClass("mt-auto", "pb-3");
     expect(liveColumn.querySelector(".astryx-chat-composer")).toBeInTheDocument();
-    expect(liveColumn.querySelector('[data-slot="prompt-input-textarea"]')).toBeInTheDocument();
+    expect(liveColumn.querySelector(".prompt-input__input")).toBeInTheDocument();
     expect(promptInput).toHaveAttribute("data-status", "streaming");
-    expect(within(liveColumn).getByPlaceholderText("Queue the next task…")).not.toBeDisabled();
+    expect(getPromptInput(liveColumn, { placeholder: "Queue the next task…" })).not.toHaveAttribute("aria-disabled");
     // Queue-first: no composer-level Steer; steering lives on queued rows.
     expect(within(liveColumn).queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
     expect(within(liveColumn).getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -1284,11 +1288,11 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     expect(await screen.findByText("Saved answer without Pi file")).toBeInTheDocument();
     expect(screen.queryByTestId("runtime-fallback-banner")).not.toBeInTheDocument();
-    const input = screen.getByPlaceholderText("What do you want to know?");
-    await user.type(input, "Continue");
+    const input = getPromptInput(undefined, { placeholder: "What do you want to know?" });
+    typeIntoPrompt(input, "Continue");
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("Pi session file is missing")).toBeInTheDocument();
-    expect(input).toHaveValue("Continue");
+    expect(promptValue(input)).toBe("Continue");
     expect(invoke).not.toHaveBeenCalledWith("resume_session", expect.anything());
   });
 
@@ -1384,7 +1388,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     expect(getProjectHeaderRowByName("Pig")).toBeInTheDocument();
     expect(screen.queryByTestId("empty-workspace-state")).not.toBeInTheDocument();
-    expect(within(draftComposer).getByPlaceholderText("Do anything with Pi")).toHaveValue("");
+    expect(promptValue(getPromptInput(draftComposer, { placeholder: "Do anything with Pi" }))).toBe("");
     expect(projectPickerTrigger).toHaveTextContent("Pig");
     expect(getSessionDraft()).toBeNull();
     expect(window.localStorage.getItem("pigui.projectRegistry.v1")).toBeNull();
@@ -1555,13 +1559,13 @@ describe("AgentWorkspaceSessionsPage", () => {
 
       expect(await screen.findByTestId("session-creation-status")).toHaveTextContent("preparing checkout");
       expect(router.state.location.search).toEqual({});
-      expect(screen.getByPlaceholderText("Starting session…")).toBeDisabled();
+      expect(getPromptInput(undefined, { placeholder: "Starting session…" })).toHaveAttribute("aria-disabled", "true");
       expect(runtimeStarted).toBe(false);
       expect(loadChanges).not.toHaveBeenCalled();
 
       await act(async () => { releaseWorktree(); });
       await waitFor(() => expect(runtimeStarted).toBe(true));
-      expect(screen.getByPlaceholderText("Starting session…")).toBeDisabled();
+      expect(getPromptInput(undefined, { placeholder: "Starting session…" })).toHaveAttribute("aria-disabled", "true");
       expect(loadChanges).not.toHaveBeenCalled();
 
       await act(async () => { releaseRuntime(); });
@@ -1621,7 +1625,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       );
       expect(screen.getByTestId("session-creation-status")).toHaveTextContent("sending prompt");
       expect(screen.getByTestId("live-session-column")).toHaveAttribute("data-draft-handoff");
-      expect(screen.getByPlaceholderText("Starting session…")).toBeDisabled();
+      expect(getPromptInput(undefined, { placeholder: "Starting session…" })).toHaveAttribute("aria-disabled", "true");
       expect(getSessionDraft()?.prompt).toBe("Hand over before accept");
       const sessionRow = await findSidebarSessionRow("Hand over before accept");
       expect(sessionRow).toHaveAttribute("aria-current", "page");
@@ -1635,7 +1639,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent(
         "Hand over before accept",
       );
-      expect(screen.getByPlaceholderText("Queue the next task…")).toBeInTheDocument();
+      expect(getPromptInput(undefined, { placeholder: "Queue the next task…" })).toBeInTheDocument();
     } finally {
       bridgeSpy.mockRestore();
     }
@@ -2081,8 +2085,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "New Chat for Pig" }));
-    const draftInput = await screen.findByPlaceholderText("Do anything with Pi");
-    fireEvent.change(draftInput, { target: { value: "This draft is not sent" } });
+    const draftInput = await findPromptInput(undefined, { placeholder: "Do anything with Pi" });
+    typeIntoPrompt(draftInput, "This draft is not sent");
     expect(screen.queryByTestId("session-creation-status")).not.toBeInTheDocument();
 
     act(() => {
@@ -2099,7 +2103,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     expect(screen.queryByTestId("session-creation-status")).not.toBeInTheDocument();
-    expect(draftInput).toHaveValue("This draft is not sent");
+    expect(promptValue(draftInput)).toBe("This draft is not sent");
     expect(router.state.location.search).toEqual({ view: "draft" });
 
     await user.click(await findSidebarSessionRow("Keep the first session updating"));
@@ -2215,7 +2219,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
       expect(await screen.findByTestId("session-draft-composer")).toBeInTheDocument();
       expect(router.state.location.search).toEqual({ view: "draft" });
-      expect(screen.getByPlaceholderText("Do anything with Pi")).toHaveValue("Fail after handoff");
+      expect(promptValue(getPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe("Fail after handoff");
     } finally {
       bridgeSpy.mockRestore();
     }
@@ -2228,9 +2232,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "New Chat" }));
     await chooseProjectFromPicker(user, "Pig");
-    fireEvent.change(await screen.findByPlaceholderText("Do anything with Pi"), {
-      target: { value: "Create a draft-backed active Session" },
-    });
+    typeIntoPrompt(await findPromptInput(undefined, { placeholder: "Do anything with Pi" }), "Create a draft-backed active Session");
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(
       await within(screen.getByTestId("live-session-column")).findByRole("button", {
@@ -2511,8 +2513,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     const liveColumn = screen.getByTestId("live-session-column");
 
     expect(within(liveColumn).getByRole("button", { name: "Stop" })).toBeInTheDocument();
-    await user.type(
-      screen.getByPlaceholderText("Queue the next task…"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "Queue the next task…" }),
       "After this, update the queue tests.",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -2664,9 +2666,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "First follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "Second follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2703,9 +2705,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     const bridge = { ...inner, reorderQueuedMessages };
     await renderRunningQueue(bridge, { followUpMode: "all" });
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "First follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "Second follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2761,11 +2763,11 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "A");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "B");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "C");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2824,11 +2826,11 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "A");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "B");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "C");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2862,9 +2864,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "First follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "Second follow-up");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2885,11 +2887,11 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "A");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "B");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "C");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -2924,9 +2926,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "A");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "B");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -3268,8 +3270,8 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
 
-    await user.type(
-      screen.getByPlaceholderText("What do you want to know?"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "What do you want to know?" }),
       "Continue from the idle Session",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -3357,8 +3359,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
-    await user.type(
-      screen.getByPlaceholderText("What do you want to know?"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "What do you want to know?" }),
       "Continue after completion",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -3536,8 +3538,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     // Run events own the Session, so the composer sends instead of queuing.
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
 
-    await user.type(
-      screen.getByPlaceholderText("What do you want to know?"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "What do you want to know?" }),
       "Second prompt",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -3756,8 +3758,8 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    await user.type(
-      await screen.findByPlaceholderText("Queue the next task…"),
+    typeIntoPrompt(
+      await findPromptInput(undefined, { placeholder: "Queue the next task…" }),
       "Steer text",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -3837,16 +3839,16 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     render(<FixtureSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
       runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), sendInitialPrompt: send }} />);
-    const input = screen.getByPlaceholderText("What do you want to know?");
-    await user.type(input, "Continue");
+    const input = getPromptInput(undefined, { placeholder: "What do you want to know?" });
+    typeIntoPrompt(input, "Continue");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
-    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent("Saved answer");
     await act(async () => reject(new Error("Extension initialization failed")));
     expect(await screen.findByText("Extension initialization failed")).toBeInTheDocument();
-    expect(input).toHaveValue("Continue");
-    expect(input).toBeEnabled();
+    expect(promptValue(input)).toBe("Continue");
+    expect(input).not.toHaveAttribute("aria-disabled");
     expect(screen.queryByTestId("runtime-fallback-banner")).not.toBeInTheDocument();
   });
 
@@ -3864,13 +3866,13 @@ describe("AgentWorkspaceSessionsPage", () => {
     const view = (projection: SessionProjection) => <FixtureSessionsView projectId="pig-docs" showDraft={false}
       sessionProjection={projection} runtimeBridge={runtimeBridge} />;
     const { rerender } = render(view(a));
-    await user.type(screen.getByPlaceholderText("What do you want to know?"), "Continue A");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "What do you want to know?" }), "Continue A");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
     rerender(view(b));
-    await waitFor(() => expect(screen.getByPlaceholderText("What do you want to know?")).toHaveValue(""));
+    await waitFor(() => expect(promptValue(getPromptInput(undefined, { placeholder: "What do you want to know?" }))).toBe(""));
     rerender(view(a));
-    await waitFor(() => expect(screen.getByPlaceholderText("What do you want to know?")).toHaveValue("Continue A"));
+    await waitFor(() => expect(promptValue(getPromptInput(undefined, { placeholder: "What do you want to know?" }))).toBe("Continue A"));
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(send).toHaveBeenCalledOnce();
     await act(async () => resolve({ accepted: true, piSessionId: "pi-a", event: {
@@ -4048,7 +4050,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    expect(await screen.findByPlaceholderText("What do you want to know?")).toHaveValue(
+    expect(promptValue(await findPromptInput(undefined, { placeholder: "What do you want to know?" }))).toBe(
       "Resume from the saved composer",
     );
     expect(screen.queryByLabelText("Project")).not.toBeInTheDocument();
@@ -4123,7 +4125,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    const composer = await screen.findByPlaceholderText("What do you want to know?");
+    const composer = await findPromptInput(undefined, { placeholder: "What do you want to know?" });
 
     act(() => {
       injectIntoComposer({
@@ -4140,7 +4142,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     // Appended as its own block: whatever the user was already typing is the
     // point of landing in the draft rather than sending.
     await waitFor(() =>
-      expect(composer).toHaveValue(
+      expect(promptValue(composer)).toBe(
         "Half a thought\n\nBrowser annotations from the embedded preview",
       ),
     );
@@ -4240,8 +4242,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     // the queued row carries the Steer action.
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
 
-    await user.type(
-      screen.getByPlaceholderText("Queue the next task…"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "Queue the next task…" }),
       "Avoid changing the archive model.",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -4344,9 +4346,9 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    const input = screen.getByPlaceholderText("Queue the next task…");
+    const input = getPromptInput(undefined, { placeholder: "Queue the next task…" });
 
-    await user.type(input, "Keep this steer text");
+    typeIntoPrompt(input, "Keep this steer text");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const pendingQueue = await screen.findByTestId("queued-message-list");
@@ -4396,7 +4398,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Promote B");
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Queue the next task…" }), "Promote B");
     await user.click(screen.getByRole("button", { name: "Send" }));
     const pendingQueue = await screen.findByTestId("queued-message-list");
     const queuedId =
@@ -4448,8 +4450,8 @@ describe("AgentWorkspaceSessionsPage", () => {
     };
     await renderRunningQueue(bridge);
 
-    await user.type(
-      screen.getByPlaceholderText("Queue the next task…"),
+    typeIntoPrompt(
+      getPromptInput(undefined, { placeholder: "Queue the next task…" }),
       "Back in the follow-up queue",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -4502,9 +4504,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     const suggestedAction = within(draftComposer).getByRole("button", {
       name: suggestedPrompt,
     });
-    const draftPrompt = within(draftComposer).getByPlaceholderText(
-      "Do anything with Pi",
-    );
+    const draftPrompt = getPromptInput(draftComposer, { placeholder: "Do anything with Pi" });
     const promptInput = draftPrompt.closest('[data-slot="prompt-input"]');
     // The composer surface is the Astryx ChatComposer shell now.
     const promptInputShell = promptInput?.querySelector(".astryx-chat-composer");
@@ -4612,7 +4612,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await user.click(suggestedAction);
 
-    expect(draftPrompt).toHaveValue(suggestedPrompt);
+    expect(promptValue(draftPrompt)).toBe(suggestedPrompt);
     expect(getSessionDraft()).toMatchObject({
       projectId: "chat",
       prompt: suggestedPrompt,
@@ -4652,7 +4652,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(within(composer).queryByText("Choose a project or select No project to continue.")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("project-picker-trigger")).toHaveTextContent("No project");
-    expect(screen.getByPlaceholderText("Do anything with Pi")).toHaveValue(
+    expect(promptValue(getPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe(
       "Keep this draft while choosing its target",
     );
   });
@@ -4670,7 +4670,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       (await within(liveColumn).findAllByText("Agent Workspace shell")).length,
     ).toBeGreaterThan(0);
     expect(
-      within(liveColumn).getByPlaceholderText("Queue the next task…"),
+      getPromptInput(liveColumn, { placeholder: "Queue the next task…" }),
     ).toBeInTheDocument();
   });
 
@@ -4704,9 +4704,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     const firstRender = renderProjectSessions();
 
     await user.click(await screen.findByRole("button", { name: "New Chat" }));
-    fireEvent.change(screen.getByPlaceholderText("Do anything with Pi"), {
-      target: { value: "Keep this initial prompt" },
-    });
+    typeIntoPrompt(getPromptInput(undefined, { placeholder: "Do anything with Pi" }), "Keep this initial prompt");
 
     expect(getSessionDraft()).toMatchObject({
       projectId: "chat",
@@ -4715,14 +4713,14 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await user.click(screen.getByRole("button", { name: "New Chat" }));
 
-    expect(screen.getByPlaceholderText("Do anything with Pi")).toHaveValue(
+    expect(promptValue(getPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe(
       "Keep this initial prompt",
     );
 
     firstRender.unmount();
     renderProjectSessions("/projects/pig/sessions?view=draft");
 
-    expect(await screen.findByPlaceholderText("Do anything with Pi")).toHaveValue(
+    expect(promptValue(await findPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe(
       "Keep this initial prompt",
     );
   });
@@ -4903,17 +4901,17 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    const promptInput = await screen.findByPlaceholderText("Do anything with Pi");
+    const promptInput = await findPromptInput(undefined, { placeholder: "Do anything with Pi" });
     const projectPickerTrigger = screen.getByTestId("project-picker-trigger");
     const projectPickerControl = screen.getByTestId("project-picker");
 
-    expect(promptInput).toHaveValue("Keep this prompt while switching target");
+    expect(promptValue(promptInput)).toBe("Keep this prompt while switching target");
     expect(projectPickerTrigger).toHaveTextContent("Pig");
     expect(projectPickerControl).not.toHaveAttribute("style");
 
     await chooseProjectFromPicker(user, "study");
 
-    expect(promptInput).toHaveValue("Keep this prompt while switching target");
+    expect(promptValue(promptInput)).toBe("Keep this prompt while switching target");
     expect(projectPickerTrigger).toHaveTextContent("study");
     expect(getSessionDraft()).toMatchObject({
       projectId: studyProjectPath,
@@ -5020,7 +5018,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    expect(await screen.findByPlaceholderText("Do anything with Pi")).toHaveValue(
+    expect(promptValue(await findPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe(
       "Keep text after target removal",
     );
     expect(screen.getByTestId("project-picker-trigger")).toHaveTextContent(
@@ -5079,8 +5077,8 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     const liveColumn = screen.getByTestId("live-session-column");
 
-    await user.type(
-      within(liveColumn).getByPlaceholderText("Queue the next task…"),
+    typeIntoPrompt(
+      getPromptInput(liveColumn, { placeholder: "Queue the next task…" }),
       "Queue this follow-up after creation",
     );
     await user.click(within(liveColumn).getByRole("button", { name: "Send" }));
@@ -5477,7 +5475,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
 
     expect(getFollowUpDraft(forkedProjection.id)?.message).toBe("Revise this branch");
-    expect(screen.getByPlaceholderText("What do you want to know?")).toHaveValue(
+    expect(promptValue(getPromptInput(undefined, { placeholder: "What do you want to know?" }))).toBe(
       "Revise this branch",
     );
   });
@@ -5651,7 +5649,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.getByText("sending prompt")).toBeInTheDocument();
     expect(screen.getByText("Pi rejected the initial prompt")).toBeInTheDocument();
     expect(getSessionDraft("pig-docs")?.prompt).toBe("Summarize the docs ADR");
-    expect(screen.getByPlaceholderText("Do anything with Pi")).toHaveValue(
+    expect(promptValue(getPromptInput(undefined, { placeholder: "Do anything with Pi" }))).toBe(
       "Summarize the docs ADR",
     );
     expect(onSessionCreated).not.toHaveBeenCalled();
@@ -7011,7 +7009,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.getByText("Live session is ready.")).toBeInTheDocument();
     expect(screen.getByText("Read AGENTS.md")).toBeInTheDocument();
     expect(screen.getByText("{\"path\":\"AGENTS.md\"}")).not.toBeVisible();
-    expect(screen.getByPlaceholderText("What do you want to know?")).toBeInTheDocument();
+    expect(getPromptInput(undefined, { placeholder: "What do you want to know?" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     // Single column too: Chat centers itself, so no outer max-width box may
     // pull its scrollbar away from the window edge.
@@ -7067,7 +7065,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       "Runtime unavailable",
     );
     expect(screen.getByTestId("full-chat-composer")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Queue the next task…")).toBeInTheDocument();
+    expect(getPromptInput(undefined, { placeholder: "Queue the next task…" })).toBeInTheDocument();
   });
 
   it("updates an open live session's model list when the catalog refresh arrives", async () => {

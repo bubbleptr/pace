@@ -1,5 +1,4 @@
 import {
-  type ClipboardEvent,
   type ComponentProps,
   type DragEvent,
   type KeyboardEvent,
@@ -11,64 +10,101 @@ import {
 } from "react";
 import {
   ChatComposer,
+  ChatComposerInput,
+  type ChatComposerInputHandle,
   ChatSendButton,
-  useChatComposerContext,
 } from "@astryxdesign/core/Chat";
 
 export type PromptInputStatus = "ready" | "submitted" | "streaming" | "error";
 
+export type ChatPromptInputHandle = {
+  focus(): void;
+  /** Focus and put the caret after the last character. */
+  focusAtEnd(): void;
+};
+
+function editableOf(root: HTMLDivElement | null): HTMLElement | null {
+  return root?.querySelector<HTMLElement>('[aria-multiline="true"]') ?? null;
+}
+
 /**
- * Native textarea wired into the Astryx composer context. Kept native (not
- * the contentEditable ChatComposerInput) for the platform textarea behavior
- * and the placeholder/value test surface, per issue 09.
+ * Astryx contentEditable composer input. Submit is intercepted in onKeyDown
+ * (the built-in Enter path force-clears the value before the caller can
+ * keep a failed draft), and the component's a11y gaps are patched locally —
+ * no swizzle.
  */
-function PromptTextArea({
+function PromptComposerInput({
   disabled = false,
+  placeholder,
   inputRef,
   onFiles,
   onSubmitRequest,
+  value,
+  onValueChange,
 }: {
   disabled?: boolean;
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  placeholder?: string;
+  inputRef?: RefObject<ChatPromptInputHandle | null>;
   onFiles?: (files: File[]) => void;
   onSubmitRequest: () => void;
+  value: string;
+  onValueChange?: (value: string) => void;
 }) {
-  const context = useChatComposerContext();
-  const localRef = useRef<HTMLTextAreaElement | null>(null);
-  const textareaRef = inputRef ?? localRef;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ChatComposerInputHandle | null>(null);
 
   useEffect(() => {
-    const control = context?.inputControlRef;
-
-    if (!control) {
+    if (!inputRef) {
       return;
     }
 
-    control.current = { focus: () => textareaRef.current?.focus() };
-    return () => {
-      control.current = null;
+    inputRef.current = {
+      focus: () => composerRef.current?.focus(),
+      focusAtEnd: () => {
+        const editable = editableOf(rootRef.current);
+        if (!editable) {
+          return;
+        }
+        editable.focus();
+        const selection = window.getSelection();
+        if (!selection) {
+          return;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(editable);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      },
     };
-  }, [context?.inputControlRef, textareaRef]);
+    return () => {
+      inputRef.current = null;
+    };
+  }, [inputRef]);
 
-  if (!context) {
-    return null;
-  }
-
-  const autosize = () => {
-    const textarea = textareaRef.current;
-
-    if (!textarea) {
+  useEffect(() => {
+    // Astryx 0.3.0 puts only aria-multiline/aria-label on the editable and
+    // no role at all, while E2E and screen readers locate the composer by
+    // the textbox role. Patch the missing attributes here instead of
+    // swizzling the component.
+    const editable = editableOf(rootRef.current);
+    if (!editable) {
       return;
     }
-
-    textarea.style.height = "auto";
-
-    if (textarea.scrollHeight > 0) {
-      textarea.style.height = `${textarea.scrollHeight}px`;
+    editable.setAttribute("role", "textbox");
+    if (placeholder) {
+      editable.setAttribute("aria-placeholder", placeholder);
+    } else {
+      editable.removeAttribute("aria-placeholder");
     }
-  };
+    if (disabled) {
+      editable.setAttribute("aria-disabled", "true");
+    } else {
+      editable.removeAttribute("aria-disabled");
+    }
+  }, [placeholder, disabled]);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // IME confirmation belongs to text entry; 229 covers composition ending before keydown.
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
       return;
@@ -84,52 +120,42 @@ function PromptTextArea({
     }
 
     event.preventDefault();
-    // Submit through our own path: the composer's context.onSubmit eagerly
-    // clears the value via onChange("") even in controlled mode, but the
-    // caller owns clearing (a failed submit must keep the draft).
+    // Submit through our own path: the composer's built-in Enter handler
+    // clears the editable itself, but the caller owns clearing (a failed
+    // submit must keep the draft). defaultPrevented keeps the built-in
+    // path from running.
     onSubmitRequest();
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = [...(event.clipboardData?.files ?? [])];
-
-    if (!files.length || !onFiles) {
-      return;
-    }
-
-    event.preventDefault();
-    onFiles(files);
-  };
-
   return (
-    <textarea
-      ref={textareaRef}
-      className="prompt-input__textarea"
-      data-slot="prompt-input-textarea"
-      disabled={disabled}
-      placeholder={context.placeholder}
-      rows={1}
-      value={context.value}
-      onChange={(event) => {
-        context.onChange(event.target.value);
-        autosize();
-      }}
+    <ChatComposerInput
+      ref={rootRef}
+      className="prompt-input__input"
+      handleRef={composerRef}
+      hasHistory={false}
+      isDisabled={disabled}
+      label="Prompt"
+      pasteAsToken={false}
+      placeholder={placeholder}
+      value={value}
+      onChange={onValueChange}
+      onFiles={onFiles}
       onKeyDown={handleKeyDown}
-      onPaste={handlePaste}
     />
   );
 }
 
 /**
  * Prompt composer over Astryx ChatComposer. The shell, slot layout, send/stop
- * button, and error status are Astryx; the textarea stays native and the
- * neutral footer hint is ours (Astryx status only carries error/warning).
+ * button, and error status are Astryx; so is the rich input, which keeps the
+ * caller-owned submit/clear contract through the onKeyDown seam. The neutral
+ * footer hint is ours (Astryx status only carries error/warning).
  */
 type ChatPromptInputOwnProps = {
   value: string;
   status?: PromptInputStatus;
   placeholder?: string;
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  inputRef?: RefObject<ChatPromptInputHandle | null>;
   allowSubmitWhileRunning?: boolean;
   lockInputOnRun?: boolean;
   startActions?: ReactNode;
@@ -269,9 +295,12 @@ export function ChatPromptInput({
         elevation="low"
         footerActions={startActions}
         input={
-          <PromptTextArea
+          <PromptComposerInput
             disabled={lockInputOnRun && isRunning}
             inputRef={inputRef}
+            placeholder={placeholder}
+            value={value}
+            onValueChange={onValueChange}
             onFiles={onFiles}
             onSubmitRequest={handleSubmit}
           />

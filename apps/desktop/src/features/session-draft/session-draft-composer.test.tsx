@@ -13,6 +13,7 @@ import { saveLastModelSelection } from "@/entities/session/last-model-preference
 import { saveSessionDraft, type SessionDraft } from "@/entities/session/session-drafts";
 import { providerAuthStatusQueryKey } from "@/entities/session/use-provider-auth-status";
 import { footerOf } from "@/test/composer-footer";
+import { getPromptInput, promptValue } from "@/test/prompt-input";
 import { render } from "@/test/render";
 import { SessionDraftComposer } from "./session-draft-composer";
 
@@ -94,10 +95,10 @@ describe("SessionDraftComposer", () => {
 
     await user.click(await screen.findByRole("button", { name: "Fix the failing test" }));
 
-    const prompt = screen.getByPlaceholderText("Do anything with Pi");
+    const prompt = getPromptInput();
     expect(prompt).toHaveFocus();
     await user.keyboard(" for Friday");
-    expect(prompt).toHaveValue("Fix the failing test for Friday");
+    expect(promptValue(prompt)).toBe("Fix the failing test for Friday");
   });
 
   it("explains how the two project execution choices affect files", async () => {

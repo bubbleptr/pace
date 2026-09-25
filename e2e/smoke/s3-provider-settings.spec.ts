@@ -165,7 +165,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
       await page.keyboard.press("Escape");
       await expect(dialog).toBeHidden();
       await expect(page).toHaveURL(url);
-      await expect(draft).toHaveValue("Keep this unsent draft while I change settings");
+      await expect(draft).toHaveText("Keep this unsent draft while I change settings");
       await expect(trigger).toBeFocused();
 
       await page.getByTestId("model-thinking-trigger").click();
@@ -179,7 +179,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toBeHidden();
       await expect(page).toHaveURL(url);
-      await expect(draft).toHaveValue("Keep this unsent draft while I change settings");
+      await expect(draft).toHaveText("Keep this unsent draft while I change settings");
     } finally {
       await testApp.close();
     }

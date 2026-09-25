@@ -51,7 +51,10 @@ import { ChatMarkdown, ChatStreamMarkdown } from "@/shared/ui/chat/chat-markdown
 import { ChatMessage, ChatMessageActions } from "@/shared/ui/chat/chat-message";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
 import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
-import { ChatPromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import {
+  ChatPromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { ChatQueuedMessage } from "@/shared/ui/chat/chat-queued-message";
 import {
@@ -1529,7 +1532,7 @@ function PromptInputDemo({
 }
 
 function SuggestionFocusDemo() {
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputRef = useRef<ChatPromptInputHandle | null>(null);
   const [value, setValue] = useState("");
   return (
     <Variant caption="suggestion restores input focus">
