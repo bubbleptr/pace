@@ -325,6 +325,10 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
       } as T);
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);
+    case "list_prompt_commands":
+      return Promise.resolve({ source: "static", commands: [] } as T);
+    case "search_workspace_files":
+      return Promise.resolve({ matches: [], truncated: false } as T);
     case "send_subagent":
     case "stop_subagent":
       return Promise.reject(new Error("Subagent control requires the desktop app"));

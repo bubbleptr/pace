@@ -101,6 +101,15 @@ export {
 } from "./subagent";
 
 export {
+  sortPromptCommands,
+  type PromptCommand,
+  type PromptCommandCatalog,
+  type PromptCommandKind,
+  type WorkspaceFileMatch,
+  type WorkspaceFileSearchResult,
+} from "./prompt-catalog";
+
+export {
   parseRuntimePromptImages,
   promptImageDataUrl,
   toPiImageContent,

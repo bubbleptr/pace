@@ -206,7 +206,7 @@ function parseGitStatus(output: Buffer): StatusEntry[] {
   return entries;
 }
 
-async function runGit(input: {
+export async function runGit(input: {
   cwd: string;
   args: string[];
   allowExitCodes?: number[];

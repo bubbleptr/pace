@@ -377,6 +377,169 @@ describe("backend service", () => {
     });
   });
 
+  it("lists prompt commands from the live runtime for a running session", async () => {
+    const root = await tempDataDir();
+    const projections = createInMemorySessionProjectionStore();
+    await projections.save({
+      sessionId: "session-live",
+      runtimeId: "runtime-live",
+      piSessionId: "pi-live",
+      projectId: "project-1",
+      cwd: root,
+      status: "idle",
+      checkout: { root },
+      updatedAt: "2026-09-25T00:00:00.000Z",
+    });
+    const listPromptCommands = vi.fn(async () => [
+      { kind: "extension" as const, name: "deploy", invocation: "deploy" },
+    ]);
+    const runtimeDriver = {
+      hasSession: (piSessionId: string) => piSessionId === "pi-live",
+      listPromptCommands,
+      onEvent: vi.fn(() => () => {}),
+    } as unknown as PiRuntimeDriver;
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      runtimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: projections,
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-commands",
+        method: "list_prompt_commands",
+        params: { sessionId: "session-live" },
+      }),
+    ).resolves.toEqual({
+      id: "req-commands",
+      result: {
+        source: "runtime",
+        commands: [{ kind: "extension", name: "deploy", invocation: "deploy" }],
+      },
+    });
+    expect(listPromptCommands).toHaveBeenCalledWith({ piSessionId: "pi-live" });
+  });
+
+  it("resolves prompt commands statically for cold sessions and project roots", async () => {
+    const root = await tempDataDir();
+    const projections = createInMemorySessionProjectionStore();
+    await projections.save({
+      sessionId: "session-cold",
+      runtimeId: "runtime-cold",
+      piSessionId: "pi-cold",
+      projectId: "project-1",
+      cwd: root,
+      status: "completed",
+      checkout: { root },
+      updatedAt: "2026-09-25T00:00:00.000Z",
+    });
+    const listPromptCommands = vi.fn(async () => null);
+    const runtimeDriver = {
+      hasSession: () => false,
+      listPromptCommands,
+      onEvent: vi.fn(() => () => {}),
+    } as unknown as PiRuntimeDriver;
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      runtimeDriver,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: projections,
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-cold",
+        method: "list_prompt_commands",
+        params: { sessionId: "session-cold" },
+      }),
+    ).resolves.toEqual({
+      id: "req-cold",
+      result: { source: "static", commands: [] },
+    });
+    expect(listPromptCommands).not.toHaveBeenCalled();
+
+    await expect(
+      service.handleRequest({
+        id: "req-root",
+        method: "list_prompt_commands",
+        params: { projectRoot: root },
+      }),
+    ).resolves.toEqual({
+      id: "req-root",
+      result: { source: "static", commands: [] },
+    });
+  });
+
+  it("requires exactly one of sessionId or projectRoot for list_prompt_commands", async () => {
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+
+    await expect(
+      service.handleRequest({ id: "both", method: "list_prompt_commands", params: { sessionId: "s", projectRoot: "/tmp" } }),
+    ).resolves.toMatchObject({ id: "both", error: expect.stringContaining("sessionId") });
+    await expect(
+      service.handleRequest({ id: "neither", method: "list_prompt_commands", params: {} }),
+    ).resolves.toMatchObject({ id: "neither", error: expect.stringContaining("sessionId") });
+  });
+
+  it("searches workspace files under the session checkout root or a project root", async () => {
+    const root = await tempDataDir();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "index.ts"), "");
+    const projections = createInMemorySessionProjectionStore();
+    await projections.save({
+      sessionId: "session-files-search",
+      runtimeId: "runtime-files-search",
+      piSessionId: "pi-files-search",
+      projectId: "project-1",
+      cwd: root,
+      status: "completed",
+      checkout: { root, executionCheckoutRoot: root },
+      updatedAt: "2026-09-25T00:00:00.000Z",
+    });
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      sessionProjectionStore: projections,
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-search-session",
+        method: "search_workspace_files",
+        params: { sessionId: "session-files-search", query: "index" },
+      }),
+    ).resolves.toEqual({
+      id: "req-search-session",
+      result: {
+        matches: [{ path: "src/index.ts", kind: "file" }],
+        truncated: false,
+      },
+    });
+    await expect(
+      service.handleRequest({
+        id: "req-search-root",
+        method: "search_workspace_files",
+        params: { projectRoot: root, query: "index" },
+      }),
+    ).resolves.toEqual({
+      id: "req-search-root",
+      result: {
+        matches: [{ path: "src/index.ts", kind: "file" }],
+        truncated: false,
+      },
+    });
+    await expect(
+      service.handleRequest({
+        id: "req-search-both",
+        method: "search_workspace_files",
+        params: { sessionId: "session-files-search", projectRoot: root, query: "index" },
+      }),
+    ).resolves.toMatchObject({ id: "req-search-both", error: expect.stringContaining("sessionId") });
+  });
+
   it("handles query commands through request/response envelopes", async () => {
     const service = createBackendService({
       agentDir: fixtureAgentDir(),

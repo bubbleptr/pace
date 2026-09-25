@@ -8,9 +8,11 @@ import type {
   ExecutionCheckoutGitClient,
   ModelCatalogInvalidatedPayload,
   ProviderAuthId,
+  PromptCommandCatalog,
   SetResourceEnabledInput,
   RuntimeGatewayEventEnvelope,
 } from "@pace/core";
+import { sortPromptCommands } from "@pace/core";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import {
@@ -46,6 +48,11 @@ import {
   createNodeSessionFilesReader,
   type SessionFilesReader,
 } from "./workspace/session-files";
+import { resolveStaticPromptCommands } from "./workspace/prompt-commands";
+import {
+  createWorkspaceFileSearcher,
+  type WorkspaceFileSearcher,
+} from "./workspace/workspace-file-search";
 import { createPiSdkDriver } from "./drivers/pi-sdk-driver";
 import { inspectRuntime } from "./drivers/pi-runtime-info";
 import {
@@ -122,6 +129,7 @@ export type BackendServiceOptions = {
   sessionChangesReader?: SessionChangesReader;
   projectGitReader?: ProjectGitReader;
   sessionFilesReader?: SessionFilesReader;
+  workspaceFileSearcher?: WorkspaceFileSearcher;
   piSessionListAll?: () => Promise<PiSessionListItem[]>;
   environmentPreflight?: EnvironmentPreflightReader;
   providerAuth?: ProviderAuthService;
@@ -199,6 +207,8 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   const projectGitReader = options.projectGitReader ?? createNodeProjectGitReader();
   const sessionFilesReader =
     options.sessionFilesReader ?? createNodeSessionFilesReader();
+  const workspaceFileSearcher =
+    options.workspaceFileSearcher ?? createWorkspaceFileSearcher();
   const environmentPreflight =
     options.environmentPreflight ??
     createEnvironmentPreflightReader({
@@ -351,10 +361,12 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             sessionChangesReader,
             projectGitReader,
             sessionFilesReader,
+            workspaceFileSearcher,
             environmentPreflight,
             providerAuth,
             piSessionListAll,
             runtimeGateway,
+            runtimeDriver,
             modelCatalog,
             runtimeJournal,
             terminalManager,
@@ -389,10 +401,12 @@ async function dispatchRequest(input: {
   sessionChangesReader: SessionChangesReader;
   projectGitReader: ProjectGitReader;
   sessionFilesReader: SessionFilesReader;
+  workspaceFileSearcher: WorkspaceFileSearcher;
   environmentPreflight: EnvironmentPreflightReader;
   providerAuth: ProviderAuthService;
   piSessionListAll: () => Promise<PiSessionListItem[]>;
   runtimeGateway: RuntimeGatewayService;
+  runtimeDriver: PiRuntimeDriver;
   modelCatalog: ModelCatalog;
   runtimeJournal: SessionEventJournal;
   terminalManager: TerminalManager;
@@ -478,6 +492,23 @@ async function dispatchRequest(input: {
         path: requiredString(params.path, "path"),
         store: input.sessionProjectionStore,
         reader: input.sessionFilesReader,
+      });
+    case "list_prompt_commands":
+      return listPromptCommands({
+        sessionId: optionalString(params.sessionId),
+        projectRoot: optionalString(params.projectRoot),
+        agentDir: input.agentDir,
+        store: input.sessionProjectionStore,
+        driver: input.runtimeDriver,
+      });
+    case "search_workspace_files":
+      return searchWorkspaceFiles({
+        sessionId: optionalString(params.sessionId),
+        projectRoot: optionalString(params.projectRoot),
+        query: params.query,
+        limit: params.limit,
+        store: input.sessionProjectionStore,
+        searcher: input.workspaceFileSearcher,
       });
     case "add_local_resource":
       return addLocalResource(input.agentDir, { path: requiredString(params.path, "path"), overwrite: params.overwrite === true });
@@ -617,16 +648,23 @@ async function dispatchRequest(input: {
   }
 }
 
-async function resolveSessionCheckoutRoots(input: {
-  sessionId: string;
-  store: SessionProjectionStore;
-}) {
-  const projection = await input.store.get(input.sessionId);
+async function requireSessionProjection(
+  sessionId: string,
+  store: SessionProjectionStore,
+) {
+  const projection = await store.get(sessionId);
 
   if (!projection) {
-    throw new Error(`Session projection "${input.sessionId}" was not found.`);
+    throw new Error(`Session projection "${sessionId}" was not found.`);
   }
 
+  return projection;
+}
+
+function checkoutRootsFromProjection(
+  sessionId: string,
+  projection: PersistedSessionProjection,
+) {
   const checkout = requiredRecord(projection.checkout, "Session checkout");
   const root =
     optionalString(checkout.executionCheckoutRoot) ??
@@ -637,7 +675,17 @@ async function resolveSessionCheckoutRoots(input: {
     throw new Error("Session checkout does not include a readable diff root.");
   }
 
-  return { sessionId: input.sessionId, checkoutRoot: root, diffRoot };
+  return { sessionId, checkoutRoot: root, diffRoot };
+}
+
+async function resolveSessionCheckoutRoots(input: {
+  sessionId: string;
+  store: SessionProjectionStore;
+}) {
+  return checkoutRootsFromProjection(
+    input.sessionId,
+    await requireSessionProjection(input.sessionId, input.store),
+  );
 }
 
 async function getSessionChanges(input: {
@@ -682,6 +730,80 @@ async function readSessionFile(input: {
   const { sessionId, diffRoot } = await resolveSessionCheckoutRoots(input);
 
   return input.reader.readFile({ sessionId, diffRoot, path: input.path });
+}
+
+// The "/" catalog prefers the live session (the only source that knows
+// extension commands); a cold session or a draft falls back to disk
+// resolution rooted at the checkout — never at a renderer-supplied path.
+async function listPromptCommands(input: {
+  sessionId?: string;
+  projectRoot?: string;
+  agentDir: string;
+  store: SessionProjectionStore;
+  driver: PiRuntimeDriver;
+}): Promise<PromptCommandCatalog> {
+  if ((input.sessionId === undefined) === (input.projectRoot === undefined)) {
+    throw new Error('Exactly one of "sessionId" or "projectRoot" is required.');
+  }
+
+  if (input.projectRoot !== undefined) {
+    return resolveStaticPromptCommands({
+      root: input.projectRoot,
+      agentDir: input.agentDir,
+    });
+  }
+
+  const sessionId = input.sessionId!;
+  const projection = await requireSessionProjection(sessionId, input.store);
+
+  if (input.driver.hasSession?.(projection.piSessionId)) {
+    const commands = await input.driver.listPromptCommands?.({
+      piSessionId: projection.piSessionId,
+    });
+    if (commands) {
+      return { source: "runtime", commands: sortPromptCommands(commands) };
+    }
+  }
+
+  const { checkoutRoot } = checkoutRootsFromProjection(sessionId, projection);
+  return resolveStaticPromptCommands({ root: checkoutRoot, agentDir: input.agentDir });
+}
+
+async function searchWorkspaceFiles(input: {
+  sessionId?: string;
+  projectRoot?: string;
+  query: unknown;
+  limit: unknown;
+  store: SessionProjectionStore;
+  searcher: WorkspaceFileSearcher;
+}) {
+  if ((input.sessionId === undefined) === (input.projectRoot === undefined)) {
+    throw new Error('Exactly one of "sessionId" or "projectRoot" is required.');
+  }
+  if (input.query !== undefined && typeof input.query !== "string") {
+    throw new Error("query must be a string");
+  }
+  if (input.limit !== undefined && typeof input.limit !== "number") {
+    throw new Error("limit must be a number");
+  }
+
+  // The search root is Pi's cwd: the session's execution checkout for a
+  // session, or the selected project for a draft.
+  const root =
+    input.sessionId !== undefined
+      ? (
+          await resolveSessionCheckoutRoots({
+            sessionId: input.sessionId,
+            store: input.store,
+          })
+        ).checkoutRoot
+      : input.projectRoot!;
+
+  return input.searcher.search({
+    root,
+    query: input.query ?? "",
+    limit: input.limit,
+  });
 }
 
 async function openTerminal(input: {

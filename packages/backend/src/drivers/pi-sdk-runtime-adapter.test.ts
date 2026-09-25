@@ -2212,6 +2212,88 @@ describe("Pi SDK public runtime adapter", () => {
     expect(session.getToolDefinition).toHaveBeenCalledWith("gone_tool");
   });
 
+  it("lists prompt commands from the live session, ordered by kind then name", async () => {
+    const session = {
+      sessionId: "sdk-session-commands",
+      isStreaming: false,
+      messages: [],
+      prompt: vi.fn(async () => {}),
+      abort: vi.fn(async () => {}),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+      promptTemplates: [
+        { name: "fix", description: "Fix a failing test" },
+        { name: "explain", description: "Explain the change" },
+      ],
+      extensionRunner: {
+        emit: vi.fn(async () => {}),
+        getRegisteredCommands: () => [
+          { name: "deploy", invocationName: "deploy", description: "Deploy it" },
+        ],
+      },
+      resourceLoader: {
+        getSkills: () => ({
+          skills: [{ name: "review-pr", description: "Review a pull request" }],
+        }),
+      },
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: vi.fn(async () => ({ session })) },
+    })({
+      sessionId: "app-session-commands",
+      projectId: "pig",
+      cwd: "/repo",
+    });
+
+    await expect(runtime.listPromptCommands?.()).resolves.toEqual([
+      {
+        kind: "skill",
+        name: "review-pr",
+        invocation: "skill:review-pr",
+        description: "Review a pull request",
+      },
+      {
+        kind: "prompt",
+        name: "explain",
+        invocation: "explain",
+        description: "Explain the change",
+      },
+      {
+        kind: "prompt",
+        name: "fix",
+        invocation: "fix",
+        description: "Fix a failing test",
+      },
+      {
+        kind: "extension",
+        name: "deploy",
+        invocation: "deploy",
+        description: "Deploy it",
+      },
+    ]);
+  });
+
+  it("returns an empty prompt command list when the session exposes no sources", async () => {
+    const session = {
+      sessionId: "sdk-session-bare",
+      isStreaming: false,
+      messages: [],
+      prompt: vi.fn(async () => {}),
+      abort: vi.fn(async () => {}),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: vi.fn(async () => ({ session })) },
+    })({
+      sessionId: "app-session-bare",
+      projectId: "pig",
+      cwd: "/repo",
+    });
+
+    await expect(runtime.listPromptCommands?.()).resolves.toEqual([]);
+  });
+
   it("emits hidden subagent records from tintinweb pi.events correlated with Agent tool calls", async () => {
     const sessionListeners: Array<(event: unknown) => void> = [];
     const eventListeners = new Map<string, Set<(data: unknown) => void>>();
