@@ -15,6 +15,65 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.16",
+    date: "2026-09-26",
+    title: "Skills and files in your prompt",
+    summary: "Insert skills, prompts and workspace files directly into the composer, choose a base branch for a new worktree, and copy diagnostics from About. This release also improves project errors, provider checks and session recovery.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.16",
+    changes: [
+      {
+        kind: "added",
+        title: "Skills and prompts in the composer",
+        description: "Type / or use the + menu to choose from Pi's available skills and prompts. Commands appear as inline tokens, and restored drafts recover their leading command token.",
+      },
+      {
+        kind: "added",
+        title: "Workspace file references",
+        description: "Type @ or choose Reference file from the + menu to search files and directories in the current project or session checkout. Tokens show a short name while preserving the full relative path when sent.",
+      },
+      {
+        kind: "added",
+        title: "Choose a worktree's base branch",
+        description: "Before starting a session in a new worktree, choose its base branch from the draft's Location row. Your selection is preserved while Git information loads.",
+      },
+      {
+        kind: "added",
+        title: "Copy diagnostics from About",
+        description: "About & Updates has a Copy diagnostics button for sharing app, runtime and system details in a bug report.",
+      },
+      {
+        kind: "improved",
+        title: "Readable prompt tokens and menus",
+        description: "Skills, prompts and file references remain readable as tokens in sent messages. Tokens align with surrounding text, menu icons use a consistent size, and long suggestions stay within the input width.",
+      },
+      {
+        kind: "improved",
+        title: "Clearer project and branch status",
+        description: "Projects with missing directories are dimmed in the sidebar, and starting a session explains which folder is missing. Drafts show No branch when there is no current branch.",
+      },
+      {
+        kind: "fixed",
+        title: "Session names follow your input",
+        description: "Automatic session naming uses the prompt you typed instead of the expanded skill or prompt content.",
+      },
+      {
+        kind: "fixed",
+        title: "More reliable provider checks",
+        description: "Connection checks try the provider's default model first. Expired OAuth credentials offer Sign in again, while network failures during credential refresh are reported as connection problems.",
+      },
+      {
+        kind: "fixed",
+        title: "Model lists stay in sync",
+        description: "Model catalog changes refresh the settings page and open selectors together. Refreshing model lists no longer cancels another refresh already in progress.",
+      },
+      {
+        kind: "fixed",
+        title: "Session recovery and history retries",
+        description: "Reconnecting preserves sessions that are already live, viewing archived sessions keeps them unsubscribed, and retrying a failed history load no longer repeats the failed read unnecessarily.",
+      },
+    ],
+  },
+  {
     version: "0.0.15",
     date: "2026-09-23",
     title: "Models you can actually use",
