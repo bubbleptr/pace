@@ -98,6 +98,8 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 
 `ComposerInsertCatalog` 可提供静态 `items` 或异步 `search(query)`。静态空组隐藏，异步组始终可见，打开后按输入检索。搜索框阻止点击冒泡，避免 portal 内点击被 Composer 的空白处点击逻辑抢走焦点。Design 页包含异步文件搜索示例。
 
+一级菜单的所有图标由 `ComposerInsertMenu` 统一包在 `pigui-compact-menu-item-icon text-muted` 中，复用项目与执行方式选择器的 `--pigui-sidebar-dropdown-icon-size`（`0.875rem`）和弱化颜色。调用方无需逐个设置 SVG 尺寸；原生菜单行距与文字样式保持一致。
+
 ## 思维链
 
 ### ChatChainOfThought
