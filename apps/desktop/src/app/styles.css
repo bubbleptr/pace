@@ -482,7 +482,7 @@ body {
   shape-rendering: geometricPrecision;
 }
 
-/* Low-frequency action buttons (send, steer/withdraw, dock, refresh).
+/* Low-frequency action buttons (send, steer/withdraw, refresh).
    Astryx Button already presses via `transform: scale(0.98)`; neutralize
    that so the individual `scale` does not multiply below 0.95. */
 .pigui-pressable {

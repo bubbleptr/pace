@@ -1192,7 +1192,10 @@ function AnimatedIconsGallery() {
 
   return (
     <GallerySection title="AnimatedIcons">
-      <Text type="supporting">Hover a control to preview. Keyboard focus and reduced motion stay still.</Text>
+      <Text type="supporting">
+        Move the mouse onto a control to preview one cycle. All icons share the same duration; clicking does not replay
+        them. Keyboard focus, touch, and reduced motion stay still.
+      </Text>
       <VariantRow>
         <Variant caption="16px · navigation">
           <VStack gap={2}>
