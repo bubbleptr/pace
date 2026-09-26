@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { access } from "node:fs/promises";
 import type {
+  PromptCommand,
   RuntimeGatewayEventEnvelope,
   RuntimeGatewayEventInput,
   RuntimeGatewayQueuedMessage,
@@ -126,6 +127,10 @@ export type ResolveToolSchemasInput = {
   names: string[];
 };
 
+export type ListPromptCommandsInput = {
+  piSessionId: string;
+};
+
 export type PiRuntimeDriver = {
   hasSession?(piSessionId: string): boolean;
   createSession(input: CreateRuntimeSessionInput): Promise<RuntimeGatewaySnapshot>;
@@ -148,6 +153,12 @@ export type PiRuntimeDriver = {
    */
   refreshModelCatalog?(sessionId?: string): Promise<void>;
   resolveToolSchemas?(input: ResolveToolSchemasInput): Promise<RuntimeToolSchemas>;
+  /**
+   * The live session's "/" command catalog, or null when the driver has no
+   * running process for this Pi session — the service falls back to static
+   * resolution on null.
+   */
+  listPromptCommands?(input: ListPromptCommandsInput): Promise<PromptCommand[] | null>;
   getSnapshot(piSessionId: string): Promise<RuntimeGatewaySnapshot>;
   disposeSession?(piSessionId: string): Promise<void>;
   dispose?(): Promise<void>;

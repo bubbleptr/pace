@@ -26,7 +26,7 @@ async function openProjectDraft(window: import("@playwright/test").Page, project
   const newSession = window.getByRole("button", { name: "New Chat for E2E Project", exact: true });
   await expect(newSession).toBeVisible();
   await newSession.click();
-  await expect(window.getByRole("textbox")).toBeVisible();
+  await expect(window.getByRole("combobox", { name: "Prompt" })).toBeVisible();
 }
 
 async function openSession(
@@ -152,7 +152,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
     try {
       const page = testApp.window;
       await page.getByRole("button", { name: "New Chat for E2E Project", exact: true }).click();
-      const draft = page.getByRole("textbox");
+      const draft = page.getByRole("combobox", { name: "Prompt" });
       await draft.fill("Keep this unsent draft while I change settings");
       const url = page.url();
       const trigger = page.getByRole("button", { name: "Settings", exact: true });
@@ -165,7 +165,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
       await page.keyboard.press("Escape");
       await expect(dialog).toBeHidden();
       await expect(page).toHaveURL(url);
-      await expect(draft).toHaveValue("Keep this unsent draft while I change settings");
+      await expect(draft).toHaveText("Keep this unsent draft while I change settings");
       await expect(trigger).toBeFocused();
 
       await page.getByTestId("model-thinking-trigger").click();
@@ -179,7 +179,7 @@ test.describe("S3: Provider Settings (DF-002)", () => {
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toBeHidden();
       await expect(page).toHaveURL(url);
-      await expect(draft).toHaveValue("Keep this unsent draft while I change settings");
+      await expect(draft).toHaveText("Keep this unsent draft while I change settings");
     } finally {
       await testApp.close();
     }

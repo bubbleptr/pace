@@ -15,6 +15,7 @@ import {
   shouldGenerateSessionTitle,
 } from "./session-auto-title";
 import type {
+  PromptCommand,
   RuntimeContextUsage,
   RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
@@ -28,6 +29,7 @@ import type {
 import {
   capabilityFromModel,
   compareModelCapabilities,
+  sortPromptCommands,
   thinkingLevelOrder,
   thinkingLevelsForModel,
   toPiImageContent,
@@ -103,7 +105,18 @@ export type PublicPiSdkAgentSession = {
   steer?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
-  extensionRunner?: { emit(event: { type: "session_shutdown"; reason: "quit" }): Promise<unknown> };
+  extensionRunner?: {
+    emit(event: { type: "session_shutdown"; reason: "quit" }): Promise<unknown>;
+    getRegisteredCommands?(): readonly {
+      name?: string;
+      invocationName?: string;
+      description?: string;
+    }[];
+  };
+  promptTemplates?: readonly { name?: string; description?: string }[];
+  resourceLoader?: {
+    getSkills?(): { skills?: readonly { name?: string; description?: string }[] };
+  };
   subscribe(listener: (event: unknown) => void): () => void;
   bindExtensions?(bindings: {
     onError: (error: { extensionPath: string; event: string; error: string }) => void;
@@ -213,7 +226,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * through `setSessionName` — Pi then persists it and emits the event Pace
  * already bridges.
  */
-function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (event: unknown) => void {
+function createSessionAutoTitleObserver(
+  session: PublicPiSdkAgentSession,
+  readOriginalPrompt: () => string,
+): (event: unknown) => void {
   let attempted = false;
   let userText = "";
 
@@ -223,7 +239,8 @@ function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (even
     }
 
     if (event.message.role === "user") {
-      userText ||= sessionTitleTextFromContent(event.message.content);
+      // Pi has already expanded skills and prompt templates in this event.
+      userText ||= readOriginalPrompt();
       return;
     }
 
@@ -242,7 +259,7 @@ function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (even
     attempted = true;
     void generateSessionTitle(session, buildSessionTitlePrompt({ userText, assistantText }))
       .then((name) => {
-        if (name) {
+        if (name && !session.sessionName?.trim()) {
           session.setSessionName?.(name);
         }
       })
@@ -608,6 +625,45 @@ function schemasFromSession(session: PublicPiSdkAgentSession, names: string[]) {
   return schemas;
 }
 
+// Mirrors Pi's own command list (agent-session getCommands): extension
+// commands, prompt templates, skills. Every source getter is optional on the
+// structural session type, so a bare session yields an empty list.
+function promptCommandsFromSession(session: PublicPiSdkAgentSession): PromptCommand[] {
+  const commands: PromptCommand[] = [];
+
+  for (const command of session.extensionRunner?.getRegisteredCommands?.() ?? []) {
+    if (!command.invocationName) continue;
+    commands.push({
+      kind: "extension",
+      name: command.invocationName,
+      invocation: command.invocationName,
+      ...(command.description ? { description: command.description } : {}),
+    });
+  }
+
+  for (const template of session.promptTemplates ?? []) {
+    if (!template.name) continue;
+    commands.push({
+      kind: "prompt",
+      name: template.name,
+      invocation: template.name,
+      ...(template.description ? { description: template.description } : {}),
+    });
+  }
+
+  for (const skill of session.resourceLoader?.getSkills?.().skills ?? []) {
+    if (!skill.name) continue;
+    commands.push({
+      kind: "skill",
+      name: skill.name,
+      invocation: `skill:${skill.name}`,
+      ...(skill.description ? { description: skill.description } : {}),
+    });
+  }
+
+  return sortPromptCommands(commands);
+}
+
 function toolSchemaFromDefinition(value: unknown): RuntimeToolSchema | undefined {
   if (!isRecord(value) || typeof value.description !== "string") {
     return undefined;
@@ -927,7 +983,8 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
     });
-    sessionEventListeners.add(createSessionAutoTitleObserver(session));
+    let originalPrompt = "";
+    sessionEventListeners.add(createSessionAutoTitleObserver(session, () => originalPrompt));
     const subagentShim = createTintinwebSubagentShim({
       events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
       subscribeSession: (listener) => {
@@ -984,6 +1041,7 @@ async function createPublicPiSdkRuntime(context: {
         assertOpen();
         normalizer.noteRunTrigger("prompt");
         const piImages = piImagesFromPrompt(images);
+        originalPrompt = prompt;
 
         if (piImages) {
           await session.prompt(prompt, { images: piImages });
@@ -1023,6 +1081,9 @@ async function createPublicPiSdkRuntime(context: {
       },
       async resolveToolSchemas(names) {
         return { schemas: schemasFromSession(session, names) };
+      },
+      async listPromptCommands() {
+        return promptCommandsFromSession(session);
       },
       async sendSubagent(input) {
         assertOpen();

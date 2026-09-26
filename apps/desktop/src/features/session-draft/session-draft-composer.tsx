@@ -1,6 +1,10 @@
-import { useMemo, useRef, useState } from "react";
-import type { RuntimePromptImage } from "@pace/core";
-import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { RuntimePromptImage, WorkspaceFileMatch } from "@pace/core";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
+import {
+  ChatPromptInput as PromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion as PromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
@@ -9,11 +13,28 @@ import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,
   buildPromptWithAttachments,
-  insertIntoDraft,
   useComposerAttachments,
-  useComposerInsertCatalog,
   useFilePicker,
 } from "@/shared/ui/composer-attachments";
+import {
+  INSERT_CATALOG_KIND,
+  commandToken,
+  insertCatalogs,
+  leadingCommandMatch,
+  slashTrigger,
+  slashTriggerActive,
+  useDraftPromptCommandTarget,
+  usePromptCommands,
+  validateCommandSubmit,
+} from "@/entities/prompt-command";
+import {
+  FILE_INSERT_CATALOG_ID,
+  atTrigger,
+  fileInsertCatalog,
+  fileSearchItem,
+  fileToken,
+  useWorkspaceFileSearch,
+} from "@/entities/workspace-file";
 import {
   ChatAdd,
   FileDiff,
@@ -211,7 +232,7 @@ export function SessionDraftComposer({
 }) {
   const [targetValidationRequested, setTargetValidationRequested] = useState(false);
   const targetError = targetValidationRequested && !draft.projectId;
-  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftInputRef = useRef<ChatPromptInputHandle | null>(null);
   const visibleModels = useVisibleModels();
   const selectedCheckoutMode = draft.checkoutMode ?? recommendedCheckoutMode;
   const projectBranch = projectGit.summary?.branch ?? null;
@@ -239,8 +260,61 @@ export function SessionDraftComposer({
     ? `${recentSessionModel.provider}:${recentSessionModel.modelId}:${recentSessionModel.thinkingLevel}`
     : "";
   const attachments = useComposerAttachments();
-  const catalog = useComposerInsertCatalog();
   const picker = useFilePicker(attachments.addFiles);
+  // The Draft has no live runtime: the catalog resolves statically from the
+  // picked Project's root (or the Chat workspace root), so extension
+  // commands can only appear once the Session exists.
+  const commandTarget = useDraftPromptCommandTarget(draft.projectId, projects);
+  const commandQuery = usePromptCommands(commandTarget);
+  const commands = useMemo(
+    () => commandQuery.data?.commands ?? [],
+    [commandQuery.data],
+  );
+  // A draft never queues — the Session starts idle — so extension commands
+  // stay listed here; the Live composer applies its own queueMode filter.
+  const slashActive = slashTriggerActive(draft.prompt);
+  const trigger = useMemo(
+    () => slashTrigger(commands, { active: slashActive, queueMode: false }),
+    [commands, slashActive],
+  );
+  // "@" file references search the same target the static command catalog
+  // resolves from — except the Chat workspace, which has no project files.
+  const fileSearch = useWorkspaceFileSearch(
+    isChatProjectId(draft.projectId) ? null : commandTarget,
+  );
+  const fileTrigger = useMemo(
+    () => (fileSearch ? atTrigger(fileSearch) : null),
+    [fileSearch],
+  );
+  const inputTriggers = useMemo(
+    () =>
+      [trigger, fileTrigger].filter(
+        (entry): entry is ChatComposerTrigger => entry !== null,
+      ),
+    [trigger, fileTrigger],
+  );
+  const leadingTokenFor = useCallback(
+    (value: string) => leadingCommandMatch(value, commands),
+    [commands],
+  );
+  // Palette picks come back as row ids (paths); the matches behind the last
+  // search are what onPick maps back to WorkspaceFileMatch.
+  const lastFileMatchesRef = useRef<readonly WorkspaceFileMatch[]>([]);
+  const fileSearchVersionRef = useRef(0);
+  const fileCatalogSearch = useMemo(() => {
+    if (!fileSearch) {
+      return null;
+    }
+    return async (query: string) => {
+      const version = ++fileSearchVersionRef.current;
+      const matches = await fileSearch(query);
+      // Match the palette's latest-query guard so picks use its visible rows.
+      if (version === fileSearchVersionRef.current) {
+        lastFileMatchesRef.current = matches;
+      }
+      return matches.map(fileSearchItem);
+    };
+  }, [fileSearch]);
 
   const draftCatalog =
     providerAuthLoading || !providersConfigured ? null : modelCatalog.catalog;
@@ -268,8 +342,7 @@ export function SessionDraftComposer({
   };
   const applySuggestedPrompt = (prompt: string) => {
     onDraftChange(prompt);
-    draftInputRef.current?.focus();
-    draftInputRef.current?.setSelectionRange(prompt.length, prompt.length);
+    draftInputRef.current?.focusAtEnd();
   };
   const submitDraft = async () => {
     if (!providerAuthLoading && !providersConfigured) {
@@ -278,6 +351,15 @@ export function SessionDraftComposer({
 
     if (!draft.projectId) {
       setTargetValidationRequested(true);
+      return;
+    }
+
+    const commandError = validateCommandSubmit(draft.prompt, {
+      commands,
+      queueMode: false,
+    });
+    if (commandError) {
+      attachments.setError(commandError);
       return;
     }
 
@@ -415,17 +497,37 @@ export function SessionDraftComposer({
             footer={draftLocationRow}
             hasAttachments={attachments.items.length > 0}
             inputRef={draftInputRef}
+            leadingTokenFor={leadingTokenFor}
             placeholder="Do anything with Pi"
             startActions={
               <>
                 {picker.input}
                 <ComposerInsertMenu
-                  plugins={catalog.plugins}
-                  skills={catalog.skills}
+                  catalogs={[
+                    ...insertCatalogs(commands, { queueMode: false }),
+                    ...(fileCatalogSearch
+                      ? [fileInsertCatalog(fileCatalogSearch)]
+                      : []),
+                  ]}
                   onAttach={picker.open}
-                  onInsert={(text) =>
-                    onDraftChange(insertIntoDraft(draft.prompt, text))
-                  }
+                  onPick={(catalogId, itemId) => {
+                    if (catalogId === FILE_INSERT_CATALOG_ID) {
+                      const match = lastFileMatchesRef.current.find(
+                        (entry) => entry.path === itemId,
+                      );
+                      if (match) {
+                        draftInputRef.current?.appendToken(fileToken(match));
+                      }
+                      return;
+                    }
+                    const kind = INSERT_CATALOG_KIND[catalogId];
+                    const command = commands.find(
+                      (entry) => entry.kind === kind && entry.invocation === itemId,
+                    );
+                    if (command) {
+                      draftInputRef.current?.insertLeadingToken(commandToken(command));
+                    }
+                  }}
                 />
                 {draftModelControls?.selected ? (
                   <ModelSelectorControl
@@ -441,6 +543,7 @@ export function SessionDraftComposer({
                 ) : null}
               </>
             }
+            triggers={inputTriggers}
             value={draft.prompt}
             onFiles={attachments.addFiles}
             onSubmit={submitDraft}

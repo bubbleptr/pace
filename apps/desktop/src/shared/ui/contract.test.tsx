@@ -214,7 +214,7 @@ const cases: Array<{
   },
   {
     name: "ComposerInsertMenu",
-    ui: <ComposerInsertMenu onAttach={noop} onInsert={noop} />,
+    ui: <ComposerInsertMenu onAttach={noop} onPick={noop} />,
   },
   { name: "TerminalView", ui: <TerminalView /> },
   { name: "ChatQueuedMessage", ui: <ChatQueuedMessage body="queued" /> },

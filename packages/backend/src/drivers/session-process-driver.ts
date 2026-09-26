@@ -223,6 +223,8 @@ export function createSessionProcessDriver(options: SessionProcessDriverOptions)
     },
     resolveToolSchemas: async input => piRoots.has(input.piSessionId)
       ? processFor(input.piSessionId).call("resolveToolSchemas", [input]) : Promise.resolve({ schemas: {} }),
+    listPromptCommands: async input => piRoots.has(input.piSessionId)
+      ? processFor(input.piSessionId).call("listPromptCommands", [input]) : Promise.resolve(null),
     async getSnapshot(piSessionId) {
       const snapshot = failed.get(piSessionId);
       if (snapshot) return { ...snapshot };

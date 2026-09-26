@@ -1,4 +1,5 @@
 import type {
+  PromptCommand,
   RuntimeContextUsage,
   RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
@@ -79,6 +80,8 @@ export type PiSdkSessionRuntime = {
   /** Re-read local credentials into this session's model catalog. */
   refreshModelCatalog?(): Promise<RuntimeModelControls | undefined>;
   resolveToolSchemas?(names: string[]): Promise<RuntimeToolSchemas>;
+  /** The session's "/" commands: skills, prompt templates, extension commands. */
+  listPromptCommands?(): Promise<PromptCommand[]>;
   getSnapshot?(): Promise<PiSdkSnapshotPatch>;
   getLeafId?(): string | null;
   waitForNextUserMessageBoundary?(): Promise<PiSdkUserMessageBoundary>;
@@ -642,6 +645,16 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       }
 
       return runtime.resolveToolSchemas(input.names);
+    },
+
+    async listPromptCommands(input) {
+      const runtime = runtimes.get(input.piSessionId);
+
+      if (!runtime?.listPromptCommands) {
+        return null;
+      }
+
+      return runtime.listPromptCommands();
     },
 
     disposeSession,

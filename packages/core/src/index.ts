@@ -101,6 +101,17 @@ export {
 } from "./subagent";
 
 export {
+  AUTOCOMPLETE_SEPARATOR_REGEX,
+  PI_TUI_BUILTIN_COMMANDS,
+  sortPromptCommands,
+  type PromptCommand,
+  type PromptCommandCatalog,
+  type PromptCommandKind,
+  type WorkspaceFileMatch,
+  type WorkspaceFileSearchResult,
+} from "./prompt-catalog";
+
+export {
   parseRuntimePromptImages,
   promptImageDataUrl,
   toPiImageContent,

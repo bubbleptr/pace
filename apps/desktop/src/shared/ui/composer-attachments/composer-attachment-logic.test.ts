@@ -8,7 +8,6 @@ import {
   buildPromptWithAttachments,
   classifyFile,
   formatBytes,
-  insertIntoDraft,
 } from "./composer-attachment-logic";
 
 function file(name: string, type: string, body = "hello") {
@@ -47,25 +46,19 @@ describe("formatBytes", () => {
   });
 });
 
-describe("insertIntoDraft", () => {
-  it("replaces an empty draft", () => {
-    expect(insertIntoDraft("", "/compact ")).toBe("/compact ");
-  });
-
-  it("pads with a space when the draft has no trailing space", () => {
-    expect(insertIntoDraft("fix the test", "/compact ")).toBe(
-      "fix the test /compact ",
-    );
-  });
-
-  it("does not double-pad", () => {
-    expect(insertIntoDraft("fix the test ", "/compact ")).toBe(
-      "fix the test /compact ",
-    );
-  });
-});
-
 describe("buildPromptWithAttachments", () => {
+  it("normalizes non-breaking spaces left by token insertion", async () => {
+    // Tokens serialize with a trailing   (Astryx insertToken); Pi splits
+    // command arguments on plain spaces only, so the submit path converts.
+    await expect(
+      buildPromptWithAttachments("/skill:review-pr\u00A0参数", []),
+    ).resolves.toEqual({
+      ok: true,
+      prompt: "/skill:review-pr 参数",
+      images: [],
+    });
+  });
+
   it("returns the trimmed draft when there are no attachments", async () => {
     await expect(buildPromptWithAttachments("  hello  ", [])).resolves.toEqual({
       ok: true,

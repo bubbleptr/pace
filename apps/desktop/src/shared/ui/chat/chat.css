@@ -821,7 +821,7 @@
 /* Astryx balanced density uses --spacing-2 between the input and the
    footer chrome. One step up so the placeholder and model selector
    don't sit on the same visual band. */
-.prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea) {
+.prompt-input .astryx-chat-composer > div:has(.prompt-input__input) {
   gap: var(--spacing-3);
   /* Override Astryx's hover/focus elevation without changing the geometry. */
   box-shadow: var(--shadow-low);
@@ -829,40 +829,42 @@
 
 /* Preserve a focus indicator when the OS suppresses shadows. */
 @media (forced-colors: active) {
-  .prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea) {
+  .prompt-input .astryx-chat-composer > div:has(.prompt-input__input) {
     outline: var(--border-width) solid CanvasText;
   }
-  .prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea):focus-within {
+  .prompt-input .astryx-chat-composer > div:has(.prompt-input__input):focus-within {
     outline: var(--spacing-0-5) solid Highlight;
     outline-offset: var(--spacing-0-5);
   }
 }
 
-.prompt-input__textarea {
-  width: 100%;
-  min-height: var(--size-element-md);
-  max-height: calc(var(--spacing-12) * 4);
-  resize: none;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: var(--font-size-base);
-  line-height: 1.5;
-  padding: var(--spacing-1) var(--spacing-1-5);
+/* ChatComposerInput renders its own typography on the editable and the
+   placeholder: --text-body-size at 22px leading with --spacing-1 padding.
+   Pin both to the chat 14px system (docs/design/chat.md) and the wider
+   inline padding the textarea used. !important matches Astryx StyleX's
+   :not(#\#) specificity. */
+.prompt-input__input > [aria-multiline="true"],
+.prompt-input__input > [aria-hidden="true"] {
+  font-size: var(--font-size-base) !important;
+  line-height: 1.5 !important;
+  padding: var(--spacing-1) var(--spacing-1-5) !important;
+}
+
+.prompt-input__input > [aria-multiline="true"] {
+  min-height: var(--size-element-md) !important;
+  color: var(--color-text-primary) !important;
 }
 
 /* Hint copy recedes below composer chrome (model selector uses
    --color-text-secondary via text-muted). Opacity is reset so Firefox
    does not further fade the token color. */
-.prompt-input__textarea::placeholder {
-  color: var(--color-text-disabled);
+.prompt-input__input > [aria-hidden="true"] {
+  color: var(--color-text-disabled) !important;
   opacity: 1;
 }
 
-.prompt-input__textarea:disabled {
-  color: var(--color-text-disabled);
+.prompt-input__input > [aria-disabled="true"] {
+  color: var(--color-text-disabled) !important;
   cursor: not-allowed;
 }
 

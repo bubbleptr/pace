@@ -1,4 +1,7 @@
-import { ChatPromptInput as PromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import {
+  ChatPromptInput as PromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
 import { ModelSelectorControl } from "@/entities/model/model-selector/model-selector-control";
@@ -6,13 +9,30 @@ import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,
   buildPromptWithAttachments,
-  insertIntoDraft,
   useComposerAttachments,
-  useComposerInsertCatalog,
   useFilePicker,
 } from "@/shared/ui/composer-attachments";
-import { useEffect, useRef, useState } from "react";
-import type { RuntimePromptImage } from "@pace/core";
+import {
+  INSERT_CATALOG_KIND,
+  commandToken,
+  insertCatalogs,
+  leadingCommandMatch,
+  slashTrigger,
+  slashTriggerActive,
+  usePromptCommands,
+  validateCommandSubmit,
+} from "@/entities/prompt-command";
+import {
+  FILE_INSERT_CATALOG_ID,
+  atTrigger,
+  fileInsertCatalog,
+  fileSearchItem,
+  fileToken,
+  useWorkspaceFileSearch,
+} from "@/entities/workspace-file";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
+import type { RuntimePromptImage, WorkspaceFileMatch } from "@pace/core";
 import { ChatAdd, Computer, FolderLibrary, GitBranch } from "@/shared/ui/icons";
 import { CHAT_WORKSPACE_DISPLAY_NAME, isChatProjectId } from "@/entities/project/chat-workspace";
 import {
@@ -109,8 +129,60 @@ export function FullChatComposer({
   // Shelf drawer + footer Add-to-prompt menu. Images ride send_prompt /
   // queue_follow_up / steer_run. Decision: .scratch/composer-attachments/PRD.md
   const attachments = useComposerAttachments();
-  const catalog = useComposerInsertCatalog();
   const picker = useFilePicker(attachments.addFiles);
+  const inputRef = useRef<ChatPromptInputHandle | null>(null);
+  // Live Sessions query the runtime catalog — extension commands only exist
+  // once the runtime is live (see usePromptCommands' piSessionId+status key).
+  const commandQuery = usePromptCommands(sessionId ? { sessionId } : null);
+  const commands = useMemo(
+    () => commandQuery.data?.commands ?? [],
+    [commandQuery.data],
+  );
+  const slashActive = slashTriggerActive(draft);
+  const trigger = useMemo(
+    () => slashTrigger(commands, { active: slashActive, queueMode }),
+    [commands, slashActive, queueMode],
+  );
+  // "@" file references search the Session's workspace; Chat Sessions have
+  // no project files, so the trigger stays off there.
+  const fileSearch = useWorkspaceFileSearch(
+    sessionId && !isChatProjectId(projection?.projectId ?? "")
+      ? { sessionId }
+      : null,
+  );
+  const fileTrigger = useMemo(
+    () => (fileSearch ? atTrigger(fileSearch) : null),
+    [fileSearch],
+  );
+  const inputTriggers = useMemo(
+    () =>
+      [trigger, fileTrigger].filter(
+        (entry): entry is ChatComposerTrigger => entry !== null,
+      ),
+    [trigger, fileTrigger],
+  );
+  // Palette picks come back as row ids (paths); the matches behind the last
+  // search are what onPick maps back to WorkspaceFileMatch.
+  const lastFileMatchesRef = useRef<readonly WorkspaceFileMatch[]>([]);
+  const fileSearchVersionRef = useRef(0);
+  const fileCatalogSearch = useMemo(() => {
+    if (!fileSearch) {
+      return null;
+    }
+    return async (query: string) => {
+      const version = ++fileSearchVersionRef.current;
+      const matches = await fileSearch(query);
+      // Match the palette's latest-query guard so picks use its visible rows.
+      if (version === fileSearchVersionRef.current) {
+        lastFileMatchesRef.current = matches;
+      }
+      return matches.map(fileSearchItem);
+    };
+  }, [fileSearch]);
+  const leadingTokenFor = useCallback(
+    (value: string) => leadingCommandMatch(value, commands),
+    [commands],
+  );
   // Prefer the page-level read (shared with Changes / the rail badge) so Git
   // is only asked once. View-only tests that don't pass it still get a local
   // read, gated on a bound runtime — the same moment the footer exists.
@@ -189,6 +261,14 @@ export function FullChatComposer({
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
+      // Slash-command guard: TUI commands and queued extension commands are
+      // rejected here so the draft survives a refused submit.
+      const commandError = validateCommandSubmit(draft, { commands, queueMode });
+      if (commandError) {
+        setComposerError(commandError);
+        return;
+      }
+
       const built = await buildPromptWithAttachments(draft, attachments.items);
 
       if (!built.ok) {
@@ -350,15 +430,38 @@ export function FullChatComposer({
         error={attachments.error ?? composerError}
         footer={composerFooter}
         hasAttachments={attachments.items.length > 0}
+        inputRef={inputRef}
+        leadingTokenFor={leadingTokenFor}
         lockInputOnRun={!queueMode || isSubmitting}
         startActions={
           <>
             {picker.input}
             <ComposerInsertMenu
-              plugins={catalog.plugins}
-              skills={catalog.skills}
+              catalogs={[
+                ...insertCatalogs(commands, { queueMode }),
+                ...(fileCatalogSearch
+                  ? [fileInsertCatalog(fileCatalogSearch)]
+                  : []),
+              ]}
               onAttach={picker.open}
-              onInsert={(text) => updateDraft(insertIntoDraft(draft, text))}
+              onPick={(catalogId, itemId) => {
+                if (catalogId === FILE_INSERT_CATALOG_ID) {
+                  const match = lastFileMatchesRef.current.find(
+                    (entry) => entry.path === itemId,
+                  );
+                  if (match) {
+                    inputRef.current?.appendToken(fileToken(match));
+                  }
+                  return;
+                }
+                const kind = INSERT_CATALOG_KIND[catalogId];
+                const command = commands.find(
+                  (entry) => entry.kind === kind && entry.invocation === itemId,
+                );
+                if (command) {
+                  inputRef.current?.insertLeadingToken(commandToken(command));
+                }
+              }}
             />
             {composerModelControls && onModelConfigChange ? (
               <ModelSelectorControl
@@ -379,6 +482,7 @@ export function FullChatComposer({
               : "What do you want to know?"
         }
         status={promptStatus}
+        triggers={inputTriggers}
         value={draft}
         onFiles={attachments.addFiles}
         onStop={onStopRun ? () => void onStopRun() : undefined}

@@ -1,33 +1,48 @@
-import { useMemo, useState, type ComponentProps } from "react";
+import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { CommandPalette, CommandPaletteInput } from "@astryxdesign/core/CommandPalette";
 import { createStaticSource } from "@astryxdesign/core/Typeahead";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { Command, ImageIcon, Plus, Puzzle, Sparkles } from "@/shared/ui/icons";
+import { ImageIcon, Plus } from "@/shared/ui/icons";
 
-export const DEFAULT_COMPOSER_COMMANDS = [
-  { label: "/compact", insert: "/compact " },
-  { label: "/clear", insert: "/clear " },
-] as const;
+/**
+ * One searchable group in the composer's + menu — who fills it (prompt
+ * commands, workspace files) is the caller's domain; the menu only renders.
+ */
+export type ComposerInsertCatalogItem = {
+  id: string;
+  label: string;
+  description?: string;
+};
 
-type CatalogEntry = { name: string; description?: string };
-
-function pluginLabel(name: string) {
-  const parts = name.replace(/\\/g, "/").split("/").filter(Boolean);
-  const file = parts.pop() ?? name;
-  const stem = file.replace(/\.(?:[cm]?[jt]sx?)$/, "");
-  const label = (/^(?:index|main|extension)$/.test(stem) ? parts.pop() ?? stem : stem)
-    .replace(/[-_]+/g, " ");
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
+export type ComposerInsertCatalog = {
+  /** Stable id passed back to onPick. */
+  id: string;
+  /** First-level menu item, e.g. "Skills". */
+  label: string;
+  icon: ReactNode;
+  /** Search field accessible label, e.g. "Search skills". */
+  searchLabel: string;
+  /** Empty-result text, e.g. "No matching skills". */
+  emptyText: string;
+  /** Static entries — exactly one of `items` / `search` is given. */
+  items?: readonly ComposerInsertCatalogItem[];
+  /**
+   * Backend-backed lookup. A search catalog is always listed — its entries
+   * are unknown until the user types.
+   */
+  search?: (query: string) => Promise<readonly ComposerInsertCatalogItem[]>;
+};
 
 type ComposerInsertMenuOwnProps = {
-  commands?: readonly { label: string; insert: string }[];
-  skills?: readonly CatalogEntry[];
-  plugins?: readonly CatalogEntry[];
+  /**
+   * Groups listed after "Add files" in given order; empty catalogs are
+   * hidden. Selecting an item reports (catalogId, itemId) via onPick.
+   */
+  catalogs?: readonly ComposerInsertCatalog[];
   onAttach: () => void;
-  onInsert: (text: string) => void;
+  onPick: (catalogId: string, itemId: string) => void;
 };
 
 export type ComposerInsertMenuProps = Omit<
@@ -37,23 +52,43 @@ export type ComposerInsertMenuProps = Omit<
   ComposerInsertMenuOwnProps;
 
 export function ComposerInsertMenu({
-  commands = DEFAULT_COMPOSER_COMMANDS,
-  skills = [],
-  plugins = [],
+  catalogs = [],
   onAttach,
-  onInsert,
+  onPick,
   className,
   ...rest
 }: ComposerInsertMenuProps) {
-  const [catalog, setCatalog] = useState<"skills" | "plugins" | null>(null);
-  const source = useMemo(() => createStaticSource(
-    (catalog === "skills" ? skills : plugins).map((entry) => ({
-      id: entry.name,
-      label: catalog === "skills" ? entry.name : pluginLabel(entry.name),
-      auxiliaryData: { description: entry.description, identifier: entry.name },
-    })),
-    { keywords: (item) => [item.auxiliaryData.description ?? "", item.auxiliaryData.identifier] },
-  ), [catalog, skills, plugins]);
+  const [openCatalogId, setOpenCatalogId] = useState<string | null>(null);
+  // Static groups hide when empty; a search-backed group is always listed
+  // since its entries are only known by querying.
+  const listedCatalogs = catalogs.filter(
+    (catalog) => catalog.search !== undefined || (catalog.items?.length ?? 0) > 0,
+  );
+  const openCatalog = listedCatalogs.find((catalog) => catalog.id === openCatalogId);
+  const source = useMemo(() => {
+    if (openCatalog?.search) {
+      const search = openCatalog.search;
+      // The palette already guards stale results by version, so a thin
+      // async source is enough.
+      return {
+        bootstrap: () => [],
+        search: async (query: string) =>
+          (await search(query)).map((item) => ({
+            id: item.id,
+            label: item.label,
+            auxiliaryData: { description: item.description },
+          })),
+      };
+    }
+    return createStaticSource(
+      (openCatalog?.items ?? []).map((item) => ({
+        id: item.id,
+        label: item.label,
+        auxiliaryData: { description: item.description },
+      })),
+      { keywords: (item) => [item.auxiliaryData.description ?? ""] },
+    );
+  }, [openCatalog]);
 
   return (
     <>
@@ -66,21 +101,29 @@ export function ComposerInsertMenu({
         {...rest}
         items={[
           { icon: <ImageIcon />, label: "Add files", onClick: onAttach },
-          { icon: <Sparkles />, label: "Use skill", onClick: () => setCatalog("skills") },
-          { icon: <Command />, label: "Chat commands", items: commands.map((command) => ({
-            label: command.label, onClick: () => onInsert(command.insert),
-          })) },
-          ...(plugins.length ? [{ icon: <Puzzle />, label: "Use plugin", onClick: () => setCatalog("plugins") }] : []),
+          ...listedCatalogs.map((catalog) => ({
+            icon: catalog.icon,
+            label: catalog.label,
+            onClick: () => setOpenCatalogId(catalog.id),
+          })),
         ]}
       />
-      {catalog ? (
+      {openCatalog ? (
         <CommandPalette
           isOpen
-          label={catalog === "skills" ? "Use skill" : "Use plugin"}
-          input={<CommandPaletteInput label={`Search ${catalog}`} placeholder={`Search ${catalog}…`} />}
+          label={openCatalog.label}
+          input={
+            <CommandPaletteInput
+              label={openCatalog.searchLabel}
+              placeholder={`${openCatalog.searchLabel}…`}
+              // Portal clicks still bubble to ChatComposer, whose body
+              // click handler would move focus back to the prompt.
+              onClick={(event) => event.stopPropagation()}
+            />
+          }
           searchSource={source}
-          emptySearchText={`No matching ${catalog}`}
-          emptyBootstrapText={`No ${catalog} available`}
+          emptySearchText={openCatalog.emptyText}
+          emptyBootstrapText={openCatalog.emptyText}
           renderItem={(item) => (
             <VStack gap={0.5}>
               <Text>{item.label}</Text>
@@ -91,8 +134,8 @@ export function ComposerInsertMenu({
               ) : null}
             </VStack>
           )}
-          onOpenChange={(open) => { if (!open) setCatalog(null); }}
-          onValueChange={(name) => onInsert(`${catalog === "skills" ? "/" : "@"}${name} `)}
+          onOpenChange={(open) => { if (!open) setOpenCatalogId(null); }}
+          onValueChange={(itemId) => onPick(openCatalog.id, itemId)}
         />
       ) : null}
     </>

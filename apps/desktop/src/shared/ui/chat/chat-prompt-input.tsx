@@ -1,74 +1,322 @@
 import {
-  type ClipboardEvent,
   type ComponentProps,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import {
   ChatComposer,
+  ChatComposerInput,
+  type ChatComposerInputHandle,
+  type ChatComposerToken,
+  type ChatComposerTrigger,
   ChatSendButton,
-  useChatComposerContext,
 } from "@astryxdesign/core/Chat";
+import { createStaticSource } from "@astryxdesign/core/Typeahead";
 
 export type PromptInputStatus = "ready" | "submitted" | "streaming" | "error";
 
+export type ChatPromptInputHandle = {
+  focus(): void;
+  /** Focus and put the caret after the last character. */
+  focusAtEnd(): void;
+  /**
+   * Insert a token at the very start of the input, replacing the current
+   * leading token recognized by leadingTokenFor and keeping the rest of
+   * the content. Without a matcher, any leading token is replaced.
+   */
+  insertLeadingToken(token: ChatComposerToken): void;
+  /**
+   * Append a token after the existing content, separating it with a plain
+   * space when the input doesn't already end in whitespace. Appends rather
+   * than honoring the caret because pickers (the + menu's CommandPalette)
+   * hold focus while choosing — the composer's caret is gone by then.
+   */
+  appendToken(token: ChatComposerToken): void;
+};
+
+export type LeadingTokenMatch = {
+  /** Characters of leading plain text the token replaces. */
+  length: number;
+  token: ChatComposerToken;
+};
+
+function editableOf(root: HTMLDivElement | null): HTMLElement | null {
+  return root?.querySelector<HTMLElement>('[aria-multiline="true"]') ?? null;
+}
+
+/** First child that isn't an empty text node (deletions leave those behind). */
+function firstMeaningfulChild(editable: HTMLElement): ChildNode | null {
+  let node = editable.firstChild;
+  while (node && node.nodeType === Node.TEXT_NODE && node.textContent === "") {
+    node = node.nextSibling;
+  }
+  return node;
+}
+
+function isTokenSpan(node: ChildNode | null): node is HTMLElement {
+  return node instanceof HTMLElement && node.hasAttribute("data-astryx-token");
+}
+
+function placeCaretAtStart(editable: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  const range = document.createRange();
+  range.setStart(editable, 0);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 /**
- * Native textarea wired into the Astryx composer context. Kept native (not
- * the contentEditable ChatComposerInput) for the platform textarea behavior
- * and the placeholder/value test surface, per issue 09.
+ * A trigger that can never fire — its character is the invisible separator
+ * (U+2063), which keyboards cannot type. Astryx derives the editable's role
+ * from the trigger list (textbox when empty, combobox otherwise), so callers
+ * toggling their own triggers would make the role flicker mid-typing; this
+ * placeholder pins it to combobox.
  */
-function PromptTextArea({
+const PLACEHOLDER_TRIGGER: ChatComposerTrigger = {
+  character: "\u2063",
+  searchSource: createStaticSource([]),
+  onSelect: () => "",
+};
+
+/**
+ * Astryx contentEditable composer input. Submit is intercepted in onKeyDown
+ * (the built-in Enter path force-clears the value before the caller can
+ * keep a failed draft), and the missing placeholder/disabled attributes are
+ * patched locally — no swizzle. The role stays Astryx-owned: useTriggerMenu
+ * spreads a React-managed `role` (textbox, or combobox when triggers exist)
+ * onto the editable, so setting one from an effect would fight React.
+ */
+function PromptComposerInput({
   disabled = false,
+  placeholder,
   inputRef,
+  leadingTokenFor,
+  triggers,
   onFiles,
   onSubmitRequest,
+  value,
+  onValueChange,
 }: {
   disabled?: boolean;
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  placeholder?: string;
+  inputRef?: RefObject<ChatPromptInputHandle | null>;
+  /**
+   * Turn the leading characters of a serialized value back into a token —
+   * restores command tokens after draft loads or external writes, where
+   * Astryx's textContent sync flattened them to text.
+   */
+  leadingTokenFor?: (value: string) => LeadingTokenMatch | null;
+  triggers?: ChatComposerTrigger[];
   onFiles?: (files: File[]) => void;
   onSubmitRequest: () => void;
+  value: string;
+  onValueChange?: (value: string) => void;
 }) {
-  const context = useChatComposerContext();
-  const localRef = useRef<HTMLTextAreaElement | null>(null);
-  const textareaRef = inputRef ?? localRef;
-
-  useEffect(() => {
-    const control = context?.inputControlRef;
-
-    if (!control) {
-      return;
-    }
-
-    control.current = { focus: () => textareaRef.current?.focus() };
-    return () => {
-      control.current = null;
-    };
-  }, [context?.inputControlRef, textareaRef]);
-
-  if (!context) {
-    return null;
-  }
-
-  const autosize = () => {
-    const textarea = textareaRef.current;
-
-    if (!textarea) {
-      return;
-    }
-
-    textarea.style.height = "auto";
-
-    if (textarea.scrollHeight > 0) {
-      textarea.style.height = `${textarea.scrollHeight}px`;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ChatComposerInputHandle | null>(null);
+  // The last value emitted by a real user input event. The rehydrate effect
+  // below uses it to tell typed text from an external write: an emitted
+  // value echoing back through the `value` prop is typing in progress, and
+  // must never be turned into a token mid-word.
+  const lastUserValueRef = useRef<string | undefined>(undefined);
+  // Synthetic input events we dispatch ourselves (the trigger-refresh
+  // re-dispatch, insertLeadingToken, the rehydrate effect) replay the
+  // caller's value — flagging them keeps them out of lastUserValueRef.
+  const syntheticInputRef = useRef(false);
+  const dispatchSyntheticInput = (editable: HTMLElement) => {
+    syntheticInputRef.current = true;
+    try {
+      // dispatchEvent delivers listeners synchronously, so the flag covers
+      // the composer's emitChange.
+      editable.dispatchEvent(new Event("input", { bubbles: true }));
+    } finally {
+      syntheticInputRef.current = false;
     }
   };
+  const effectiveTriggers = useMemo(
+    () => (triggers?.length ? triggers : [PLACEHOLDER_TRIGGER]),
+    [triggers],
+  );
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  // Astryx only searches a trigger's source on input events, so a catalog
+  // that resolves while the menu is already open ("/" typed before
+  // list_prompt_commands returned) would stay empty forever. Re-dispatching
+  // input on trigger-list change re-runs detection against the fresh
+  // trigger; upstream the emit is a no-op because the serialized value is
+  // unchanged. Skipped on mount — the input event there would be a spurious
+  // onValueChange for a value the caller just rendered.
+  //
+  // Ordering matters: this effect is declared before the rehydrate effect
+  // below, so when a catalog arrives alongside a restored draft the
+  // re-dispatch runs first. Because the synthetic emit stays out of
+  // lastUserValueRef, rehydrate in the same commit still sees the draft as
+  // an external value and restores its leading token.
+  const mountedTriggers = useRef(effectiveTriggers);
+  useEffect(() => {
+    if (mountedTriggers.current === effectiveTriggers) {
+      return;
+    }
+    mountedTriggers.current = effectiveTriggers;
+    const editable = editableOf(rootRef.current);
+    if (editable) {
+      dispatchSyntheticInput(editable);
+    }
+  }, [effectiveTriggers]);
+
+  useEffect(() => {
+    if (!inputRef) {
+      return;
+    }
+
+    inputRef.current = {
+      focus: () => composerRef.current?.focus(),
+      focusAtEnd: () => {
+        const editable = editableOf(rootRef.current);
+        if (!editable) {
+          return;
+        }
+        editable.focus();
+        const selection = window.getSelection();
+        if (!selection) {
+          return;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(editable);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      },
+      insertLeadingToken: (token) => {
+        const editable = editableOf(rootRef.current);
+        if (!editable) {
+          return;
+        }
+        // Drop the existing leading token and the NBSP insertToken added
+        // after it — a command slot holds exactly one token.
+        const first = firstMeaningfulChild(editable);
+        if (
+          isTokenSpan(first) &&
+          (!leadingTokenFor || leadingTokenFor(first.getAttribute("data-astryx-token-value") ?? ""))
+        ) {
+          const next = first.nextSibling;
+          if (next?.nodeType === Node.TEXT_NODE && next.textContent === "\u00A0") {
+            next.remove();
+          }
+          first.remove();
+        }
+        placeCaretAtStart(editable);
+        composerRef.current?.insertToken(token);
+        // insertToken only mutates the DOM; the input event makes the
+        // composer serialize and emit the new value.
+        dispatchSyntheticInput(editable);
+        editable.focus();
+      },
+      appendToken: (token) => {
+        const editable = editableOf(rootRef.current);
+        if (!editable) {
+          return;
+        }
+        const selection = window.getSelection();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(editable);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        const text = editable.textContent ?? "";
+        const last = text[text.length - 1];
+        if (last && last !== " " && last !== "\u00A0" && last !== "\n") {
+          composerRef.current?.insertText(" ");
+        }
+        composerRef.current?.insertToken(token);
+        dispatchSyntheticInput(editable);
+        editable.focus();
+      },
+    };
+    return () => {
+      inputRef.current = null;
+    };
+  }, [inputRef, leadingTokenFor]);
+
+  useEffect(() => {
+    if (!leadingTokenFor) {
+      return;
+    }
+    // A value identical to the last user-driven emit is typing echoing back
+    // through the controlled prop, not an external write — rehydrating it
+    // would trap "/review" into a token while the user is still typing
+    // "/review-pr".
+    if (value === lastUserValueRef.current) {
+      return;
+    }
+    const editable = editableOf(rootRef.current);
+    if (!editable || isTokenSpan(firstMeaningfulChild(editable))) {
+      return;
+    }
+    const match = leadingTokenFor(value);
+    if (!match) {
+      return;
+    }
+    // External writes land as a single text node (textContent = value). If
+    // the leading text isn't one such node — e.g. it spans a <br> — leave it
+    // as text rather than corrupting the DOM.
+    const head = firstMeaningfulChild(editable);
+    if (
+      !head ||
+      head.nodeType !== Node.TEXT_NODE ||
+      (head.textContent?.length ?? 0) < match.length
+    ) {
+      return;
+    }
+    const range = document.createRange();
+    range.setStart(head, 0);
+    range.setEnd(head, match.length);
+    range.deleteContents();
+    const selection = window.getSelection();
+    if (selection) {
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    composerRef.current?.insertToken(match.token);
+    dispatchSyntheticInput(editable);
+  }, [value, leadingTokenFor]);
+
+  useEffect(() => {
+    // Astryx 0.3.0 sets aria-multiline/aria-label (and the role, via
+    // useTriggerMenu's ariaProps) on the editable, but the placeholder lives
+    // on a separate aria-hidden div and disabled state only flips
+    // contentEditable. E2E and assistive tech look for aria-placeholder and
+    // aria-disabled on the editable, so patch those here instead of
+    // swizzling the component.
+    const editable = editableOf(rootRef.current);
+    if (!editable) {
+      return;
+    }
+    if (placeholder) {
+      editable.setAttribute("aria-placeholder", placeholder);
+    } else {
+      editable.removeAttribute("aria-placeholder");
+    }
+    if (disabled) {
+      editable.setAttribute("aria-disabled", "true");
+    } else {
+      editable.removeAttribute("aria-disabled");
+    }
+  }, [placeholder, disabled]);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // IME confirmation belongs to text entry; 229 covers composition ending before keydown.
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
       return;
@@ -84,52 +332,59 @@ function PromptTextArea({
     }
 
     event.preventDefault();
-    // Submit through our own path: the composer's context.onSubmit eagerly
-    // clears the value via onChange("") even in controlled mode, but the
-    // caller owns clearing (a failed submit must keep the draft).
+    // Submit through our own path: the composer's built-in Enter handler
+    // clears the editable itself, but the caller owns clearing (a failed
+    // submit must keep the draft). defaultPrevented keeps the built-in
+    // path from running.
     onSubmitRequest();
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = [...(event.clipboardData?.files ?? [])];
-
-    if (!files.length || !onFiles) {
-      return;
-    }
-
-    event.preventDefault();
-    onFiles(files);
-  };
-
   return (
-    <textarea
-      ref={textareaRef}
-      className="prompt-input__textarea"
-      data-slot="prompt-input-textarea"
-      disabled={disabled}
-      placeholder={context.placeholder}
-      rows={1}
-      value={context.value}
-      onChange={(event) => {
-        context.onChange(event.target.value);
-        autosize();
+    <ChatComposerInput
+      ref={rootRef}
+      className="prompt-input__input"
+      handleRef={composerRef}
+      hasHistory={false}
+      isDisabled={disabled}
+      label="Prompt"
+      pasteAsToken={false}
+      placeholder={placeholder}
+      triggers={effectiveTriggers}
+      value={value}
+      onChange={(next) => {
+        if (!syntheticInputRef.current) {
+          lastUserValueRef.current = next;
+        }
+        onValueChange?.(next);
       }}
+      onFiles={onFiles}
       onKeyDown={handleKeyDown}
-      onPaste={handlePaste}
     />
   );
 }
 
 /**
  * Prompt composer over Astryx ChatComposer. The shell, slot layout, send/stop
- * button, and error status are Astryx; the textarea stays native and the
- * neutral footer hint is ours (Astryx status only carries error/warning).
+ * button, and error status are Astryx; so is the rich input, which keeps the
+ * caller-owned submit/clear contract through the onKeyDown seam. The neutral
+ * footer hint is ours (Astryx status only carries error/warning).
  */
 type ChatPromptInputOwnProps = {
   value: string;
   status?: PromptInputStatus;
   placeholder?: string;
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  inputRef?: RefObject<ChatPromptInputHandle | null>;
+  /**
+   * Trigger menus (e.g. "/" commands) passed through to ChatComposerInput.
+   * May be empty — a placeholder trigger keeps the editable's role pinned
+   * to combobox so it never flips mid-typing.
+   */
+  triggers?: ChatComposerTrigger[];
+  /**
+   * Rehydrate a leading command string into a token after external writes
+   * (draft restore, injection) — see PromptComposerInput.
+   */
+  leadingTokenFor?: (value: string) => LeadingTokenMatch | null;
   allowSubmitWhileRunning?: boolean;
   lockInputOnRun?: boolean;
   startActions?: ReactNode;
@@ -174,6 +429,8 @@ export function ChatPromptInput({
   className = "",
   placeholder,
   inputRef,
+  triggers,
+  leadingTokenFor,
   allowSubmitWhileRunning = false,
   lockInputOnRun = false,
   startActions,
@@ -269,9 +526,14 @@ export function ChatPromptInput({
         elevation="low"
         footerActions={startActions}
         input={
-          <PromptTextArea
+          <PromptComposerInput
             disabled={lockInputOnRun && isRunning}
             inputRef={inputRef}
+            leadingTokenFor={leadingTokenFor}
+            placeholder={placeholder}
+            triggers={triggers}
+            value={value}
+            onValueChange={onValueChange}
             onFiles={onFiles}
             onSubmitRequest={handleSubmit}
           />

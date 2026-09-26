@@ -55,5 +55,9 @@ process.on("message", async ({ type, id, method, args }) => {
     process.send({ type: "response", id,result: null });
     return;
   }
+  if (method === "listPromptCommands") {
+    process.send({ type: "response", id,result: [{ kind: "skill", name: "fixture-skill", invocation: "skill:fixture-skill" }] });
+    return;
+  }
   if (method === "getSnapshot" && !holdSnapshot) process.send({ type: "response", id,result: snapshot });
 });

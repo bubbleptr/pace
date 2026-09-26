@@ -115,6 +115,18 @@ describe("Session process isolation", () => {
     expect((await driver.resumeSession(input)).cwd).toBe(cwd);
   });
 
+  it("proxies prompt command listing to the live root and resolves null without one", async () => {
+    await expect(
+      driver.listPromptCommands?.({ piSessionId: "pi-missing" }),
+    ).resolves.toBeNull();
+    const a = await driver.createSession({ sessionId: "a", projectId: "a", cwd: join(root, "a") });
+    await expect(
+      driver.listPromptCommands?.({ piSessionId: a.piSessionId }),
+    ).resolves.toEqual([
+      { kind: "skill", name: "fixture-skill", invocation: "skill:fixture-skill" },
+    ]);
+  });
+
   it("ignores a message kind it does not know, even one carrying a pending request id", async () => {
     const events: RuntimeGatewayDriverEvent[] = [];
     driver.onEvent(event => events.push(event));

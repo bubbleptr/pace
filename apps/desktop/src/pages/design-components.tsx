@@ -49,9 +49,13 @@ import { ChatCodeBlock } from "@/shared/ui/chat/chat-code-block";
 import { ChatConversation } from "@/shared/ui/chat/chat-conversation";
 import { ChatMarkdown, ChatStreamMarkdown } from "@/shared/ui/chat/chat-markdown";
 import { ChatMessage, ChatMessageActions } from "@/shared/ui/chat/chat-message";
+import { UserPromptContent } from "@/widgets/live-chat/user-prompt-content";
 import { ChatRunFailure } from "@/shared/ui/chat/chat-run-failure";
 import { ChatContextChange } from "@/shared/ui/chat/chat-context-change";
-import { ChatPromptInput } from "@/shared/ui/chat/chat-prompt-input";
+import {
+  ChatPromptInput,
+  type ChatPromptInputHandle,
+} from "@/shared/ui/chat/chat-prompt-input";
 import { ChatPromptSuggestion } from "@/shared/ui/chat/chat-prompt-suggestion";
 import { ChatQueuedMessage } from "@/shared/ui/chat/chat-queued-message";
 import {
@@ -72,7 +76,8 @@ import { ComposerInsertMenu } from "@/shared/ui/composer-attachments/composer-in
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import * as Icons from "@/shared/ui/icons";
-import type { RuntimeModelControls } from "@pace/core";
+import type { PromptCommand, RuntimeModelControls } from "@pace/core";
+import { insertCatalogs } from "@/entities/prompt-command";
 
 /**
  * Layer 3 of the design gallery: every reusable Pace component in
@@ -1254,6 +1259,23 @@ function ChatMessageGallery() {
             <ChatMessage.Bubble>Explain this trajectory, please.</ChatMessage.Bubble>
           </ChatMessage.User>
         </Variant>
+        <Variant caption="Command and file references">
+          <ChatMessage.User>
+            <ChatMessage.Bubble>
+              <UserPromptContent
+                text={'/skill:review-pr 请检查 @src/routes/[id].tsx 和 @"docs/设计 notes.md"'}
+                commands={[{ kind: "skill", name: "review-pr", invocation: "skill:review-pr" }]}
+              />
+            </ChatMessage.Bubble>
+          </ChatMessage.User>
+        </Variant>
+        <Variant caption="Expanded Pi skill shown as a token">
+          <ChatMessage.User>
+            <ChatMessage.Bubble>
+              <UserPromptContent text={'<skill name="review-pr" location="/project/.pi/skills/review-pr/SKILL.md">\nSkill instructions stay out of the bubble.\n</skill>\n\n检查 @src/main.ts'} />
+            </ChatMessage.Bubble>
+          </ChatMessage.User>
+        </Variant>
         <Variant caption="streaming, no action bar">
           <ChatMessage.Assistant>
             <ChatMessage.Body>
@@ -1529,7 +1551,7 @@ function PromptInputDemo({
 }
 
 function SuggestionFocusDemo() {
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputRef = useRef<ChatPromptInputHandle | null>(null);
   const [value, setValue] = useState("");
   return (
     <Variant caption="suggestion restores input focus">
@@ -2404,19 +2426,69 @@ const modelSelectorControls: RuntimeModelControls = {
 const galleryThumb =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+const insertMenuCommands: PromptCommand[] = [
+  { kind: "skill", name: "review-pr", invocation: "skill:review-pr", description: "Review a pull request for bugs and missing tests." },
+  { kind: "skill", name: "write-docs", invocation: "skill:write-docs", description: "Write project documentation." },
+  { kind: "prompt", name: "standup", invocation: "standup", description: "Summarize today's commits into a standup note." },
+  { kind: "extension", name: "snapshot", invocation: "snapshot", description: "Capture a screenshot of the current page." },
+];
+
+const insertMenuLongSkills: PromptCommand[] = Array.from(
+  { length: 80 },
+  (_, index) => ({
+    kind: "skill" as const,
+    name: `skill-${String(index + 1).padStart(2, "0")}`,
+    invocation: `skill:skill-${String(index + 1).padStart(2, "0")}`,
+    description: "Generated gallery entry exercising the menu at its longest realistic length.",
+  }),
+);
+
 function ComposerInsertMenuGallery() {
   return (
     <GallerySection title="ComposerInsertMenu">
       <VariantRow>
-        <Variant caption="files and commands">
-          <ComposerInsertMenu onAttach={() => {}} onInsert={() => {}} />
+        <Variant caption="files only">
+          <ComposerInsertMenu onAttach={() => {}} onPick={() => {}} />
         </Variant>
-        <Variant caption="with skills and plugins">
+        <Variant caption="skills, prompts, commands">
           <ComposerInsertMenu
-            plugins={[{ name: "../../.pi/extensions/browser-tools/index.ts" }]}
-            skills={[{ name: "review-pr", description: "Review a pull request for bugs and missing tests." }, { name: "write-docs", description: "Write project documentation." }]}
+            catalogs={insertCatalogs(insertMenuCommands, { queueMode: false })}
             onAttach={() => {}}
-            onInsert={() => {}}
+            onPick={() => {}}
+          />
+        </Variant>
+        <Variant caption="80 skills">
+          <ComposerInsertMenu
+            catalogs={insertCatalogs(insertMenuLongSkills, { queueMode: false })}
+            onAttach={() => {}}
+            onPick={() => {}}
+          />
+        </Variant>
+        <Variant caption="async file search">
+          <ComposerInsertMenu
+            catalogs={[
+              {
+                id: "files",
+                label: "Reference file",
+                icon: <Icons.FolderClosed />,
+                searchLabel: "Search files",
+                emptyText: "No matching files",
+                search: async (query: string) =>
+                  [
+                    "src/main.ts",
+                    "src/components/button.tsx",
+                    "docs/deeply/nested/path/to/a/very/long/file/name.ts",
+                  ]
+                    .filter((path) => path.includes(query))
+                    .map((path) => ({
+                      id: path,
+                      label: path.slice(path.lastIndexOf("/") + 1),
+                      description: path,
+                    })),
+              },
+            ]}
+            onAttach={() => {}}
+            onPick={() => {}}
           />
         </Variant>
       </VariantRow>

@@ -13,6 +13,43 @@ import { createMockPackages } from "./packages";
 
 export const mockProject = "/dev/Pace-Mock";
 const timestamp = "2026-09-09T08:00:00.000Z";
+
+// Prompt-command catalog for the composer's "/" menu and "+" insert menu —
+// long descriptions on purpose so the trigger menu's two-line items and the
+// palette's truncation are visible in screenshots.
+const promptCommandCatalog = {
+  source: "runtime" as const,
+  commands: [
+    {
+      kind: "skill" as const,
+      name: "review-pr",
+      invocation: "skill:review-pr",
+      description:
+        "Review the current pull request for bugs, missing tests, and behavior changes — reads the diff plus surrounding context and reports findings ordered by severity.",
+    },
+    {
+      kind: "skill" as const,
+      name: "write-docs",
+      invocation: "skill:write-docs",
+      description:
+        "Write or update project documentation from the code that changed, matching the docs/ style guide and linking the relevant ADRs.",
+    },
+    {
+      kind: "prompt" as const,
+      name: "standup",
+      invocation: "standup",
+      description:
+        "Summarize today's commits, open PRs, and unfinished work into a standup note for the team channel.",
+    },
+    {
+      kind: "extension" as const,
+      name: "snapshot",
+      invocation: "snapshot",
+      description:
+        "Capture a screenshot of the current page, annotate it with the visible bounds, and attach it to the conversation for visual review.",
+    },
+  ],
+};
 const summary = {
   provider: "openai",
   model: "gpt-4.1",
@@ -455,10 +492,14 @@ export function createMockApi(): PaceRendererApi {
         case "set_resource_enabled":
           result = packageCommand(command, args);
           break;
+        case "list_prompt_commands":
+          result = promptCommandCatalog;
+          break;
         case "get_environment_preflight_status":
         case "list_available_model_controls":
         case "refresh_model_catalog":
         case "resolve_tool_schemas":
+        case "search_workspace_files":
         case "list_provider_auth_status":
         case "test_provider_connection":
         case "update:status":

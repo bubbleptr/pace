@@ -7,13 +7,15 @@ export {
   TEXT_TOO_LARGE_COPY,
   buildPromptWithAttachments,
   classifyFile,
-  insertIntoDraft,
   type ComposerAttachment,
 } from "./composer-attachment-logic";
 export { ComposerAttachmentDrawer } from "./composer-attachment-drawer";
-export { ComposerInsertMenu } from "./composer-insert-menu";
+export {
+  ComposerInsertMenu,
+  type ComposerInsertCatalog,
+  type ComposerInsertCatalogItem,
+} from "./composer-insert-menu";
 export {
   useComposerAttachments,
-  useComposerInsertCatalog,
   useFilePicker,
 } from "./use-composer-attachments";
