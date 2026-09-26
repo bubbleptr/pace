@@ -94,7 +94,7 @@ export function SessionDockTrigger({
   const toggle = (
     <IconButton
       aria-pressed={isOpen}
-      className={`pigui-pressable ${className ?? ""}`.trim()}
+      className={className}
       icon={<AnimatedSidebarRight className="size-4" />}
       label="Session dock"
       size="sm"

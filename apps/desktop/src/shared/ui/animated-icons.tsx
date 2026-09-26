@@ -1,4 +1,4 @@
-import type { ReactNode, SVGProps } from "react";
+import { useImperativeHandle, useLayoutEffect, useRef, type ReactNode, type SVGProps } from "react";
 
 // Geometry and gestures adapted from Hugeicons Animated and Lucide Animated.
 // See docs/licenses/animated-icons.md for the upstream notices.
@@ -12,10 +12,50 @@ function animatedIcon(name: string, drawing: ReactNode) {
     size = 24,
     isAnimated = true,
     className,
+    ref,
     ...rest
   }: AnimatedIconProps) {
+    const svgRef = useRef<SVGSVGElement>(null);
+    useImperativeHandle(ref, () => svgRef.current!, []);
+
+    useLayoutEffect(() => {
+      const svg = svgRef.current;
+      const control = svg?.closest<HTMLElement>("button, a, [role='menuitem']");
+      if (!isAnimated || !svg || !control) return;
+
+      // Navigation can mount a fresh icon under a stationary pointer.
+      // Only a new pointer visit may start its gesture.
+      let visited = control.matches(":hover");
+      const enter = (pointer: PointerEvent) => {
+        // Chromium transfers hover from the removed control before any move.
+        if (pointer.relatedTarget instanceof Node && !pointer.relatedTarget.isConnected) {
+          visited = true;
+        }
+      };
+      const move = (pointer: PointerEvent) => {
+        if (visited || pointer.pointerType !== "mouse" || pointer.buttons !== 0
+          || control.matches(":disabled, [aria-disabled='true']")) return;
+        visited = true;
+        svg.setAttribute("data-icon-hover", "");
+      };
+      const leave = () => {
+        visited = false;
+        svg.removeAttribute("data-icon-hover");
+      };
+      control.addEventListener("pointerenter", enter);
+      control.addEventListener("pointermove", move);
+      control.addEventListener("pointerleave", leave);
+      return () => {
+        control.removeEventListener("pointerenter", enter);
+        control.removeEventListener("pointermove", move);
+        control.removeEventListener("pointerleave", leave);
+        svg.removeAttribute("data-icon-hover");
+      };
+    }, [isAnimated]);
+
     return (
       <svg
+        ref={svgRef}
         xmlns="http://www.w3.org/2000/svg"
         width={size}
         height={size}

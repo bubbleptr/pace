@@ -212,9 +212,18 @@
   overflow: visible;
 }
 
+/* These controls use the icon's hover gesture instead of press scaling. */
+:where(button, a, [role="menuitem"]):has(svg.pigui-animated-icon):active {
+  transform: none;
+  scale: none;
+}
+
 .pigui-animated-icon [data-icon-part] {
   transform-box: view-box;
   transform-origin: center;
+  animation-duration: calc(var(--pigui-icon-motion-duration) - var(--icon-motion-delay, 0ms));
+  animation-delay: var(--icon-motion-delay, 0ms);
+  animation-timing-function: var(--ease-standard);
 }
 
 .pigui-animated-icon[data-icon-motion="history"] [data-icon-part] {
@@ -285,107 +294,113 @@
 
 /* Only a fine pointer starts decorative motion. Focus and touch stay still. */
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  .pigui-animated-icon[data-icon-motion="chart-pie"] [data-icon-part="slice"] {
-    transition: transform var(--duration-medium-min) var(--ease-standard);
-  }
-
   :where(button, a, [role="menuitem"]):hover:not(:disabled):not([aria-disabled="true"]) {
-    & .pigui-animated-icon[data-icon-motion="history"] [data-icon-part] {
-      animation: pigui-icon-rewind var(--duration-slow-min) linear;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="history"] [data-icon-part] {
+      animation-name: pigui-icon-rewind;
+      animation-timing-function: linear;
     }
 
-    & .pigui-animated-icon[data-icon-motion="chart-pie"] [data-icon-part="slice"] {
-      transform: translate(4.5833%, -4.5833%);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="chart-pie"] [data-icon-part="slice"] {
+      animation-name: pigui-icon-chart-pie;
     }
 
-    & .pigui-animated-icon[data-icon-motion="new-chat"] [data-icon-part="bubble"] {
-      animation: pigui-icon-chat var(--duration-medium-max) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="new-chat"] [data-icon-part="bubble"] {
+      animation-name: pigui-icon-chat;
     }
 
-    & .pigui-animated-icon[data-icon-motion="new-chat"] [data-icon-part="add"] {
-      animation: pigui-icon-chat-add var(--duration-medium-max) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="new-chat"] [data-icon-part="add"] {
+      animation-name: pigui-icon-chat-add;
     }
 
-    & .pigui-animated-icon[data-icon-motion="puzzle"] [data-icon-part="piece"] {
-      animation: pigui-icon-puzzle var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="puzzle"] [data-icon-part="piece"] {
+      animation-name: pigui-icon-puzzle;
     }
 
-    & .pigui-animated-icon[data-icon-motion="settings"] [data-icon-part="gear"] {
-      animation: pigui-icon-gear var(--duration-slow) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="settings"] [data-icon-part="gear"] {
+      animation-name: pigui-icon-gear;
     }
 
-    & .pigui-animated-icon[data-icon-motion="sidebar"] [data-icon-part="divider"] {
-      animation: pigui-icon-sidebar var(--duration-slow-min) linear;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="sidebar"] [data-icon-part="divider"] {
+      animation-name: pigui-icon-sidebar;
+      animation-timing-function: linear;
     }
 
-    & .pigui-animated-icon[data-icon-motion="plus"] [data-icon-part="stem"] {
-      animation: pigui-icon-plus-stem var(--duration-medium-max) ease-in-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="plus"] [data-icon-part="stem"] {
+      animation-name: pigui-icon-plus-stem;
+      animation-timing-function: ease-in-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="plus"] [data-icon-part="arm"] {
-      animation: pigui-icon-plus-arm var(--duration-medium-max) ease-in-out;
-      animation-delay: calc(var(--duration-fast) / 3);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="plus"] [data-icon-part="arm"] {
+      animation-name: pigui-icon-plus-arm;
+      animation-timing-function: ease-in-out;
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 10);
     }
 
-    & .pigui-animated-icon[data-icon-motion="more"] [data-icon-part] {
-      animation: pigui-icon-dot var(--duration-medium) ease-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part] {
+      animation-name: pigui-icon-dot;
+      animation-timing-function: ease-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="more"] [data-icon-part="second"] {
-      animation-delay: calc(var(--duration-fast) / 2);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part="second"] {
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 8);
     }
 
-    & .pigui-animated-icon[data-icon-motion="more"] [data-icon-part="third"] {
-      animation-delay: var(--duration-fast);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part="third"] {
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 4);
     }
 
-    & .pigui-animated-icon[data-icon-motion="key"] [data-icon-part="key"] {
-      animation: pigui-icon-key var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="key"] [data-icon-part="key"] {
+      animation-name: pigui-icon-key;
     }
 
-    & .pigui-animated-icon[data-icon-motion="robot"] [data-icon-part="head"] {
-      animation: pigui-icon-robot-head var(--duration-slow) ease-in-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="robot"] [data-icon-part="head"] {
+      animation-name: pigui-icon-robot-head;
+      animation-timing-function: ease-in-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="robot"] [data-icon-part="antenna"] {
-      animation: pigui-icon-robot-antenna var(--duration-slow-min) ease-in-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="robot"] [data-icon-part="antenna"] {
+      animation-name: pigui-icon-robot-antenna;
+      animation-timing-function: ease-in-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="robot"] :is([data-icon-part="left-eye"], [data-icon-part="right-eye"]) {
-      animation: pigui-icon-robot-eye var(--duration-slow-min) ease-in-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="robot"] :is([data-icon-part="left-eye"], [data-icon-part="right-eye"]) {
+      animation-name: pigui-icon-robot-eye;
+      animation-timing-function: ease-in-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="robot"] [data-icon-part="right-eye"] {
-      animation-delay: calc(var(--duration-fast) / 5);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="robot"] [data-icon-part="right-eye"] {
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 20);
     }
 
-    & .pigui-animated-icon[data-icon-motion="message"] [data-icon-part="bubble"] {
-      animation: pigui-icon-message var(--duration-medium-max) ease-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="message"] [data-icon-part="bubble"] {
+      animation-name: pigui-icon-message;
+      animation-timing-function: ease-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="message"] [data-icon-part="text"] {
-      animation: pigui-icon-message-text var(--duration-slow) ease-out;
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="message"] [data-icon-part="text"] {
+      animation-name: pigui-icon-message-text;
+      animation-timing-function: ease-out;
     }
 
-    & .pigui-animated-icon[data-icon-motion="file"] [data-icon-part="paper"] {
-      animation: pigui-icon-paper var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="file"] [data-icon-part="paper"] {
+      animation-name: pigui-icon-paper;
     }
 
-    & .pigui-animated-icon[data-icon-motion="file"] [data-icon-part="lines"] {
-      animation: pigui-icon-paper-lines var(--duration-medium-max) var(--ease-standard);
-      animation-delay: var(--duration-fast);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="file"] [data-icon-part="lines"] {
+      animation-name: pigui-icon-paper-lines;
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 4);
     }
 
-    & .pigui-animated-icon[data-icon-motion="information-circle"] [data-icon-part="circle"] {
-      animation: pigui-icon-info-circle var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="information-circle"] [data-icon-part="circle"] {
+      animation-name: pigui-icon-info-circle;
     }
 
-    & .pigui-animated-icon[data-icon-motion="information-circle"] [data-icon-part="stem"] {
-      animation: pigui-icon-info-stem var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="information-circle"] [data-icon-part="stem"] {
+      animation-name: pigui-icon-info-stem;
     }
 
-    & .pigui-animated-icon[data-icon-motion="information-circle"] [data-icon-part="dot"] {
-      animation: pigui-icon-info-dot var(--duration-slow-min) var(--ease-standard);
+    & .pigui-animated-icon[data-icon-hover][data-icon-motion="information-circle"] [data-icon-part="dot"] {
+      animation-name: pigui-icon-info-dot;
     }
   }
 }
@@ -398,6 +413,11 @@
   66% { transform: rotate(calc(var(--icon-turn) * 0.833333)); }
   84% { transform: rotate(calc(var(--icon-turn) * 1.025)); }
   100% { transform: rotate(var(--icon-turn)); }
+}
+
+@keyframes pigui-icon-chart-pie {
+  0%, 100% { transform: none; }
+  50% { transform: translate(4.5833%, -4.5833%); }
 }
 
 @keyframes pigui-icon-chat {

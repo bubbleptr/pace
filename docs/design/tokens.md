@@ -70,6 +70,10 @@ context: { label: "CONTEXT", color: "var(--success)" }
 - `--pigui-sidebar-*`（`styles.css:111-130`，20 个）只在 `widgets/app-frame/app-frame.tsx` 与 `styles.css` 的侧栏规则里用，值被 `app-frame.test.tsx` 按字面冻结；别处不引用，也不新增 `--pigui-color-*`（同一测试禁止）。
 - 运行时注入的布局 token（`--pigui-header-height` `--pigui-main-left` `--pigui-chrome-safe-left` `--pigui-session-dock-width`）由 `widgets/app-frame/app-frame.tsx` / `agent-workspace.tsx` 写在 style 上，CSS 只读不声明。
 
+## 图标动画时长
+
+`app/styles.css` 的 `:root` 声明 `--pigui-icon-motion-duration: 800ms`，固定为用户指定的整轮时长，不随主题变化。动态图标的部件时长与延迟都从这一 token 计算，延迟包含在 800ms 内；其他界面动效不引用它。交互规则见 [动画图标](animated-icons.md)。
+
 ## 已知债务，不许再添
 
 | 债务 | 位置 | 新代码的做法 |
