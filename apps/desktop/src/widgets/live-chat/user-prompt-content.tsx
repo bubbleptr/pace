@@ -72,7 +72,10 @@ export function UserPromptContent({
         <Fragment key={index}>
           {part.token ? (
             <Tooltip content={part.text} hasHoverIndication={false}>
-              <ChatTokenizedText tokens={[{ ...part.token, value: TOKEN_PLACEHOLDER }]}>
+              <ChatTokenizedText
+                tokens={[{ ...part.token, value: TOKEN_PLACEHOLDER }]}
+                style={{ display: "inline-flex", verticalAlign: "middle" }}
+              >
                 {TOKEN_PLACEHOLDER}
               </ChatTokenizedText>
             </Tooltip>
