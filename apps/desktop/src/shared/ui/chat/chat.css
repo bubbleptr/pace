@@ -873,6 +873,11 @@
   color: var(--color-text-primary) !important;
 }
 
+/* Astryx inserts an inline baseline alignment on each token span. */
+.prompt-input__input [data-astryx-token] {
+  vertical-align: middle !important;
+}
+
 /* Hint copy recedes below composer chrome (model selector uses
    --color-text-secondary via text-muted). Opacity is reset so Firefox
    does not further fade the token color. */

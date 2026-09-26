@@ -74,6 +74,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 - **补全菜单宽度**：`/` 和 `@` 的菜单锚定各自的输入框并与其等宽，最大宽度保留视口两侧间距；不随说明或路径长度扩张。每个 Composer 独立限制 CSS anchor 作用域，多输入框不会相互抢锚点。命令名与文件名单行省略，命令说明最多两行、路径最多一行；悬停可查看完整文本。Design 页包含宽窄输入的长内容示例。
 - **`leadingTokenFor?: (value) => { length, token } | null`**：草稿恢复、外部写入等把 token 拍平成文本之后，用它把开头的命令字符串补回成 token（Astryx 外部赋值走 `textContent`，token 会丢）。匹配只在最开头的文本节点上做，`length` 含紧跟的一个空格或 NBSP。
 - **token 的 NBSP**：`insertToken` 会在 token 后插 `\u00A0`；Pi 只用普通空格切命令参数，所以**只在提交时**（`buildPromptWithAttachments`）统一换成普通空格，不回写受控 value（回写会把 token 抹平）。
+- **token 的对齐**：输入框内 `[data-astryx-token]` 统一使用 `vertical-align: middle`，覆盖 Astryx 插入时的内联 `baseline`。输入、菜单插入和草稿恢复共用此规则；Design 页包含 token 与中英文、多行正文混排的示例。
 - **文件引用**：项目草稿和 Live composer 的 `@` 补全与 `+ → Reference file` 共用 `search_workspace_files`，草稿按项目根、Live 按 Session 的 Execution Checkout 搜索；Chat 工作区不提供。token 显示文件名，序列化保留相对路径，目录带 `/`，含 Pi 分隔符的路径加双引号。输入框文件引用逻辑在 `entities/workspace-file/`，不读取或展开文件正文。
 - **无障碍**：`role` 由 Astryx 自己给——`useTriggerMenu` 的 `ariaProps` 落在可编辑元素上，无 trigger 是 `textbox`、有 trigger 是 `combobox`（带 `aria-expanded` 等）；**不要**在 effect 里 `setAttribute("role")`，会和 React 管理的属性打架。组件 effect 只补 Astryx 没给的两项：`aria-placeholder`（placeholder 本身在一个 `aria-hidden` div 上）与禁用时的 `aria-disabled`，随 placeholder / 禁用态更新。不要 swizzle Astryx 源码。
 - 文件拖放仍由外层 `prompt-input` div 处理；粘贴文件走 `onFiles`，粘贴文本只插纯文本。禁用 = `isDisabled`（`contentEditable="false"`）+ `aria-disabled` + CSS `cursor: not-allowed`。

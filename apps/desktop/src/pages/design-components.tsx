@@ -77,7 +77,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import * as Icons from "@/shared/ui/icons";
 import type { PromptCommand, RuntimeModelControls } from "@pace/core";
-import { insertCatalogs, slashTrigger } from "@/entities/prompt-command";
+import { insertCatalogs, leadingCommandMatch, slashTrigger } from "@/entities/prompt-command";
 import { atTrigger } from "@/entities/workspace-file";
 
 /**
@@ -1681,11 +1681,28 @@ function PromptInputSuggestionsDemo({ width }: { width: "100%" | "60%" }) {
   );
 }
 
+function PromptInputTokenAlignmentDemo() {
+  const [value, setValue] = useState("/skill:review-pr 你好哈哈 Review this change\n第二行继续输入");
+  return (
+    <Variant caption="token with mixed-language text">
+      <ChatPromptInput
+        value={value}
+        onValueChange={setValue}
+        leadingTokenFor={(text) => leadingCommandMatch(text, [
+          { kind: "skill", name: "review-pr", invocation: "skill:review-pr" },
+        ])}
+        onSubmit={() => setValue("")}
+      />
+    </Variant>
+  );
+}
+
 function ChatPromptInputGallery() {
   return (
     <GallerySection title="ChatPromptInput">
       <Text type="supporting">Steady outer-only elevation; no border, inset ring, or hover / focus deepening.</Text>
       <VStack gap={4}>
+        <PromptInputTokenAlignmentDemo />
         <PromptInputSuggestionsDemo width="100%" />
         <PromptInputSuggestionsDemo width="60%" />
       </VStack>
