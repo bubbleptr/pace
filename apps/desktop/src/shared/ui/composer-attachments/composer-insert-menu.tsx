@@ -2,7 +2,7 @@ import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { CommandPalette, CommandPaletteInput } from "@astryxdesign/core/CommandPalette";
 import { createStaticSource } from "@astryxdesign/core/Typeahead";
-import { VStack } from "@astryxdesign/core/Stack";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { ImageIcon, Plus } from "@/shared/ui/icons";
 
@@ -100,9 +100,21 @@ export function ComposerInsertMenu({
           className, label: "Add to prompt", size: "sm", tooltip: "Add to prompt", variant: "ghost" }}
         {...rest}
         items={[
-          { icon: <ImageIcon />, label: "Add files", onClick: onAttach },
+          {
+            icon: (
+              <HStack as="span" className="pigui-compact-menu-item-icon text-muted" aria-hidden="true">
+                <ImageIcon />
+              </HStack>
+            ),
+            label: "Add files",
+            onClick: onAttach,
+          },
           ...listedCatalogs.map((catalog) => ({
-            icon: catalog.icon,
+            icon: (
+              <HStack as="span" className="pigui-compact-menu-item-icon text-muted" aria-hidden="true">
+                {catalog.icon}
+              </HStack>
+            ),
             label: catalog.label,
             onClick: () => setOpenCatalogId(catalog.id),
           })),

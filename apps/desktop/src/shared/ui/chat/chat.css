@@ -795,6 +795,24 @@
   flex-direction: column;
   gap: var(--spacing-1-5);
   min-width: 0;
+  anchor-scope: --pace-prompt-input;
+}
+
+.prompt-input__input {
+  anchor-name: --pace-prompt-input;
+}
+
+/* Astryx anchors suggestions to the caret and leaves their width intrinsic.
+   Size each menu from its own input so long descriptions cannot widen it. */
+.prompt-input__input > [popover]:has(.astryx-trigger-menu) {
+  position-anchor: --pace-prompt-input !important;
+  width: anchor-size(width);
+  min-width: 0;
+  max-width: calc(100vw - 2 * var(--spacing-4));
+}
+
+.prompt-input__input .astryx-trigger-menu {
+  min-width: 0;
 }
 
 .prompt-input .astryx-chat-composer {
@@ -853,6 +871,11 @@
 .prompt-input__input > [aria-multiline="true"] {
   min-height: var(--size-element-md) !important;
   color: var(--color-text-primary) !important;
+}
+
+/* Astryx inserts an inline baseline alignment on each token span. */
+.prompt-input__input [data-astryx-token] {
+  vertical-align: middle !important;
 }
 
 /* Hint copy recedes below composer chrome (model selector uses

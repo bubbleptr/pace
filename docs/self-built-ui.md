@@ -79,6 +79,12 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 
 ## 维护规则
 
+- **2026-09-26 Composer 输入 token 对齐**：输入框的 `[data-astryx-token]` 覆盖 Astryx 默认基线对齐，保持与相邻正文垂直居中；Design 页增加中英文及多行混排示例。规则见 [对话与 Composer](design/chat.md)。
+
+- **2026-09-26 Composer 补全菜单宽度**：`ChatPromptInput` 将 `/` 与 `@` 菜单锚定到当前输入框，限制为输入框宽度并保留视口边距；命令与文件行允许收缩，长名称单行省略。Design 页增加宽窄输入的长内容示例。规则见 [对话与 Composer](design/chat.md)。
+
+- **2026-09-26 Composer 菜单图标**：`ComposerInsertMenu` 的 Add files 与所有 catalog 图标统一复用紧凑菜单的尺寸和弱化颜色，避免传入的 ReactNode 保留 SVG 默认尺寸。Design 页既有文件、命令与异步搜索示例可直接检查。规则见 [对话与 Composer](design/chat.md)。
+
 - **2026-09-26 用户消息 token 展示**：`widgets/live-chat/UserPromptContent` 组合已有 command / file token 与 Astryx `ChatTokenizedText`，折叠完整 Pi skill 包装；不新增领域相关的 shared 组件。Design 页 ChatMessage 增加命令/文件混排和 skill 折叠示例。复制与 Fork 保留消息原文。规则见 [对话与 Composer](design/chat.md)。
 
 - **2026-09-26 Composer 文件引用**：`ChatPromptInput` 增加 `appendToken`，首位命令替换保留文件 token；`ComposerInsertMenu` 支持异步 `search` catalog，并隔离搜索框点击，避免 Composer 抢焦点。文件搜索和 Pi 路径序列化位于 `entities/workspace-file/`，Draft / Live 共用。Design 页增加异步文件搜索示例。规则见 [对话与 Composer](design/chat.md)。

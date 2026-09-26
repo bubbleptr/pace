@@ -150,10 +150,10 @@ export function slashTrigger(
         | undefined;
       const Icon = data ? KIND_ICON[data.command.kind] : Command;
       return (
-        <VStack gap={0.5}>
+        <VStack gap={0.5} style={{ minWidth: 0, width: "100%" }}>
           <HStack align="center" gap={1.5}>
-            {createElement(Icon, { size: 16, "aria-hidden": true })}
-            <Text>{item.label}</Text>
+            {createElement(Icon, { size: 16, "aria-hidden": true, style: { flexShrink: 0 } })}
+            <Text maxLines={1}>{item.label}</Text>
           </HStack>
           {data?.description ? (
             <Text color="secondary" maxLines={2} size="sm" type="body">

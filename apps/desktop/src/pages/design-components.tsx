@@ -77,7 +77,8 @@ import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import * as Icons from "@/shared/ui/icons";
 import type { PromptCommand, RuntimeModelControls } from "@pace/core";
-import { insertCatalogs } from "@/entities/prompt-command";
+import { insertCatalogs, leadingCommandMatch, slashTrigger } from "@/entities/prompt-command";
+import { atTrigger } from "@/entities/workspace-file";
 
 /**
  * Layer 3 of the design gallery: every reusable Pace component in
@@ -1646,10 +1647,65 @@ function PromptInputFooterSlotDemo({
   );
 }
 
+function PromptInputSuggestionsDemo({ width }: { width: "100%" | "60%" }) {
+  const [value, setValue] = useState("");
+  const [triggers] = useState(() => [
+    slashTrigger([
+      {
+        kind: "skill",
+        name: "review-project-architecture-and-module-boundaries-before-changing-shared-components",
+        invocation: "skill:review-project-architecture-and-module-boundaries-before-changing-shared-components",
+        description: "Review the architecture, module boundaries, public interfaces, and test coverage before changing shared components. Compare the implementation with the original request and document concrete regressions, missing behavior, and opportunities to simplify the design.",
+      },
+      { kind: "prompt", name: "review", invocation: "review", description: "Review the current changes." },
+    ], { active: true, queueMode: false })!,
+    atTrigger(async (query) => [
+      "src/features/session-draft/components/nested/directory/with/a/long/path/composer.tsx",
+      "src/components/very-long-component-name-for-checking-autocomplete-label-truncation-and-icon-sizing.tsx",
+    ].filter((path) => path.includes(query)).map((path) => ({ path, kind: "file" as const }))),
+  ]);
+
+  return (
+    <Variant caption={`long suggestions (${width})`}>
+      <VStack gap={2} style={{ width }}>
+        <Text type="supporting">Type / or @ to check long names, descriptions, and paths.</Text>
+        <ChatPromptInput
+          value={value}
+          onValueChange={setValue}
+          triggers={triggers}
+          placeholder="Type / or @"
+          onSubmit={() => setValue("")}
+        />
+      </VStack>
+    </Variant>
+  );
+}
+
+function PromptInputTokenAlignmentDemo() {
+  const [value, setValue] = useState("/skill:review-pr 你好哈哈 Review this change\n第二行继续输入");
+  return (
+    <Variant caption="token with mixed-language text">
+      <ChatPromptInput
+        value={value}
+        onValueChange={setValue}
+        leadingTokenFor={(text) => leadingCommandMatch(text, [
+          { kind: "skill", name: "review-pr", invocation: "skill:review-pr" },
+        ])}
+        onSubmit={() => setValue("")}
+      />
+    </Variant>
+  );
+}
+
 function ChatPromptInputGallery() {
   return (
     <GallerySection title="ChatPromptInput">
       <Text type="supporting">Steady outer-only elevation; no border, inset ring, or hover / focus deepening.</Text>
+      <VStack gap={4}>
+        <PromptInputTokenAlignmentDemo />
+        <PromptInputSuggestionsDemo width="100%" />
+        <PromptInputSuggestionsDemo width="60%" />
+      </VStack>
       <VariantRow>
         <PromptInputDemo caption="status=ready (empty)" />
         <SuggestionFocusDemo />
