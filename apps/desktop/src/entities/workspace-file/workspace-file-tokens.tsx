@@ -150,10 +150,10 @@ export function atTrigger(
       const data = item.auxiliaryData as { match: WorkspaceFileMatch } | undefined;
       const Icon = data?.match.kind === "directory" ? FolderClosed : FileIcon;
       return (
-        <VStack gap={0.5}>
+        <VStack gap={0.5} style={{ minWidth: 0, width: "100%" }}>
           <HStack align="center" gap={1.5}>
-            {createElement(Icon, { size: 16, "aria-hidden": true })}
-            <Text>{item.label}</Text>
+            {createElement(Icon, { size: 16, "aria-hidden": true, style: { flexShrink: 0 } })}
+            <Text maxLines={1}>{item.label}</Text>
           </HStack>
           {data ? (
             <Text color="secondary" maxLines={1} size="sm" type="body">

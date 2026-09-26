@@ -71,6 +71,7 @@ prompt / 工具清单变更的居中通知，不是气泡。页面只传 `toolsA
 - **关掉的默认行为**：`hasHistory={false}`（↑ 调历史）、`pasteAsToken={false}`（长粘贴转 token），与旧 textarea 行为对齐。
 - **`inputRef`**：类型为 `ChatPromptInputHandle`（`focus()` / `focusAtEnd()` / `insertLeadingToken(token)` / `appendToken(token)`）。建议卡用 `focusAtEnd()`；命令菜单用 `insertLeadingToken` 插到开头，只替换 `leadingTokenFor` 识别出的命令，保留已有文件 token。文件菜单用 `appendToken` 在末尾追加，必要时补空格；菜单占有焦点时不依赖旧光标位置。
 - **`triggers?: ChatComposerTrigger[]`**：原样透传给 `ChatComposerInput`。调用方给空数组时组件补一个不可见占位 trigger（`\u2063`，键盘打不出来），把可编辑元素的 role 钉在 `combobox`，避免 role 随输入在 `textbox`/`combobox` 间跳变。
+- **补全菜单宽度**：`/` 和 `@` 的菜单锚定各自的输入框并与其等宽，最大宽度保留视口两侧间距；不随说明或路径长度扩张。每个 Composer 独立限制 CSS anchor 作用域，多输入框不会相互抢锚点。命令名与文件名单行省略，命令说明最多两行、路径最多一行；悬停可查看完整文本。Design 页包含宽窄输入的长内容示例。
 - **`leadingTokenFor?: (value) => { length, token } | null`**：草稿恢复、外部写入等把 token 拍平成文本之后，用它把开头的命令字符串补回成 token（Astryx 外部赋值走 `textContent`，token 会丢）。匹配只在最开头的文本节点上做，`length` 含紧跟的一个空格或 NBSP。
 - **token 的 NBSP**：`insertToken` 会在 token 后插 `\u00A0`；Pi 只用普通空格切命令参数，所以**只在提交时**（`buildPromptWithAttachments`）统一换成普通空格，不回写受控 value（回写会把 token 抹平）。
 - **文件引用**：项目草稿和 Live composer 的 `@` 补全与 `+ → Reference file` 共用 `search_workspace_files`，草稿按项目根、Live 按 Session 的 Execution Checkout 搜索；Chat 工作区不提供。token 显示文件名，序列化保留相对路径，目录带 `/`，含 Pi 分隔符的路径加双引号。输入框文件引用逻辑在 `entities/workspace-file/`，不读取或展开文件正文。
