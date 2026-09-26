@@ -209,7 +209,6 @@
 
 /* SVG motion is opt-in at the icon; its existing button owns the hit area. */
 .pigui-animated-icon {
-  --icon-motion-duration: var(--duration-medium-max);
   overflow: visible;
 }
 
@@ -222,7 +221,7 @@
 .pigui-animated-icon [data-icon-part] {
   transform-box: view-box;
   transform-origin: center;
-  animation-duration: calc(var(--icon-motion-duration) - var(--icon-motion-delay, 0ms));
+  animation-duration: calc(var(--pigui-icon-motion-duration) - var(--icon-motion-delay, 0ms));
   animation-delay: var(--icon-motion-delay, 0ms);
   animation-timing-function: var(--ease-standard);
 }
@@ -334,7 +333,7 @@
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="plus"] [data-icon-part="arm"] {
       animation-name: pigui-icon-plus-arm;
       animation-timing-function: ease-in-out;
-      --icon-motion-delay: calc(var(--icon-motion-duration) / 10);
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 10);
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part] {
@@ -343,11 +342,11 @@
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part="second"] {
-      --icon-motion-delay: calc(var(--icon-motion-duration) / 8);
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 8);
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="more"] [data-icon-part="third"] {
-      --icon-motion-delay: calc(var(--icon-motion-duration) / 4);
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 4);
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="key"] [data-icon-part="key"] {
@@ -370,7 +369,7 @@
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="robot"] [data-icon-part="right-eye"] {
-      --icon-motion-delay: calc(var(--icon-motion-duration) / 20);
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 20);
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="message"] [data-icon-part="bubble"] {
@@ -389,7 +388,7 @@
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="file"] [data-icon-part="lines"] {
       animation-name: pigui-icon-paper-lines;
-      --icon-motion-delay: calc(var(--icon-motion-duration) / 4);
+      --icon-motion-delay: calc(var(--pigui-icon-motion-duration) / 4);
     }
 
     & .pigui-animated-icon[data-icon-hover][data-icon-motion="information-circle"] [data-icon-part="circle"] {

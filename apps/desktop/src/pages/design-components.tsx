@@ -1193,8 +1193,8 @@ function AnimatedIconsGallery() {
   return (
     <GallerySection title="AnimatedIcons">
       <Text type="supporting">
-        Move the mouse onto a control to preview one cycle. All icons share the same duration; clicking does not replay
-        them. Keyboard focus, touch, and reduced motion stay still.
+        Move the mouse onto a control to preview one 800ms cycle. Clicking does not replay it. Keyboard focus, touch, and
+        reduced motion stay still.
       </Text>
       <VariantRow>
         <Variant caption="16px · navigation">

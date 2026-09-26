@@ -97,6 +97,8 @@
 }
 
 :root {
+  --pigui-icon-motion-duration: 800ms;
+
   /* Pi mark colors (docs/design/brand.md): the only place color is allowed
      outside this bridge is where "Pi is present" - the empty-state title
      shimmer and the composer's brand accent border. Values are pi.dev's
