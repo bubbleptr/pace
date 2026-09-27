@@ -53,7 +53,13 @@ const toolStart = (ms: number, toolCallId: string, name: string): Beat => ({
   },
 });
 
-const toolEnd = (ms: number, toolCallId: string, name: string, result: string): Beat => ({
+const toolEnd = (
+  ms: number,
+  toolCallId: string,
+  name: string,
+  result: unknown,
+  isError = false,
+): Beat => ({
   ms,
   event: {
     type: "tool",
@@ -63,7 +69,7 @@ const toolEnd = (ms: number, toolCallId: string, name: string, result: string): 
     phase: "end",
     name,
     result,
-    isError: false,
+    isError,
     surface: "trace",
     origin: "sdk",
   },
@@ -417,6 +423,55 @@ describe("CoT view derivation", () => {
         ],
       },
     ]);
+  });
+
+  it("attaches edit line stats to the tool item, and withholds them on error", () => {
+    const m1 = message(1);
+    const call = m1.part(0, "tool_call");
+    const args = '{"path":"src/main.ts"}';
+    // Pi's edit result: +2 -1 as a unified patch under details.
+    const result = {
+      content: [{ type: "text", text: "edited" }],
+      details: {
+        patch: [
+          "--- a/src/main.ts",
+          "+++ b/src/main.ts",
+          "@@ -1,2 +1,3 @@",
+          " const a = 1;",
+          "-const b = 2;",
+          "+const b = 3;",
+          "+const c = 4;",
+        ].join("\n"),
+      },
+    };
+
+    const runTool = (isError: boolean) =>
+      replay([
+        runStart(0),
+        m1.start(100),
+        call.start(200, "edit"),
+        call.end(300, args, "call-1"),
+        m1.end(400, [call.snapshot(args, "call-1")]),
+        toolStart(500, "call-1", "edit"),
+        toolEnd(800, "call-1", "edit", result, isError),
+        runEnd(900),
+      ]).final;
+
+    expect(runTool(false).steps[0]).toMatchObject({
+      kind: "tools",
+      tools: [
+        { state: "output-available", diffStat: { additions: 2, deletions: 1 } },
+      ],
+    });
+    // An errored call keeps its output text but never claims line stats.
+    expect(runTool(true).steps[0]).toMatchObject({
+      kind: "tools",
+      tools: [{ state: "output-error" }],
+    });
+    const errored = runTool(true).steps[0];
+    expect(
+      errored.kind === "tools" && errored.tools[0].diffStat,
+    ).toBeFalsy();
   });
 
   it("drops an abandoned Message on retry and re-anchors the clock on the retried one", () => {

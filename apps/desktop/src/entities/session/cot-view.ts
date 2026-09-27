@@ -4,6 +4,7 @@
 // state of their own. See docs/adr/0030-cot-runtime-phase-machine.md §1/§2/§3/§6/§7.
 
 import type { ChatToolItem } from "@/shared/ui/chat/chat-tool";
+import { toolDiffStatFromResult } from "./tool-diff-stat";
 import type {
   SessionRuntimeMessage,
   SessionRuntimeMessagePart,
@@ -90,12 +91,15 @@ function toolItem(
     : part.done
       ? "input-available"
       : "input-streaming";
+  const diffStat =
+    executed && !tool?.isError ? toolDiffStatFromResult(tool?.result) : undefined;
 
   return {
     state,
     ...(part.toolCallId ? { toolCallId: part.toolCallId } : {}),
     ...(toolName ? { toolName } : {}),
     ...(part.body ? { argsText: part.body } : {}),
+    ...(diffStat ? { diffStat } : {}),
     ...(tool?.result !== undefined ? { output: serializeToolDetail(tool.result) } : {}),
     ...(startedMs !== undefined && endedMs !== undefined
       ? { durationMs: endedMs - startedMs }

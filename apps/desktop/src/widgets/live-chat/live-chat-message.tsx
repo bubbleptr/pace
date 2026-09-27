@@ -16,6 +16,7 @@ import { type ReactNode } from "react";
 import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { GitBranch } from "@/shared/ui/icons";
 import { type CotStep, type CotView } from "@/entities/session/cot-view";
+import { toolDiffStatFromResult } from "@/entities/session/tool-diff-stat";
 import { type LiveMessage, type RunTimelineItem } from "@/entities/session/live-chat-model";
 import type { PromptCommand } from "@pace/core";
 import { UserPromptContent } from "./user-prompt-content";
@@ -218,6 +219,12 @@ export function settledCotViewFromTimeline(timeline: RunTimelineItem[]): CotView
       continue;
     }
 
+    // outputText is the serialized result object; edit results carry a
+    // countable patch under details.
+    const diffStat =
+      item.toolState === "output-available"
+        ? toolDiffStatFromResult(item.outputText)
+        : undefined;
     const tool: ChatToolItem = {
       argsText: item.argsText,
       durationMs: item.durationMs,
@@ -225,6 +232,7 @@ export function settledCotViewFromTimeline(timeline: RunTimelineItem[]): CotView
       state: item.toolState ?? "input-available",
       toolCallId: item.toolCallId ?? item.id,
       toolName: item.toolName ?? item.title,
+      ...(diffStat ? { diffStat } : {}),
     };
     const last = steps[steps.length - 1];
 

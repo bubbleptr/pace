@@ -80,6 +80,27 @@ describe("ChatToolGroup", () => {
     expect(screen.getByRole("button", { name: /2/ })).toBeInTheDocument();
   });
 
+  it("renders per-call diff stats through the Astryx additions/deletions slots", () => {
+    const { container } = render(
+      <ChatToolGroup
+        tools={[
+          {
+            toolCallId: "call-edit",
+            toolName: "edit",
+            state: "output-available",
+            argsText: '{"path":"src/main.ts"}',
+            diffStat: { additions: 12, deletions: 3 },
+          },
+        ]}
+      />,
+    );
+
+    const group = container.querySelector('[data-slot="chat-tool-group"]');
+
+    expect(group).toHaveTextContent("+12");
+    expect(group).toHaveTextContent("-3");
+  });
+
   it("renders a single tool identically to ChatTool's single-call mode", () => {
     const { container } = render(<ChatToolGroup tools={[tools[0]]} />);
 

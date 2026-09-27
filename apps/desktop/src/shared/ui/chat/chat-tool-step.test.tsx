@@ -137,6 +137,68 @@ describe("ChatToolStep", () => {
     expect(screen.getByText("750ms")).toBeInTheDocument();
   });
 
+  it("sums per-tool diff stats into one settled meta", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "edit",
+            diffStat: { additions: 3, deletions: 1 },
+          }),
+          tool({
+            toolCallId: "c2",
+            toolName: "edit",
+            diffStat: { additions: 2, deletions: 0 },
+          }),
+          tool({ toolCallId: "c3", toolName: "read" }),
+        ])}
+      />,
+    );
+
+    const stat = container.querySelector('[data-slot="chat-tool-diff-stat"]');
+
+    expect(stat).toBeInTheDocument();
+    expect(stat).toHaveTextContent("+5");
+    expect(stat).toHaveTextContent("-1");
+  });
+
+  it("shows no diff-stat meta when no tool carried one", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({ toolCallId: "c1", toolName: "read" }),
+          tool({ toolCallId: "c2", toolName: "bash" }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-diff-stat"]')).not.toBeInTheDocument();
+  });
+
+  // A finished call inside a still-running burst already holds its result;
+  // the number stays hidden until the row settles so it cannot page in early.
+  it("withholds diff stats while the step is live", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step(
+          [
+            tool({
+              toolCallId: "c1",
+              toolName: "edit",
+              state: "output-available",
+              diffStat: { additions: 3, deletions: 1 },
+            }),
+            tool({ toolCallId: "c2", toolName: "read", state: "input-available" }),
+          ],
+          { live: true, activeToolCallId: "c2" },
+        )}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-diff-stat"]')).not.toBeInTheDocument();
+  });
+
   it("marks the summary with the shared kind, and each expanded row with its own", () => {
     const { container } = render(
       <ChatToolStep

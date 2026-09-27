@@ -1483,6 +1483,21 @@ function ChatToolGroupGallery() {
             ]}
           />
         </Variant>
+        <Variant caption="edit call with line stats (+N -M)">
+          <ChatToolGroup
+            tools={[
+              {
+                toolCallId: "g6",
+                toolName: "edit",
+                state: "output-available",
+                argsText: '{"path":"src/app/main.tsx"}',
+                output: "edited",
+                durationMs: 140,
+                diffStat: { additions: 12, deletions: 3 },
+              },
+            ]}
+          />
+        </Variant>
         <Variant caption="multiple calls (collapsed into a group summary)">
           <ChatToolGroup
             tools={[
@@ -2068,6 +2083,37 @@ const settledToolBurst: ChatToolStepItem = {
   ],
 };
 
+const settledEditBurst: ChatToolStepItem = {
+  kind: "tools",
+  id: "design-tools-edit-burst",
+  live: false,
+  tools: [
+    {
+      toolCallId: "design-edit-1",
+      toolName: "edit",
+      state: "output-available",
+      durationMs: 140,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/main.tsx" }),
+      diffStat: { additions: 12, deletions: 3 },
+    },
+    {
+      toolCallId: "design-edit-2",
+      toolName: "edit",
+      state: "output-available",
+      durationMs: 90,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/styles.css" }),
+      diffStat: { additions: 6, deletions: 1 },
+    },
+    {
+      toolCallId: "design-edit-3",
+      toolName: "read",
+      state: "output-available",
+      durationMs: 40,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/main.tsx" }),
+    },
+  ],
+};
+
 const mixedKindToolStep: ChatToolStepItem = {
   kind: "tools",
   id: "design-tools-mixed",
@@ -2246,6 +2292,9 @@ function ChatToolStepGallery() {
         </Variant>
         <Variant caption="settled, a burst">
           <ChatToolStep step={settledToolBurst} />
+        </Variant>
+        <Variant caption="settled, edit burst with line stats">
+          <ChatToolStep step={settledEditBurst} />
         </Variant>
         <Variant caption="settled, with a failure">
           <ChatToolStep step={failedToolStep} />
