@@ -1003,6 +1003,50 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
   });
 
+  it("opens the Files surface for a confirmed inline-code file reference", async () => {
+    setDockedLayout(true);
+    addProjectToRegistry(mockProject);
+    const api = createMockApi();
+    window.pace = {
+      ...api,
+      async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+        // README.md exists in the mock checkout but is not in Changes;
+        // src/missing.ts is confirmed against nothing.
+        if (command === "resolve_session_files") {
+          return { files: ["README.md"] } as T;
+        }
+        const result = await api.invoke<T>(command, args);
+        if (command === "get_runtime_snapshot") {
+          const snapshot = result as unknown as import("@pace/core").RuntimeGatewaySnapshot;
+          for (const envelope of snapshot.events) {
+            const event = envelope.payload as import("@pace/core").AgentRuntimeEvent;
+            if (event.type === "message" && event.role === "assistant" && event.parts) {
+              for (const part of event.parts) {
+                if (part.partType === "text") {
+                  part.body = "See `README.md` and `src/missing.ts`.";
+                }
+              }
+            }
+          }
+        }
+        return result;
+      },
+    };
+    renderProjectSessions(`/projects/${encodeURIComponent(mockProject)}/sessions`, { seedProjects: false });
+    const chat = await screen.findByLabelText("Live Chat messages");
+    const link = await within(chat).findByRole("link", { name: "README.md" });
+    expect(link).toHaveAttribute("data-slot", "chat-inline-code-link");
+    // Unconfirmed inline code stays plain text.
+    expect(within(chat).queryByRole("link", { name: "src/missing.ts" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-dock")).not.toBeInTheDocument();
+
+    expect(fireEvent.click(link)).toBe(false);
+
+    const files = await screen.findByRole("complementary", { name: "Files" });
+    const viewer = await within(files).findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-path", "README.md");
+  });
+
   it("opens nothing for a chat link that resolves outside the checkout", async () => {
     setDockedLayout(true);
     addProjectToRegistry(mockProject);

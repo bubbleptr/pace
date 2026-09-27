@@ -1416,6 +1416,21 @@ function ChatMarkdownGallery() {
         <Variant caption="streaming (chunked delivery, Astryx incremental fade-in)">
           <StreamingMarkdownDemo />
         </Variant>
+        <Variant caption="linkedInlineCode: confirmed files link, look-alikes and fenced code stay plain">
+          <ChatMarkdown
+            fileLinks
+            linkedInlineCode={new Set(["src/session.ts:12", "logs/large.txt"])}
+          >
+            {[
+              "Confirmed `src/session.ts:12` and `logs/large.txt` render as links;",
+              "`src/missing.ts` and `console.log` stay plain.",
+              "",
+              "```",
+              "src/session.ts:12",
+              "```",
+            ].join("\n")}
+          </ChatMarkdown>
+        </Variant>
       </div>
     </GallerySection>
   );

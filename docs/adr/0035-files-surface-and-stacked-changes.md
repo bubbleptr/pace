@@ -26,6 +26,7 @@ Changes surface 目前是「左侧文件列表、右侧单文件 diff、点一�
 - 左侧目录树，目录按需懒加载；右侧文件预览，用 `@pierre/diffs` 的 `File` 渲染器，和 diff 共用高亮与主题。
 - 根目录是 Session 的 diffRoot——与 Changes 显示路径的根一致，两边看到的路径指向同一个文件。
 - 后端新增两个 RPC：`list_session_directory` 与 `read_session_file`。根由后端从 Session Projection 解析，渲染进程不能指定根；拒绝绝对路径、`..` 和 NUL；对目标做 realpath 校验，符号链接逃逸出根的既不列也不读。单目录最多 2000 条，单文件最多 1 MiB（超出按行截断并标记），首 8 KiB 含 NUL 视为二进制、不返回内容。
+- 后续补充的第三个 RPC `resolve_session_files`（聊天行内代码文件引用用）：批量确认一组 diffRoot 相对路径里哪些是真实存在的普通文件，输入只取前 100 条，单条无效只排除自身，不影响整批。
 - 只读。不做编辑、不做搜索、不做「在外部编辑器打开」。这些属于后续决策，不在本 ADR 内。
 
 ### 3. ADR-0007 的边界仍然成立

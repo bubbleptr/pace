@@ -192,6 +192,26 @@
   stroke-width: 2;
 }
 
+/* An inline-code span confirmed to be a real file keeps the code chip's look
+   and box metrics — only the accent text and link affordances change. Unlike
+   .chat-file-link there is no icon marking it, and the accent token sits a
+   few lightness points off body text, so the rest underline is what makes
+   the link distinguishable (the same affordance Astryx links rely on). */
+.chat-markdown .chat-inline-code-link {
+  color: var(--color-text-accent);
+  text-decoration: underline;
+}
+
+.chat-markdown .chat-inline-code-link .chat-inline-code {
+  color: inherit;
+}
+
+.chat-markdown .chat-inline-code-link:focus-visible {
+  outline: var(--spacing-0-5) solid var(--color-accent);
+  outline-offset: var(--spacing-0-5);
+  border-radius: var(--radius-element);
+}
+
 /* —— Code block —— */
 
 /* Surface, copy button, and highlighting are owned by Astryx CodeBlock;

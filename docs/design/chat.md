@@ -42,6 +42,8 @@ token 与正文处于同一文本流，外层使用 `inline-flex` 与 `vertical-
 
 助手正文里的本地文件链接在 `fileLinks` 开关下渲染为 `chat-file-link` chip（FileIcon + `basename[:line]`，title 给完整路径）：链接文本只是重复目标时压缩，自定义文本保留；尾部 `/` 的目录链接不是文件引用，渲染为普通链接且点击不动作；非文件链接维持原行为（http(s) 新窗口）。开关默认关——`components.link` 会接管**所有**链接渲染，只在有页面级点击委托的宿主（Live Chat）才开。点击先匹配 Session 的 Changes 集合（`findSessionChangeTarget`），不在变更集里的文件回落到 Files surface 打开预览并高亮滚动到 `:N` / `#LN` 指定的行（`findSessionFileTarget`）；checkout 之外和 `.git` 路径不动作。
 
+模型也常把路径写成行内代码。收束态回答里，`ChatMarkdown` 的 `linkedInlineCode` 把**经确认是真实文件**的行内代码 span 渲染成链接（`chat-inline-code-link`，保持 code chip 外观、只加 accent 文字色与链接 affordance）：`entities/session/inline-file-refs.ts` 先用启发式筛出候选（末段要有字母开头的扩展名，剥掉 `:N` / `#LN` 行号后缀；空白、`://`、`\`、`-`/`@` 开头、超 260 字符直接排除），`useInlineFileRefs` 再把这些候选合成一次 `resolve_session_files` 请求问后端哪几个是 diffRoot 里的真实文件——`console.log`、写错的路径、fenced 代码块里的内容都不会变成链接。只在收束回答启用：流式期间不逐 token 发请求，渲染端也只是给出超链接，点击仍走同一条页面级委托落到 Changes / Files。
+
 ### ChatRunFailure
 
 一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让认证失败和限流有出口。文案由 `classifyProviderFailure` 决定，调用方不用自己判断：认证（HTTP 401，或 invalid api key / unauthorized）标题 “Provider authentication failed”；套餐（HTTP 403，或文案含 plan / subscription / entitlement）标题 “This model is not included in your subscription plan”，说明是 “Test the connection in Settings → Providers.”，指向 Settings → Providers 做连通性检测；限流（429）标题 “Provider limit reached”；其余标题 “Run failed”。原始错误始终留在折叠的 Error details 里。

@@ -329,6 +329,10 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
       return Promise.resolve({ source: "static", commands: [] } as T);
     case "search_workspace_files":
       return Promise.resolve({ matches: [], truncated: false } as T);
+    case "resolve_session_files":
+      // No filesystem in the browser: nothing is confirmed, so no inline
+      // code span renders as a file reference.
+      return Promise.resolve({ files: [] } as T);
     case "send_subagent":
     case "stop_subagent":
       return Promise.reject(new Error("Subagent control requires the desktop app"));

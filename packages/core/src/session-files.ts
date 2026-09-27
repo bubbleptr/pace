@@ -35,3 +35,11 @@ export type SessionFileContent = {
   truncated: boolean;
   binary: boolean;
 };
+
+/**
+ * Answer to a batched existence check: the subset of requested paths that are
+ * regular files inside the diff root, each echoed exactly as it was sent.
+ */
+export type SessionFileResolution = {
+  files: string[];
+};

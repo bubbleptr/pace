@@ -102,3 +102,54 @@ describe("chat inline code", () => {
     );
   });
 });
+
+describe("chat inline code file references", () => {
+  it("wraps a confirmed inline code span in a link around the code chip", () => {
+    render(
+      <ChatMarkdown linkedInlineCode={new Set(["src/a.ts:12"])}>
+        {"See `src/a.ts:12` for details."}
+      </ChatMarkdown>,
+    );
+
+    const link = screen.getByRole("link", { name: "src/a.ts:12" });
+
+    expect(link).toHaveAttribute("data-slot", "chat-inline-code-link");
+    expect(link).toHaveAttribute("href", "src/a.ts:12");
+    expect(link).toHaveAttribute("title", "src/a.ts:12");
+    expect(link.querySelector('[data-slot="chat-inline-code"]')).toBeInTheDocument();
+  });
+
+  it("leaves unconfirmed spans and inline code without the prop plain", () => {
+    const { unmount } = render(
+      <ChatMarkdown linkedInlineCode={new Set(["src/a.ts"])}>
+        {"See `src/a.ts` and `src/other.ts`."}
+      </ChatMarkdown>,
+    );
+
+    expect(screen.getByRole("link", { name: "src/a.ts" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "src/other.ts" })).not.toBeInTheDocument();
+    expect(screen.getByText("src/other.ts")).toHaveAttribute(
+      "data-slot",
+      "chat-inline-code",
+    );
+
+    unmount();
+    render(<ChatMarkdown>{"See `src/a.ts`."}</ChatMarkdown>);
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText("src/a.ts")).toHaveAttribute(
+      "data-slot",
+      "chat-inline-code",
+    );
+  });
+
+  it("never links fenced code with the same text", () => {
+    render(
+      <ChatMarkdown linkedInlineCode={new Set(["src/a.ts"])}>
+        {"```\nsrc/a.ts\n```"}
+      </ChatMarkdown>,
+    );
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+});
