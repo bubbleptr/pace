@@ -2,6 +2,7 @@ import type { SessionChanges } from "@pace/core";
 
 export type SessionChangeLink = { absolutePath: string; line?: number };
 export type SessionChangeTarget = { sessionId: string; path: string; line?: number };
+export type SessionFileTarget = { sessionId: string; path: string; line?: number };
 
 /** Resolve against the Session cwd, never the renderer's file:// or dev URL. */
 export function parseSessionChangeLink(href: string, cwd: string): SessionChangeLink | null {
@@ -33,4 +34,23 @@ export function findSessionChangeTarget(
   const file = changes.files.find((file) => `${root}/${file.path}` === link.absolutePath)
     ?? changes.files.find((file) => file.previousPath && `${root}/${file.previousPath}` === link.absolutePath);
   return file ? { sessionId: changes.sessionId, path: file.path, line: link.line } : null;
+}
+
+/**
+ * Fallback when a chat file link matches nothing in the Changes set: open the
+ * file in the Files surface instead of swallowing the click. Only paths
+ * strictly inside the diff root resolve — the backend reads are rooted there
+ * and refuse `.git` anyway.
+ */
+export function findSessionFileTarget(
+  link: SessionChangeLink,
+  sessionId: string,
+  diffRoot?: string,
+): SessionFileTarget | null {
+  if (!diffRoot) return null;
+  const root = diffRoot.replace(/\/$/, "");
+  if (!link.absolutePath.startsWith(`${root}/`)) return null;
+  const path = link.absolutePath.slice(root.length + 1);
+  if (!path || path.split("/", 1)[0] === ".git") return null;
+  return { sessionId, path, ...(link.line ? { line: link.line } : {}) };
 }

@@ -40,6 +40,8 @@ token 与正文处于同一文本流，外层使用 `inline-flex` 与 `vertical-
 
 两个 Markdown 都钉死 `density="compact"`、`headingLevelStart=3`，不暴露这两个 prop。
 
+助手正文里的本地文件链接在 `fileLinks` 开关下渲染为 `chat-file-link` chip（FileIcon + `basename[:line]`，title 给完整路径）：链接文本只是重复目标时压缩，自定义文本保留；非文件链接维持原行为（http(s) 新窗口）。开关默认关——`components.link` 会接管**所有**链接渲染，只在有页面级点击委托的宿主（Live Chat）才开。点击先匹配 Session 的 Changes 集合（`findSessionChangeTarget`），不在变更集里的文件回落到 Files surface 打开预览并高亮滚动到 `:N` / `#LN` 指定的行（`findSessionFileTarget`）；checkout 之外和 `.git` 路径不动作。
+
 ### ChatRunFailure
 
 一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让认证失败和限流有出口。文案由 `classifyProviderFailure` 决定，调用方不用自己判断：认证（HTTP 401，或 invalid api key / unauthorized）标题 “Provider authentication failed”；套餐（HTTP 403，或文案含 plan / subscription / entitlement）标题 “This model is not included in your subscription plan”，说明是 “Test the connection in Settings → Providers.”，指向 Settings → Providers 做连通性检测；限流（429）标题 “Provider limit reached”；其余标题 “Run failed”。原始错误始终留在折叠的 Error details 里。

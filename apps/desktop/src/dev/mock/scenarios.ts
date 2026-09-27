@@ -265,7 +265,7 @@ function snapshot(record: PersistedSessionProjection): RuntimeGatewaySnapshot {
             partType: "text",
             body: failed
               ? "读取失败。这是固定错误场景，可检查错误信息和重试入口。"
-              : `## 检查结果 ${index + 1}\n\n已检查 **会话内容** 和工具输出。打开右侧 Dock 的 Changes / Files 检查同一份文件。\n\n\`\`\`ts\n${source}\`\`\`\n\n| 区域 | 检查内容 |\n| --- | --- |\n| Changes | 修改、新增、删除、重命名、二进制 |\n| Files | 目录展开、代码预览、空目录、大文件 |\n\n- [x] 固定数据可重复查看\n- [ ] 流式、停止和终端请用真实会话验证\n\n> 这是静态 mock；刷新恢复初始场景。`,
+              : `## 检查结果 ${index + 1}\n\n已检查 **会话内容** 和工具输出。打开右侧 Dock 的 Changes / Files 检查同一份文件。\n\n文件链接：[src/greeting.ts](src/greeting.ts) 在 Changes 里；[logs/large.txt#L400](logs/large.txt#L400) 不在，回落到 Files 并定位到该行；[example.com](https://example.com) 是外链。\n\n\`\`\`ts\n${source}\`\`\`\n\n| 区域 | 检查内容 |\n| --- | --- |\n| Changes | 修改、新增、删除、重命名、二进制 |\n| Files | 目录展开、代码预览、空目录、大文件 |\n\n- [x] 固定数据可重复查看\n- [ ] 流式、停止和终端请用真实会话验证\n\n> 这是静态 mock；刷新恢复初始场景。`,
           },
         ],
       },

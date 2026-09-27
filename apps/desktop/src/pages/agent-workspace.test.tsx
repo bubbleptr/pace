@@ -170,6 +170,22 @@ vi.mock("@/entities/session/session-diff-viewer", () => ({
   ),
 }));
 
+vi.mock("@/entities/session/session-file-viewer", () => ({
+  default: ({
+    path,
+    contents,
+    line,
+  }: {
+    path: string;
+    contents: string;
+    line?: number;
+  }) => (
+    <div data-testid="session-file-viewer" data-path={path} data-line={line}>
+      {contents}
+    </div>
+  ),
+}));
+
 const pigProjectPath = "/Users/void/code/opensource/Pig";
 const studyProjectPath = "/Users/void/Documents/study";
 
@@ -901,6 +917,84 @@ describe("AgentWorkspaceSessionsPage", () => {
     await act(async () => { releaseRead(); await pendingRead; });
     expect(screen.getByRole("complementary", { name: "Files" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
+  });
+
+  it("opens the Files surface for a chat link to a file outside the Changes set", async () => {
+    setDockedLayout(true);
+    addProjectToRegistry(mockProject);
+    const api = createMockApi();
+    window.pace = {
+      ...api,
+      async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+        const result = await api.invoke<T>(command, args);
+        if (command === "get_runtime_snapshot") {
+          const snapshot = result as unknown as import("@pace/core").RuntimeGatewaySnapshot;
+          for (const envelope of snapshot.events) {
+            const event = envelope.payload as import("@pace/core").AgentRuntimeEvent;
+            if (event.type === "message" && event.role === "assistant" && event.parts) {
+              for (const part of event.parts) {
+                if (part.partType === "text") {
+                  // README.md exists in the mock checkout but is not in Changes.
+                  part.body = "See [the readme](README.md#L2).";
+                }
+              }
+            }
+          }
+        }
+        return result;
+      },
+    };
+    renderProjectSessions(`/projects/${encodeURIComponent(mockProject)}/sessions`, { seedProjects: false });
+    const chat = await screen.findByLabelText("Live Chat messages");
+    const link = await within(chat).findByRole("link", { name: "the readme" });
+    expect(screen.queryByTestId("session-dock")).not.toBeInTheDocument();
+
+    expect(fireEvent.click(link)).toBe(false);
+
+    const files = await screen.findByRole("complementary", { name: "Files" });
+    const viewer = await within(files).findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-path", "README.md");
+    expect(viewer).toHaveAttribute("data-line", "2");
+  });
+
+  it("opens nothing for a chat link that resolves outside the checkout", async () => {
+    setDockedLayout(true);
+    addProjectToRegistry(mockProject);
+    const api = createMockApi();
+    let reads = 0;
+    window.pace = {
+      ...api,
+      async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+        const result = await api.invoke<T>(command, args);
+        if (command === "get_runtime_snapshot") {
+          const snapshot = result as unknown as import("@pace/core").RuntimeGatewaySnapshot;
+          for (const envelope of snapshot.events) {
+            const event = envelope.payload as import("@pace/core").AgentRuntimeEvent;
+            if (event.type === "message" && event.role === "assistant" && event.parts) {
+              for (const part of event.parts) {
+                if (part.partType === "text") {
+                  part.body = "See [outside](/etc/passwd).";
+                }
+              }
+            }
+          }
+        }
+        if (command === "get_session_changes") reads += 1;
+        return result;
+      },
+    };
+    renderProjectSessions(`/projects/${encodeURIComponent(mockProject)}/sessions`, { seedProjects: false });
+    const chat = await screen.findByLabelText("Live Chat messages");
+    const link = await within(chat).findByRole("link", { name: "outside" });
+    await waitFor(() => expect(reads).toBe(1));
+
+    // The link still parses as a file link, so the click stays consumed —
+    // it just resolves to no surface.
+    expect(fireEvent.click(link)).toBe(false);
+    await waitFor(() => expect(reads).toBe(2));
+    await act(async () => {});
+
+    expect(screen.queryByTestId("session-dock")).not.toBeInTheDocument();
   });
 
   it("keeps the rail badge empty when the working tree cannot be read", async () => {

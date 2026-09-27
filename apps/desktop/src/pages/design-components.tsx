@@ -1421,6 +1421,40 @@ function ChatMarkdownGallery() {
   );
 }
 
+function ChatFileLinkGallery() {
+  return (
+    <GallerySection title="ChatFileLink">
+      <div className="flex max-w-xl flex-col gap-4">
+        <Variant caption="label repeats the target → compact basename:line">
+          <ChatMarkdown fileLinks>
+            {"See [src/entities/session/cot-view.ts:12](src/entities/session/cot-view.ts:12) for the projection."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="#L line form">
+          <ChatMarkdown fileLinks>
+            {"Setup notes live in [apps/desktop/README.md#L3](apps/desktop/README.md#L3)."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="directory keeps its trailing slash">
+          <ChatMarkdown fileLinks>
+            {"Everything under [docs/design/](docs/design/) applies."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="custom label kept, icon still marks the file">
+          <ChatMarkdown fileLinks>
+            {"Read [the projection builder](src/entities/session/cot-view.ts) first."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="external link unchanged">
+          <ChatMarkdown fileLinks>
+            {"Reference: [example.com](https://example.com)."}
+          </ChatMarkdown>
+        </Variant>
+      </div>
+    </GallerySection>
+  );
+}
+
 function ChatCodeBlockGallery() {
   return (
     <GallerySection title="ChatCodeBlock">
@@ -2789,6 +2823,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "ChatMessage", category: "Conversation", description: "User and assistant messages with attachments and actions.", Preview: ChatMessageGallery },
   { name: "ChatConversation", category: "Conversation", description: "Scrollable conversation history with automatic bottom pinning.", Preview: ChatConversationGallery },
   { name: "ChatMarkdown", category: "Conversation", description: "Rich message content, heading hierarchy, and streaming Markdown.", Preview: ChatMarkdownGallery },
+  { name: "ChatFileLink", category: "Conversation", description: "Local file links as compact chips inside chat Markdown.", Preview: ChatFileLinkGallery },
   { name: "ChatCodeBlock", category: "Conversation", description: "Syntax-highlighted code with copy controls.", Preview: ChatCodeBlockGallery },
   { name: "ChatThoughtMarkdown", category: "Conversation", description: "Lightweight inline Markdown for reasoning text.", Preview: ChatThoughtMarkdownGallery },
   { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states, with the stable footer slot.", Preview: ChatPromptInputGallery },

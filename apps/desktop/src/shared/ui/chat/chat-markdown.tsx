@@ -1,6 +1,7 @@
 import { Code } from "@astryxdesign/core/Code";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import type { ComponentProps } from "react";
+import { ChatFileLink } from "@/shared/ui/chat/chat-file-link";
 
 /**
  * Chat sits under the page h1 (Sessions / Trajectory / …). Markdown `#` must
@@ -24,6 +25,13 @@ function ChatInlineCode({ children }: { children: string }) {
 
 const chatMarkdownComponents = { inlineCode: ChatInlineCode };
 
+// Module constants so the maps keep a stable identity across renders; the
+// link override only joins in when the host opts into file links.
+const chatMarkdownFileLinkComponents = {
+  inlineCode: ChatInlineCode,
+  link: ChatFileLink,
+};
+
 /**
  * Chat prose renders through Astryx Markdown (compact density, per the
  * official ai-chat template). Fenced code uses the Astryx built-in code
@@ -31,6 +39,12 @@ const chatMarkdownComponents = { inlineCode: ChatInlineCode };
  */
 type ChatMarkdownOwnProps = {
   children: string;
+  /**
+   * Render local file links as file-reference chips. Opt-in because the
+   * chips only make sense where the page delegates their clicks to a file
+   * surface — Live Chat does, other Markdown hosts have no such handling.
+   */
+  fileLinks?: boolean;
 };
 
 export type ChatMarkdownProps = Omit<ComponentProps<"div">, keyof ChatMarkdownOwnProps> &
@@ -38,6 +52,7 @@ export type ChatMarkdownProps = Omit<ComponentProps<"div">, keyof ChatMarkdownOw
 
 export function ChatMarkdown({
   children,
+  fileLinks = false,
   className = "",
   ...rest
 }: ChatMarkdownProps) {
@@ -49,7 +64,9 @@ export function ChatMarkdown({
       {...rest}
     >
       <Markdown
-        components={chatMarkdownComponents}
+        components={
+          fileLinks ? chatMarkdownFileLinkComponents : chatMarkdownComponents
+        }
         density="compact"
         headingLevelStart={chatHeadingLevelStart}
       >
@@ -67,6 +84,8 @@ export function ChatMarkdown({
 type ChatStreamMarkdownOwnProps = {
   children: string;
   isStreaming?: boolean;
+  /** See {@link ChatMarkdownProps}. */
+  fileLinks?: boolean;
 };
 
 export type ChatStreamMarkdownProps = Omit<
@@ -78,6 +97,7 @@ export type ChatStreamMarkdownProps = Omit<
 export function ChatStreamMarkdown({
   children,
   isStreaming = false,
+  fileLinks = false,
   className = "",
   ...rest
 }: ChatStreamMarkdownProps) {
@@ -90,7 +110,9 @@ export function ChatStreamMarkdown({
       {...rest}
     >
       <Markdown
-        components={chatMarkdownComponents}
+        components={
+          fileLinks ? chatMarkdownFileLinkComponents : chatMarkdownComponents
+        }
         density="compact"
         headingLevelStart={chatHeadingLevelStart}
         isStreaming={isStreaming}

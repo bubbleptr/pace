@@ -254,11 +254,11 @@ function AssistantMessageContent({ message }: { message: LiveMessage }) {
 
   if (message.isStreaming) {
     return (
-      <StreamMarkdown isStreaming>
+      <StreamMarkdown isStreaming fileLinks>
         {message.body}
       </StreamMarkdown>
     );
   }
 
-  return <Markdown>{message.body}</Markdown>;
+  return <Markdown fileLinks>{message.body}</Markdown>;
 }

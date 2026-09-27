@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { SessionFileTarget } from "@/entities/session/session-change-link";
 import {
   listSessionDirectory,
   readSessionFile,
@@ -41,9 +42,9 @@ type DirectoryState =
   | { status: "error"; message: string };
 
 type PreviewState =
-  | { status: "loading"; path: string }
-  | { status: "loaded"; path: string; content: SessionFileContent }
-  | { status: "error"; path: string; message: string };
+  | { status: "loading"; path: string; line?: number }
+  | { status: "loaded"; path: string; line?: number; content: SessionFileContent }
+  | { status: "error"; path: string; line?: number; message: string };
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -77,13 +78,18 @@ function DirectoryPlaceholder({
 
 type Props = {
   sessionId: string;
+  /**
+   * A file the chat link fallback asked to open. Each click issues a fresh
+   * object, so the same path re-opens on repeat clicks.
+   */
+  target?: SessionFileTarget | null;
 };
 
 export function SessionFilesPanel(props: Props) {
   return <FilesSessionContent key={props.sessionId} {...props} />;
 }
 
-function FilesSessionContent({ sessionId }: Props) {
+function FilesSessionContent({ sessionId, target }: Props) {
   const [rootName, setRootName] = useState<string | null>(null);
   const [rootError, setRootError] = useState<string | null>(null);
   const [directories, setDirectories] = useState<Map<string, DirectoryState>>(
@@ -155,20 +161,21 @@ function FilesSessionContent({ sessionId }: Props) {
   );
 
   const openFile = useCallback(
-    async (path: string) => {
+    async (path: string, line?: number) => {
       previewPathRef.current = path;
       const request = ++previewRequestRef.current;
-      setPreview({ status: "loading", path });
+      setPreview({ status: "loading", path, line });
 
       try {
         const content = await readSessionFile(sessionId, path);
         if (request !== previewRequestRef.current) return;
-        setPreview({ status: "loaded", path, content });
+        setPreview({ status: "loaded", path, line, content });
       } catch (error) {
         if (request !== previewRequestRef.current) return;
         setPreview({
           status: "error",
           path,
+          line,
           message: errorMessage(error, "The file could not be read."),
         });
       }
@@ -194,6 +201,14 @@ function FilesSessionContent({ sessionId }: Props) {
   useEffect(() => {
     ensureDirectory("");
   }, [ensureDirectory]);
+
+  // Chat file links resolve to a fresh target object per click, so identity
+  // is the trigger — the same path still re-opens. Tree clicks carry no line.
+  useEffect(() => {
+    if (target?.sessionId === sessionId) {
+      void openFile(target.path, target.line);
+    }
+  }, [target, sessionId, openFile]);
 
   const selectedPath = preview?.path ?? null;
 
@@ -432,7 +447,11 @@ function FilePreview({
           />
         }
       >
-        <SessionFileViewer contents={content.content} path={content.path} />
+        <SessionFileViewer
+          contents={content.content}
+          line={preview.line}
+          path={content.path}
+        />
       </Suspense>
     </div>
   );

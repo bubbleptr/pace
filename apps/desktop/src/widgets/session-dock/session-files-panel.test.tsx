@@ -19,8 +19,16 @@ vi.mock("@/entities/session/session-files", () => ({
 }));
 
 vi.mock("@/entities/session/session-file-viewer", () => ({
-  default: ({ path, contents }: { path: string; contents: string }) => (
-    <div data-testid="session-file-viewer" data-path={path}>
+  default: ({
+    path,
+    contents,
+    line,
+  }: {
+    path: string;
+    contents: string;
+    line?: number;
+  }) => (
+    <div data-testid="session-file-viewer" data-path={path} data-line={line}>
       {contents}
     </div>
   ),
@@ -367,5 +375,75 @@ describe("SessionFilesPanel", () => {
       expect(readSessionFile).toHaveBeenCalledTimes(2);
     });
     expect(await screen.findByTestId("session-file-viewer")).toBeInTheDocument();
+  });
+
+  it("opens the chat link target's file at its line", async () => {
+    scriptListings({ "": rootListing });
+    readSessionFile.mockResolvedValue(
+      fileContent("README.md", { content: "# Repo\n" }),
+    );
+
+    render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md", line: 3 }}
+      />,
+    );
+
+    const viewer = await screen.findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-path", "README.md");
+    expect(viewer).toHaveAttribute("data-line", "3");
+    expect(readSessionFile).toHaveBeenCalledWith("session-1", "README.md");
+  });
+
+  it("ignores a target issued for another session", async () => {
+    scriptListings({ "": rootListing });
+
+    render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-2", path: "README.md" }}
+      />,
+    );
+
+    await screen.findByRole("tree");
+    expect(readSessionFile).not.toHaveBeenCalled();
+    expect(screen.getByText("Select a file to preview it.")).toBeInTheDocument();
+  });
+
+  it("re-reads the file when a repeat click issues a new target object", async () => {
+    scriptListings({ "": rootListing });
+    readSessionFile.mockResolvedValue(fileContent("README.md"));
+
+    const { rerender } = render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md" }}
+      />,
+    );
+    await screen.findByTestId("session-file-viewer");
+    expect(readSessionFile).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md" }}
+      />,
+    );
+
+    await waitFor(() => expect(readSessionFile).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens a target-free tree click without a line", async () => {
+    const user = userEvent.setup();
+    scriptListings({ "": rootListing });
+    readSessionFile.mockResolvedValue(fileContent("README.md"));
+
+    render(<SessionFilesPanel sessionId="session-1" />);
+
+    await user.click(await screen.findByText("README.md"));
+
+    const viewer = await screen.findByTestId("session-file-viewer");
+    expect(viewer).not.toHaveAttribute("data-line");
   });
 });
