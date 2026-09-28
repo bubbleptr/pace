@@ -17,6 +17,8 @@ export type ToolPartState =
 
 export type ChatToolItem = {
   argsText?: string;
+  /** Per-edit line counts; rendered as Astryx additions/deletions stats. */
+  diffStat?: { additions: number; deletions: number };
   durationMs?: number;
   output?: string;
   state: ToolPartState;
@@ -121,6 +123,9 @@ function toAstryxCall(tool: ChatToolItem, index: number): ChatToolCallItem {
     name: tool.toolName ?? "tool",
     status: statusMap[tool.state],
     target: toolTargetFromArgs(tool.argsText),
+    ...(tool.diffStat
+      ? { additions: tool.diffStat.additions, deletions: tool.diffStat.deletions }
+      : {}),
     duration: formatToolDuration(tool.durationMs),
     errorMessage: tool.state === "output-error" ? tool.output : undefined,
     key: tool.toolCallId ?? `tool-${index}`,
@@ -170,6 +175,7 @@ export type ChatToolProps = Omit<ComponentProps<"div">, keyof ChatToolItem | "ch
 
 export function ChatTool({
   argsText,
+  diffStat,
   durationMs,
   output,
   state,
@@ -187,7 +193,12 @@ export function ChatTool({
       {...rest}
     >
       <ChatToolCalls
-        calls={[toAstryxCall({ argsText, durationMs, output, state, toolCallId, toolName }, 0)]}
+        calls={[
+          toAstryxCall(
+            { argsText, diffStat, durationMs, output, state, toolCallId, toolName },
+            0,
+          ),
+        ]}
       />
     </div>
   );

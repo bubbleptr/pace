@@ -6,11 +6,13 @@ import type {
   SessionDirectoryEntryKind,
   SessionDirectoryListing,
   SessionFileContent,
+  SessionFileResolution,
 } from "@pace/core";
 
 const DEFAULT_MAX_ENTRIES = 2000;
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8 * 1024;
+const MAX_RESOLVE_FILES = 100;
 
 export type SessionFilesReaderOptions = {
   maxEntries?: number;
@@ -30,9 +32,16 @@ export type ReadSessionFileInput = {
   path: string;
 };
 
+export type ResolveSessionFilesInput = {
+  sessionId: string;
+  diffRoot: string;
+  paths: string[];
+};
+
 export type SessionFilesReader = {
   listDirectory(input: ListSessionDirectoryInput): Promise<SessionDirectoryListing>;
   readFile(input: ReadSessionFileInput): Promise<SessionFileContent>;
+  resolveFiles(input: ResolveSessionFilesInput): Promise<SessionFileResolution>;
 };
 
 function isInside(parent: string, child: string) {
@@ -211,6 +220,21 @@ export function createNodeSessionFilesReader(
         truncated: true,
         binary: false,
       };
+    },
+
+    async resolveFiles(input) {
+      const files: string[] = [];
+
+      for (const path of input.paths.slice(0, MAX_RESOLVE_FILES)) {
+        try {
+          const { target } = await resolveInsideRoot(input.diffRoot, path);
+          if ((await filesystem.stat(target)).isFile()) files.push(path);
+        } catch {
+          // One bad path only excludes itself; the batch still answers.
+        }
+      }
+
+      return { files };
     },
   };
 }

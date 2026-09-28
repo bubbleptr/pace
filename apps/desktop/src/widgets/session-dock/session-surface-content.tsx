@@ -1,4 +1,7 @@
-import { type SessionChangeTarget } from "@/entities/session/session-change-link";
+import {
+  type SessionChangeTarget,
+  type SessionFileTarget,
+} from "@/entities/session/session-change-link";
 import { type SessionProjection } from "@/entities/session/session-projection";
 import { type SessionChangesView } from "@/entities/session/use-session-changes";
 import type { TerminalInstanceInfo } from "@/entities/terminal/terminal-client";
@@ -13,6 +16,7 @@ export function SessionSurfaceContent({
   surfaceId,
   projection,
   changeTarget,
+  fileTarget,
   sessionChanges,
   docked = false,
   onTerminalInstancesChange,
@@ -21,6 +25,7 @@ export function SessionSurfaceContent({
   surfaceId: SessionSurfaceId;
   projection?: SessionProjection | null;
   changeTarget?: SessionChangeTarget | null;
+  fileTarget?: SessionFileTarget | null;
   sessionChanges: SessionChangesView;
   /** Whether the surface can host a native browser view. */
   docked?: boolean;
@@ -48,7 +53,7 @@ export function SessionSurfaceContent({
       return null;
     }
 
-    return <SessionFilesPanel sessionId={projection.id} />;
+    return <SessionFilesPanel sessionId={projection.id} target={fileTarget} />;
   }
 
   if (surfaceId === "terminal") {

@@ -154,6 +154,64 @@
   white-space: pre-line;
 }
 
+/* A file link renders as a compact reference (icon + basename[:line]) — a
+   long relative path as link text would wrap awkwardly and bury the point.
+   The accent colour is the one Astryx markdown links use; no resting
+   underline, the leading file icon already marks it as a link. display stays
+   inline so the chip wraps inside a paragraph like any other text. */
+.chat-markdown .chat-file-link {
+  color: var(--color-text-accent);
+  text-decoration: none;
+}
+
+.chat-markdown .chat-file-link:hover,
+.chat-markdown .chat-file-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* Astryx controls draw a 2px accent outline on focus; the chip follows the
+   same ring rather than the browser default. */
+.chat-markdown .chat-file-link:focus-visible {
+  outline: var(--spacing-0-5) solid var(--color-accent);
+  outline-offset: var(--spacing-0-5);
+  border-radius: var(--radius-element);
+}
+
+/* The 13px / stroke-2 chat-icon scale is scoped to .chain-of-thought; the
+   chip restates it — same 14px Figtree line, same sizing rationale. */
+.chat-markdown .chat-file-link__icon {
+  display: inline;
+  width: var(--chat-icon-size, 13px);
+  height: var(--chat-icon-size, 13px);
+  margin-inline-end: var(--spacing-0-5);
+  vertical-align: -0.125em;
+}
+
+.chat-markdown .chat-file-link__icon,
+.chat-markdown .chat-file-link__icon * {
+  stroke-width: 2;
+}
+
+/* An inline-code span confirmed to be a real file keeps the code chip's look
+   and box metrics — only the accent text and link affordances change. Unlike
+   .chat-file-link there is no icon marking it, and the accent token sits a
+   few lightness points off body text, so the rest underline is what makes
+   the link distinguishable (the same affordance Astryx links rely on). */
+.chat-markdown .chat-inline-code-link {
+  color: var(--color-text-accent);
+  text-decoration: underline;
+}
+
+.chat-markdown .chat-inline-code-link .chat-inline-code {
+  color: inherit;
+}
+
+.chat-markdown .chat-inline-code-link:focus-visible {
+  outline: var(--spacing-0-5) solid var(--color-accent);
+  outline-offset: var(--spacing-0-5);
+  border-radius: var(--radius-element);
+}
+
 /* —— Code block —— */
 
 /* Surface, copy button, and highlighting are owned by Astryx CodeBlock;

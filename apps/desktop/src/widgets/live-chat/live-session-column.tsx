@@ -212,6 +212,22 @@ export function LiveSessionColumn({
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const stoppingRun = stoppingSessionId !== null && stoppingSessionId === liveProjection?.id;
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
+  // The Session scope inline-code file references resolve against — the same
+  // guards and cwd/diffRoot expressions as the page's chat-link delegation:
+  // no scope in the draft, for a Session without a runtime id, or in Chat.
+  const fileRefScope = (() => {
+    if (showDraft || !liveProjection?.piSessionId || isChatProjectId(projectId)) {
+      return null;
+    }
+    const cwd = liveProjection.checkout?.runtimeCwd ?? liveProjection.cwd;
+    return cwd
+      ? {
+          sessionId: liveProjection.id,
+          cwd,
+          diffRoot: liveProjection.checkout?.diffRoot ?? cwd,
+        }
+      : null;
+  })();
 
   useEffect(() => {
     setSessionDraft(getVisibleSessionDraft());
@@ -929,6 +945,7 @@ export function LiveSessionColumn({
                 <LiveChatMessage
                   key={message.id}
                   promptCommands={promptCommands.data?.commands}
+                  fileRefScope={fileRefScope}
                   message={withLegacyCotView(message)}
                   recovery={message.controlLabel === "Run failed" ? (
                     <ChatRunFailure error={message.body}

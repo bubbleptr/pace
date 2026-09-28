@@ -16,6 +16,11 @@ import { type ReactNode } from "react";
 import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { GitBranch } from "@/shared/ui/icons";
 import { type CotStep, type CotView } from "@/entities/session/cot-view";
+import { toolDiffStatFromResult } from "@/entities/session/tool-diff-stat";
+import {
+  useInlineFileRefs,
+  type InlineFileRefScope,
+} from "@/entities/session/use-inline-file-refs";
 import { type LiveMessage, type RunTimelineItem } from "@/entities/session/live-chat-model";
 import type { PromptCommand } from "@pace/core";
 import { UserPromptContent } from "./user-prompt-content";
@@ -25,11 +30,17 @@ export function LiveChatMessage({
   onForkMessage,
   recovery,
   promptCommands,
+  fileRefScope,
 }: {
   message: LiveMessage;
   onForkMessage?: (message: LiveMessage) => void;
   recovery?: ReactNode;
   promptCommands?: readonly PromptCommand[];
+  /**
+   * Session root for confirming inline-code file references; null wherever
+   * the page's chat-link delegation would not run (draft, Chat workspace).
+   */
+  fileRefScope?: InlineFileRefScope | null;
 }) {
   if (message.kind === "context_change") {
     return (
@@ -122,7 +133,7 @@ export function LiveChatMessage({
         ) : null}
         {message.body ? (
           <ChatMessage.Content>
-            <AssistantMessageContent message={message} />
+            <AssistantMessageContent message={message} fileRefScope={fileRefScope} />
           </ChatMessage.Content>
         ) : null}
         {!message.controlLabel && !message.isStreaming && message.body ? (
@@ -218,6 +229,12 @@ export function settledCotViewFromTimeline(timeline: RunTimelineItem[]): CotView
       continue;
     }
 
+    // outputText is the serialized result object; edit results carry a
+    // countable patch under details.
+    const diffStat =
+      item.toolState === "output-available"
+        ? toolDiffStatFromResult(item.outputText)
+        : undefined;
     const tool: ChatToolItem = {
       argsText: item.argsText,
       durationMs: item.durationMs,
@@ -225,6 +242,7 @@ export function settledCotViewFromTimeline(timeline: RunTimelineItem[]): CotView
       state: item.toolState ?? "input-available",
       toolCallId: item.toolCallId ?? item.id,
       toolName: item.toolName ?? item.title,
+      ...(diffStat ? { diffStat } : {}),
     };
     const last = steps[steps.length - 1];
 
@@ -239,18 +257,35 @@ export function settledCotViewFromTimeline(timeline: RunTimelineItem[]): CotView
   return { phase: "settled", steps };
 }
 
-function AssistantMessageContent({ message }: { message: LiveMessage }) {
+function AssistantMessageContent({
+  message,
+  fileRefScope,
+}: {
+  message: LiveMessage;
+  fileRefScope?: InlineFileRefScope | null;
+}) {
+  // Streaming answers never link file refs — re-checking paths on every token
+  // would race the stream; the settled render does the one lookup.
+  const linkedInlineCode = useInlineFileRefs(
+    message.isStreaming || message.controlLabel ? null : (fileRefScope ?? null),
+    message.body ?? "",
+  );
+
   if (message.controlLabel) {
     return message.body;
   }
 
   if (message.isStreaming) {
     return (
-      <StreamMarkdown isStreaming>
+      <StreamMarkdown isStreaming fileLinks>
         {message.body}
       </StreamMarkdown>
     );
   }
 
-  return <Markdown>{message.body}</Markdown>;
+  return (
+    <Markdown fileLinks linkedInlineCode={linkedInlineCode}>
+      {message.body}
+    </Markdown>
+  );
 }

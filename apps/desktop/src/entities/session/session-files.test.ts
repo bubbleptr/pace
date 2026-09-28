@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listSessionDirectory,
   readSessionFile,
+  resolveSessionFiles,
 } from "@/entities/session/session-files";
 import type { PaceRendererApi } from "@/shared/runtime";
 
@@ -57,6 +58,19 @@ describe("session file queries", () => {
     expect(invoke).toHaveBeenCalledWith("read_session_file", {
       sessionId: "session-1",
       path: "src/index.ts",
+    });
+  });
+
+  it("resolves which candidate paths are real files", async () => {
+    const invoke = vi.fn(async () => ({ files: ["src/index.ts"] }));
+    installInvoke(invoke);
+
+    await expect(
+      resolveSessionFiles("session-1", ["src/index.ts", "src/missing.ts"]),
+    ).resolves.toEqual({ files: ["src/index.ts"] });
+    expect(invoke).toHaveBeenCalledWith("resolve_session_files", {
+      sessionId: "session-1",
+      paths: ["src/index.ts", "src/missing.ts"],
     });
   });
 });

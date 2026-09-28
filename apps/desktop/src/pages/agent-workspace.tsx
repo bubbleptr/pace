@@ -69,9 +69,11 @@ import {
 } from "@/entities/session/use-session-changes";
 import {
   findSessionChangeTarget,
+  findSessionFileTarget,
   parseSessionChangeLink,
   type SessionChangeLink,
   type SessionChangeTarget,
+  type SessionFileTarget,
 } from "@/entities/session/session-change-link";
 import type { TerminalInstanceInfo } from "@/entities/terminal/terminal-client";
 import { useSettingsDialog } from "@/shared/settings-navigation";
@@ -445,6 +447,7 @@ export function AgentWorkspaceSessionsPage() {
     link: SessionChangeLink;
   } | null>(null);
   const [changeTarget, setChangeTarget] = useState<SessionChangeTarget | null>(null);
+  const [fileTarget, setFileTarget] = useState<SessionFileTarget | null>(null);
   const project = isChatProjectId(projectId)
     ? chatWorkspaceListEntry()
     : registryProjects.find((candidate) => candidate.id === projectId) ?? null;
@@ -483,25 +486,44 @@ export function AgentWorkspaceSessionsPage() {
       return;
     }
     if (sessionChanges.loading || sessionChanges.refreshing) return;
-    const target = sessionChanges.changes
-      ? findSessionChangeTarget(
-          pendingChangeLink.link,
-          sessionChanges.changes,
-          selectedSessionProjection.checkout?.diffRoot ?? selectedSessionProjection.cwd ?? undefined,
-        )
-      : null;
+    const diffRoot = selectedSessionProjection.checkout?.diffRoot ?? selectedSessionProjection.cwd ?? undefined;
+    // A failed read keeps the previous snapshot around — it may predate this
+    // run's edits, so skip it and resolve straight against the Files surface.
+    const target =
+      sessionChanges.changes && !sessionChanges.error
+        ? findSessionChangeTarget(
+            pendingChangeLink.link,
+            sessionChanges.changes,
+            diffRoot,
+          )
+        : null;
     setPendingChangeLink(null);
     if (target) {
       setChangeTarget(target);
       setActiveSurfaceId("changes");
       setDockOpen(true);
+      return;
     }
-  }, [pendingChangeLink, sessionChanges.changes, sessionChanges.loading, sessionChanges.refreshing, selectedSessionProjection, showDraft]);
+    // No reliable Changes match: fall back to previewing the file in the
+    // Files surface instead of dead-ending the click. Out-of-root, .git, and
+    // directory paths resolve to null and still do nothing.
+    const file = findSessionFileTarget(
+      pendingChangeLink.link,
+      selectedSessionProjection.id,
+      diffRoot,
+    );
+    if (file) {
+      setFileTarget(file);
+      setActiveSurfaceId("files");
+      setDockOpen(true);
+    }
+  }, [pendingChangeLink, sessionChanges.changes, sessionChanges.error, sessionChanges.loading, sessionChanges.refreshing, selectedSessionProjection, showDraft]);
 
   useEffect(() => {
     setTerminalInstanceCount(0);
     setBrowserInstanceCount(0);
     setChangeTarget(null);
+    setFileTarget(null);
   }, [selectedSessionId]);
 
   useEffect(() => {
@@ -625,6 +647,7 @@ export function AgentWorkspaceSessionsPage() {
           if (!link) return;
           event.preventDefault();
           setChangeTarget(null);
+          setFileTarget(null);
           setPendingChangeLink({ sessionId: selectedSessionProjection.id, link });
           sessionChanges.refresh();
         }}
@@ -649,6 +672,7 @@ export function AgentWorkspaceSessionsPage() {
               <SessionSurfaceContent
                 docked
                 changeTarget={changeTarget}
+                fileTarget={fileTarget}
                 sessionChanges={sessionChanges}
                 surfaceId={activeSurfaceId}
                 projection={selectedSessionProjection}

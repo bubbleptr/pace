@@ -158,6 +158,18 @@ export function ChatToolStep({
   const { tools } = step;
   const failed = tools.filter((tool) => tool.state === "output-error").length;
   const totalMs = tools.reduce((sum, tool) => sum + (tool.durationMs ?? 0), 0);
+  // Line stats page in with the settled summary only; mid-burst a finished
+  // call already has its result but the row is still paging call names.
+  const diffStat = tools.reduce<{ additions: number; deletions: number } | undefined>(
+    (sum, tool) =>
+      tool.diffStat
+        ? {
+            additions: (sum?.additions ?? 0) + tool.diffStat.additions,
+            deletions: (sum?.deletions ?? 0) + tool.diffStat.deletions,
+          }
+        : sum,
+    undefined,
+  );
   const active =
     tools.find((tool) => tool.toolCallId === step.activeToolCallId) ?? tools[tools.length - 1];
   const kind = step.live ? toolKindFromName(active?.toolName) : toolKindFromTools(tools);
@@ -184,6 +196,12 @@ export function ChatToolStep({
             <span className="chat-tool-step__page">
               <ChatToolKindIcon kind={kind} />
               <span className="chat-step__label">{summarizeTools(tools)}</span>
+              {diffStat ? (
+                <span className="chat-step__meta" data-slot="chat-tool-diff-stat">
+                  <span className="text-success">+{diffStat.additions}</span>{" "}
+                  <span className="text-danger">-{diffStat.deletions}</span>
+                </span>
+              ) : null}
               {failed > 0 ? (
                 <span className="chat-step__meta chat-step__meta--error">
                   {failed === 1 ? "1 failed" : `${failed} failed`}

@@ -1416,6 +1416,55 @@ function ChatMarkdownGallery() {
         <Variant caption="streaming (chunked delivery, Astryx incremental fade-in)">
           <StreamingMarkdownDemo />
         </Variant>
+        <Variant caption="linkedInlineCode: confirmed files link, look-alikes and fenced code stay plain">
+          <ChatMarkdown
+            fileLinks
+            linkedInlineCode={new Set(["src/session.ts:12", "logs/large.txt"])}
+          >
+            {[
+              "Confirmed `src/session.ts:12` and `logs/large.txt` render as links;",
+              "`src/missing.ts` and `console.log` stay plain.",
+              "",
+              "```",
+              "src/session.ts:12",
+              "```",
+            ].join("\n")}
+          </ChatMarkdown>
+        </Variant>
+      </div>
+    </GallerySection>
+  );
+}
+
+function ChatFileLinkGallery() {
+  return (
+    <GallerySection title="ChatFileLink">
+      <div className="flex max-w-xl flex-col gap-4">
+        <Variant caption="label repeats the target → compact basename:line">
+          <ChatMarkdown fileLinks>
+            {"See [src/entities/session/cot-view.ts:12](src/entities/session/cot-view.ts:12) for the projection."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="#L line form">
+          <ChatMarkdown fileLinks>
+            {"Setup notes live in [apps/desktop/README.md#L3](apps/desktop/README.md#L3)."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="directory links stay plain links (no chip)">
+          <ChatMarkdown fileLinks>
+            {"Everything under [docs/design/](docs/design/) applies."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="custom label kept, icon still marks the file">
+          <ChatMarkdown fileLinks>
+            {"Read [the projection builder](src/entities/session/cot-view.ts) first."}
+          </ChatMarkdown>
+        </Variant>
+        <Variant caption="external link unchanged">
+          <ChatMarkdown fileLinks>
+            {"Reference: [example.com](https://example.com)."}
+          </ChatMarkdown>
+        </Variant>
       </div>
     </GallerySection>
   );
@@ -1479,6 +1528,21 @@ function ChatToolGroupGallery() {
                 argsText: '{"path":"src/index.ts"}',
                 output: "ok",
                 durationMs: 45,
+              },
+            ]}
+          />
+        </Variant>
+        <Variant caption="edit call with line stats (+N -M)">
+          <ChatToolGroup
+            tools={[
+              {
+                toolCallId: "g6",
+                toolName: "edit",
+                state: "output-available",
+                argsText: '{"path":"src/app/main.tsx"}',
+                output: "edited",
+                durationMs: 140,
+                diffStat: { additions: 12, deletions: 3 },
               },
             ]}
           />
@@ -2068,6 +2132,37 @@ const settledToolBurst: ChatToolStepItem = {
   ],
 };
 
+const settledEditBurst: ChatToolStepItem = {
+  kind: "tools",
+  id: "design-tools-edit-burst",
+  live: false,
+  tools: [
+    {
+      toolCallId: "design-edit-1",
+      toolName: "edit",
+      state: "output-available",
+      durationMs: 140,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/main.tsx" }),
+      diffStat: { additions: 12, deletions: 3 },
+    },
+    {
+      toolCallId: "design-edit-2",
+      toolName: "edit",
+      state: "output-available",
+      durationMs: 90,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/styles.css" }),
+      diffStat: { additions: 6, deletions: 1 },
+    },
+    {
+      toolCallId: "design-edit-3",
+      toolName: "read",
+      state: "output-available",
+      durationMs: 40,
+      argsText: JSON.stringify({ path: "apps/desktop/src/app/main.tsx" }),
+    },
+  ],
+};
+
 const mixedKindToolStep: ChatToolStepItem = {
   kind: "tools",
   id: "design-tools-mixed",
@@ -2246,6 +2341,9 @@ function ChatToolStepGallery() {
         </Variant>
         <Variant caption="settled, a burst">
           <ChatToolStep step={settledToolBurst} />
+        </Variant>
+        <Variant caption="settled, edit burst with line stats">
+          <ChatToolStep step={settledEditBurst} />
         </Variant>
         <Variant caption="settled, with a failure">
           <ChatToolStep step={failedToolStep} />
@@ -2740,6 +2838,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "ChatMessage", category: "Conversation", description: "User and assistant messages with attachments and actions.", Preview: ChatMessageGallery },
   { name: "ChatConversation", category: "Conversation", description: "Scrollable conversation history with automatic bottom pinning.", Preview: ChatConversationGallery },
   { name: "ChatMarkdown", category: "Conversation", description: "Rich message content, heading hierarchy, and streaming Markdown.", Preview: ChatMarkdownGallery },
+  { name: "ChatFileLink", category: "Conversation", description: "Local file links as compact chips inside chat Markdown.", Preview: ChatFileLinkGallery },
   { name: "ChatCodeBlock", category: "Conversation", description: "Syntax-highlighted code with copy controls.", Preview: ChatCodeBlockGallery },
   { name: "ChatThoughtMarkdown", category: "Conversation", description: "Lightweight inline Markdown for reasoning text.", Preview: ChatThoughtMarkdownGallery },
   { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states, with the stable footer slot.", Preview: ChatPromptInputGallery },

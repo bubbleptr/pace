@@ -503,6 +503,13 @@ async function dispatchRequest(input: {
         store: input.sessionProjectionStore,
         reader: input.sessionFilesReader,
       });
+    case "resolve_session_files":
+      return resolveSessionFiles({
+        sessionId: requiredString(params.sessionId, "sessionId"),
+        paths: requiredStringArray(params.paths, "paths"),
+        store: input.sessionProjectionStore,
+        reader: input.sessionFilesReader,
+      });
     case "list_prompt_commands":
       return listPromptCommands({
         sessionId: optionalString(params.sessionId),
@@ -741,6 +748,17 @@ async function readSessionFile(input: {
   const { sessionId, diffRoot } = await resolveSessionCheckoutRoots(input);
 
   return input.reader.readFile({ sessionId, diffRoot, path: input.path });
+}
+
+async function resolveSessionFiles(input: {
+  sessionId: string;
+  paths: string[];
+  store: SessionProjectionStore;
+  reader: SessionFilesReader;
+}) {
+  const { sessionId, diffRoot } = await resolveSessionCheckoutRoots(input);
+
+  return input.reader.resolveFiles({ sessionId, diffRoot, paths: input.paths });
 }
 
 // The "/" catalog prefers the live session (the only source that knows
@@ -1014,6 +1032,14 @@ function requiredString(value: unknown, name: string) {
 
 function optionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function requiredStringArray(value: unknown, name: string) {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${name} is required`);
+  }
+
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

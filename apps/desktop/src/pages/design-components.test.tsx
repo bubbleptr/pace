@@ -57,6 +57,7 @@ describe("Design components layer", () => {
       "Icons",
       "ChatMessage",
       "ChatMarkdown",
+      "ChatFileLink",
       "ChatCodeBlock",
       "ChatTool",
       "ChatPromptInput",

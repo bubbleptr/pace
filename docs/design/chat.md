@@ -40,6 +40,10 @@ token 与正文处于同一文本流，外层使用 `inline-flex` 与 `vertical-
 
 两个 Markdown 都钉死 `density="compact"`、`headingLevelStart=3`，不暴露这两个 prop。
 
+助手正文里的本地文件链接在 `fileLinks` 开关下渲染为 `chat-file-link` chip（FileIcon + `basename[:line]`，title 给完整路径）：链接文本只是重复目标时压缩，自定义文本保留；尾部 `/` 的目录链接不是文件引用，渲染为普通链接且点击不动作；非文件链接维持原行为（http(s) 新窗口）。开关默认关——`components.link` 会接管**所有**链接渲染，只在有页面级点击委托的宿主（Live Chat）才开。点击先匹配 Session 的 Changes 集合（`findSessionChangeTarget`），不在变更集里的文件回落到 Files surface 打开预览并高亮滚动到 `:N` / `#LN` 指定的行（`findSessionFileTarget`）；checkout 之外和 `.git` 路径不动作。
+
+模型也常把路径写成行内代码。收束态回答里，`ChatMarkdown` 的 `linkedInlineCode` 把**经确认是真实文件**的行内代码 span 渲染成链接（`chat-inline-code-link`，保持 code chip 外观、只加 accent 文字色与链接 affordance）：`entities/session/inline-file-refs.ts` 先用启发式筛出候选（末段要有字母开头的扩展名，剥掉 `:N` / `#LN` 行号后缀；空白、`://`、`\`、`-`/`@` 开头、超 260 字符直接排除），`useInlineFileRefs` 再把这些候选分批发给 `resolve_session_files`(每批至多 100 条,对应后端 `MAX_RESOLVE_FILES`)问哪几个是 diffRoot 里的真实文件——`console.log`、写错的路径、fenced 代码块里的内容都不会变成链接。`linkedInlineCode` 只在 `fileLinks` 开启时生效；已落在链接 label 内的 code span 不再嵌套 `<a>`，span 文本先 trim 再与确认集合比对。只在收束回答启用：流式期间不逐 token 发请求，渲染端也只是给出超链接，点击仍走同一条页面级委托落到 Changes / Files。
+
 ### ChatRunFailure
 
 一次 run 失败的恢复卡：`error` 必填；`onRetry` 只对**最近一次**失败传（页面判定 `message.id === latestFailure?.id`），历史失败不传；`onOpenProviderSettings` 与 `modelControl` 让认证失败和限流有出口。文案由 `classifyProviderFailure` 决定，调用方不用自己判断：认证（HTTP 401，或 invalid api key / unauthorized）标题 “Provider authentication failed”；套餐（HTTP 403，或文案含 plan / subscription / entitlement）标题 “This model is not included in your subscription plan”，说明是 “Test the connection in Settings → Providers.”，指向 Settings → Providers 做连通性检测；限流（429）标题 “Provider limit reached”；其余标题 “Run failed”。原始错误始终留在折叠的 Error details 里。
@@ -122,8 +126,8 @@ Branch / Location chip 都截断在 16rem 以内，44rem 宽下长分支名不�
 ### Step 行
 
 - `ChatThoughtStep`：`step` 是 `CotStep` 的 `thinking` 分支。live 是 shimmer 的「Thinking…」，收束为「Thought Ns」；无正文就是一行纯 label，**空正文是常态**，不要当异常渲染。
-- `ChatToolStep`：`step` 是 `tools` 分支。总结行动词表在 `VERBS`（bash → Ran N commands，read → Read N files…），新工具名先补 `chat-tool-kind.ts` 的 `KIND_ALIASES`，不要在页面里拼文案。收束后的摘要保持单行：失败计数与耗时不收缩、不换行，空间不足时仅截断命令文字；完整内容仍可展开查看。`/design → Components → ChatToolStep` 提供长命令失败样例，运行 `bunx playwright test --config e2e/playwright.layout.config.ts` 验证窄宽度布局。
-- `ChatTool` / `ChatToolGroup` / `ChatToolDetail`：只在 `ChatToolStep` 内部与 `/design` 使用。`ToolPartState` 联合是 `"input-streaming" | "input-available" | "output-available" | "output-error"`，映射到 Astryx 的 running / complete / error。
+- `ChatToolStep`：`step` 是 `tools` 分支。总结行动词表在 `VERBS`（bash → Ran N commands，read → Read N files…），新工具名先补 `chat-tool-kind.ts` 的 `KIND_ALIASES`，不要在页面里拼文案。收束后的摘要保持单行：diff 行统计（`+N -M`，`data-slot="chat-tool-diff-stat"`）、失败计数与耗时不收缩、不换行，空间不足时仅截断命令文字；完整内容仍可展开查看。行统计来自 `entities/session/tool-diff-stat.ts`：优先解析 Pi edit 结果 `details.patch`，无 patch 时退回 `details.diff` 展示格式；write 没有 details，不显示统计。`/design → Components → ChatToolStep` 提供长命令失败样例与带行统计的编辑批次，运行 `bunx playwright test --config e2e/playwright.layout.config.ts` 验证窄宽度布局。
+- `ChatTool` / `ChatToolGroup` / `ChatToolDetail`：只在 `ChatToolStep` 内部与 `/design` 使用。`ToolPartState` 联合是 `"input-streaming" | "input-available" | "output-available" | "output-error"`，映射到 Astryx 的 running / complete / error。`ChatToolItem.diffStat` 透传为 Astryx `ChatToolCallItem` 的 `additions` / `deletions`，单行展开里的每条调用各自渲染 `+N -M`。
 - `ChatStatusLine`：`phase` 只有 `"thinking" | "acting"`，由 `ChatChainOfThought` 在 run 期间自己挂在底部；页面不单独渲染它。
 - `ChatChainOfThoughtRail`：Timeline 皮肤，**只在 /design**，等 Appearance 设置页（#81）再接线。不要在页面里用它替代 `ChatChainOfThought`。
 

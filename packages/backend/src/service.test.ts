@@ -801,7 +801,7 @@ describe("backend service", () => {
 
     const service = createBackendService({
       sessionProjectionStore: projections,
-      sessionFilesReader: { listDirectory, readFile: vi.fn() },
+      sessionFilesReader: { listDirectory, readFile: vi.fn(), resolveFiles: vi.fn() },
     });
 
     await expect(
@@ -864,7 +864,7 @@ describe("backend service", () => {
 
     const service = createBackendService({
       sessionProjectionStore: projections,
-      sessionFilesReader: { listDirectory: vi.fn(), readFile: readSessionFile },
+      sessionFilesReader: { listDirectory: vi.fn(), readFile: readSessionFile, resolveFiles: vi.fn() },
     });
 
     await expect(
@@ -894,6 +894,60 @@ describe("backend service", () => {
         params: { sessionId: "session-files" },
       }),
     ).resolves.toMatchObject({ error: expect.stringMatching(/path/) });
+  });
+
+  it("resolves Session files under the stored diff root, not renderer paths", async () => {
+    const projections = createInMemorySessionProjectionStore();
+    const resolveFiles = vi.fn(async () => ({ files: ["src/app.ts"] }));
+    await projections.save({
+      sessionId: "session-files",
+      runtimeId: "runtime-files",
+      piSessionId: "pi-files",
+      projectId: "project-1",
+      cwd: "/checkout/project",
+      status: "completed",
+      checkout: {
+        root: "/source/repo",
+        executionCheckoutRoot: "/checkout",
+        diffRoot: "/checkout/project",
+      },
+      updatedAt: "2026-07-19T00:00:00.000Z",
+    });
+
+    const service = createBackendService({
+      sessionProjectionStore: projections,
+      sessionFilesReader: { listDirectory: vi.fn(), readFile: vi.fn(), resolveFiles },
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "req-resolve-files",
+        method: "resolve_session_files",
+        params: {
+          sessionId: "session-files",
+          paths: ["src/app.ts", "missing.ts"],
+          diffRoot: "/renderer/cannot/override/this",
+        },
+      }),
+    ).resolves.toEqual({
+      id: "req-resolve-files",
+      result: { files: ["src/app.ts"] },
+    });
+    expect(resolveFiles).toHaveBeenCalledWith({
+      sessionId: "session-files",
+      diffRoot: "/checkout/project",
+      paths: ["src/app.ts", "missing.ts"],
+    });
+
+    for (const paths of ["src/app.ts", ["src/app.ts", 1]]) {
+      await expect(
+        service.handleRequest({
+          id: "req-resolve-files-bad",
+          method: "resolve_session_files",
+          params: { sessionId: "session-files", paths },
+        }),
+      ).resolves.toMatchObject({ error: expect.stringMatching(/paths/) });
+    }
   });
 
   it("journals boundary events to the data dir and serves them from the runtime snapshot", async () => {

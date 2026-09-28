@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { SessionFileTarget } from "@/entities/session/session-change-link";
 import {
   listSessionDirectory,
   readSessionFile,
@@ -41,9 +42,9 @@ type DirectoryState =
   | { status: "error"; message: string };
 
 type PreviewState =
-  | { status: "loading"; path: string }
-  | { status: "loaded"; path: string; content: SessionFileContent }
-  | { status: "error"; path: string; message: string };
+  | { status: "loading"; path: string; line?: number }
+  | { status: "loaded"; path: string; line?: number; content: SessionFileContent }
+  | { status: "error"; path: string; line?: number; message: string };
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -77,13 +78,18 @@ function DirectoryPlaceholder({
 
 type Props = {
   sessionId: string;
+  /**
+   * A file the chat link fallback asked to open. Each click issues a fresh
+   * object, so the same path re-opens on repeat clicks.
+   */
+  target?: SessionFileTarget | null;
 };
 
 export function SessionFilesPanel(props: Props) {
   return <FilesSessionContent key={props.sessionId} {...props} />;
 }
 
-function FilesSessionContent({ sessionId }: Props) {
+function FilesSessionContent({ sessionId, target }: Props) {
   const [rootName, setRootName] = useState<string | null>(null);
   const [rootError, setRootError] = useState<string | null>(null);
   const [directories, setDirectories] = useState<Map<string, DirectoryState>>(
@@ -97,7 +103,9 @@ function FilesSessionContent({ sessionId }: Props) {
   // re-mounted placeholder never double-fetches in-flight or successful loads.
   const requestedRef = useRef(new Set<string>());
   const previewRequestRef = useRef(0);
-  const previewPathRef = useRef<string | null>(null);
+  // Refresh re-opens what is on screen; the line a chat link landed on is part
+  // of that state, so remember the pair and not just the path.
+  const previewRef = useRef<{ path: string; line?: number } | null>(null);
 
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -155,20 +163,21 @@ function FilesSessionContent({ sessionId }: Props) {
   );
 
   const openFile = useCallback(
-    async (path: string) => {
-      previewPathRef.current = path;
+    async (path: string, line?: number) => {
+      previewRef.current = { path, line };
       const request = ++previewRequestRef.current;
-      setPreview({ status: "loading", path });
+      setPreview({ status: "loading", path, line });
 
       try {
         const content = await readSessionFile(sessionId, path);
         if (request !== previewRequestRef.current) return;
-        setPreview({ status: "loaded", path, content });
+        setPreview({ status: "loaded", path, line, content });
       } catch (error) {
         if (request !== previewRequestRef.current) return;
         setPreview({
           status: "error",
           path,
+          line,
           message: errorMessage(error, "The file could not be read."),
         });
       }
@@ -186,14 +195,23 @@ function FilesSessionContent({ sessionId }: Props) {
       return root ? new Map([["", root]]) : new Map();
     });
     void loadDirectory("");
-    if (previewPathRef.current !== null) {
-      void openFile(previewPathRef.current);
+    const current = previewRef.current;
+    if (current) {
+      void openFile(current.path, current.line);
     }
   }, [loadDirectory, openFile]);
 
   useEffect(() => {
     ensureDirectory("");
   }, [ensureDirectory]);
+
+  // Chat file links resolve to a fresh target object per click, so identity
+  // is the trigger — the same path still re-opens. Tree clicks carry no line.
+  useEffect(() => {
+    if (target?.sessionId === sessionId) {
+      void openFile(target.path, target.line);
+    }
+  }, [target, sessionId, openFile]);
 
   const selectedPath = preview?.path ?? null;
 
@@ -349,7 +367,7 @@ function FilePreview({
   onRetry,
 }: {
   preview: PreviewState | null;
-  onRetry: (path: string) => void;
+  onRetry: (path: string, line?: number) => void;
 }) {
   if (!preview) {
     return (
@@ -384,7 +402,7 @@ function FilePreview({
           label="Retry"
           size="sm"
           variant="secondary"
-          onClick={() => onRetry(preview.path)}
+          onClick={() => onRetry(preview.path, preview.line)}
         />
       </div>
     );
@@ -432,7 +450,11 @@ function FilePreview({
           />
         }
       >
-        <SessionFileViewer contents={content.content} path={content.path} />
+        <SessionFileViewer
+          contents={content.content}
+          line={preview.line}
+          path={content.path}
+        />
       </Suspense>
     </div>
   );

@@ -265,7 +265,7 @@ function snapshot(record: PersistedSessionProjection): RuntimeGatewaySnapshot {
             partType: "text",
             body: failed
               ? "读取失败。这是固定错误场景，可检查错误信息和重试入口。"
-              : `## 检查结果 ${index + 1}\n\n已检查 **会话内容** 和工具输出。打开右侧 Dock 的 Changes / Files 检查同一份文件。\n\n\`\`\`ts\n${source}\`\`\`\n\n| 区域 | 检查内容 |\n| --- | --- |\n| Changes | 修改、新增、删除、重命名、二进制 |\n| Files | 目录展开、代码预览、空目录、大文件 |\n\n- [x] 固定数据可重复查看\n- [ ] 流式、停止和终端请用真实会话验证\n\n> 这是静态 mock；刷新恢复初始场景。`,
+              : `## 检查结果 ${index + 1}\n\n已检查 **会话内容** 和工具输出。打开右侧 Dock 的 Changes / Files 检查同一份文件。\n\n文件链接：[src/greeting.ts](src/greeting.ts) 在 Changes 里；[logs/large.txt#L400](logs/large.txt#L400) 不在，回落到 Files 并定位到该行；[example.com](https://example.com) 是外链。\n\n行内代码引用经 resolve_session_files 确认后才可点击：\`src/greeting.ts\`、\`logs/large.txt:120\` 存在；\`src/missing.ts\` 不存在、\`console.log\` 不是文件，保持纯文本。\n\n\`\`\`ts\n${source}\`\`\`\n\n| 区域 | 检查内容 |\n| --- | --- |\n| Changes | 修改、新增、删除、重命名、二进制 |\n| Files | 目录展开、代码预览、空目录、大文件 |\n\n- [x] 固定数据可重复查看\n- [ ] 流式、停止和终端请用真实会话验证\n\n> 这是静态 mock；刷新恢复初始场景。`,
           },
         ],
       },
@@ -450,7 +450,8 @@ export function createMockApi(): PaceRendererApi {
           break;
         case "get_session_changes":
         case "list_session_directory":
-        case "read_session_file": {
+        case "read_session_file":
+        case "resolve_session_files": {
           if (!record) throw new Error(`Mock session not found: ${sessionId}`);
           if (sessionId === "mock-error")
             throw new Error("静态场景：无权读取此工作目录（mock EACCES）。");
@@ -458,7 +459,22 @@ export function createMockApi(): PaceRendererApi {
           if (command === "get_session_changes") result = changes(sessionId);
           else if (command === "list_session_directory")
             result = listing(sessionId, path);
-          else {
+          else if (command === "resolve_session_files") {
+            // Mirror the backend: only paths that are real files inside the
+            // root come back; anything else is dropped silently.
+            const requested = Array.isArray(args.paths) ? args.paths : [];
+            result = {
+              files: requested.filter(
+                (candidate): candidate is string =>
+                  typeof candidate === "string" &&
+                  !candidate.startsWith("/") &&
+                  !candidate.split("/").includes("..") &&
+                  candidate.split("/")[0] !== ".git" &&
+                  sessionId !== "mock-clean" &&
+                  files[candidate] !== undefined,
+              ),
+            };
+          } else {
             const file = sessionId !== "mock-clean" ? files[path] : undefined;
             if (!file) throw new Error(`Mock file not found: ${path}`);
             result = {

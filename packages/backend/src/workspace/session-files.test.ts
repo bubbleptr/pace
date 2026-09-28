@@ -223,4 +223,71 @@ describe("createNodeSessionFilesReader", () => {
       ).rejects.toThrow(/outside|invalid/i);
     });
   });
+
+  describe("resolveFiles", () => {
+    it("keeps only paths that are regular files inside the root, in input order", async () => {
+      const root = await checkout();
+      const reader = createNodeSessionFilesReader();
+
+      await expect(
+        reader.resolveFiles({
+          sessionId: "s1",
+          diffRoot: root,
+          paths: [
+            "src/app.ts",
+            "src",
+            "missing.ts",
+            "../secret.ts",
+            "/etc/hosts",
+            ".git/config",
+            "src/nested/deep.txt",
+          ],
+        }),
+      ).resolves.toEqual({
+        files: ["src/app.ts", "src/nested/deep.txt"],
+      });
+    });
+
+    it("echoes the input spelling rather than the normalized path", async () => {
+      const root = await checkout();
+      const reader = createNodeSessionFilesReader();
+
+      await expect(
+        reader.resolveFiles({
+          sessionId: "s1",
+          diffRoot: root,
+          paths: ["./src/app.ts", "src//nested/deep.txt"],
+        }),
+      ).resolves.toEqual({ files: ["./src/app.ts", "src//nested/deep.txt"] });
+    });
+
+    it("excludes a symlink that escapes the root without failing the batch", async () => {
+      const root = await checkout();
+      const outside = await tempDirectory();
+      await writeFile(join(outside, "secret.txt"), "secret\n", "utf8");
+      await symlink(outside, join(root, "escape"));
+      const reader = createNodeSessionFilesReader();
+
+      await expect(
+        reader.resolveFiles({
+          sessionId: "s1",
+          diffRoot: root,
+          paths: ["escape/secret.txt", "README.md", "src\0.ts"],
+        }),
+      ).resolves.toEqual({ files: ["README.md"] });
+    });
+
+    it("considers only the first 100 paths", async () => {
+      const root = await checkout();
+      const reader = createNodeSessionFilesReader();
+
+      await expect(
+        reader.resolveFiles({
+          sessionId: "s1",
+          diffRoot: root,
+          paths: ["src/app.ts", ...Array(100).fill("missing.ts"), "README.md"],
+        }),
+      ).resolves.toEqual({ files: ["src/app.ts"] });
+    });
+  });
 });

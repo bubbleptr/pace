@@ -63,6 +63,7 @@ export type {
   SessionDirectoryEntryKind,
   SessionDirectoryListing,
   SessionFileContent,
+  SessionFileResolution,
 } from "./session-files";
 
 export {
