@@ -103,7 +103,9 @@ function FilesSessionContent({ sessionId, target }: Props) {
   // re-mounted placeholder never double-fetches in-flight or successful loads.
   const requestedRef = useRef(new Set<string>());
   const previewRequestRef = useRef(0);
-  const previewPathRef = useRef<string | null>(null);
+  // Refresh re-opens what is on screen; the line a chat link landed on is part
+  // of that state, so remember the pair and not just the path.
+  const previewRef = useRef<{ path: string; line?: number } | null>(null);
 
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -162,7 +164,7 @@ function FilesSessionContent({ sessionId, target }: Props) {
 
   const openFile = useCallback(
     async (path: string, line?: number) => {
-      previewPathRef.current = path;
+      previewRef.current = { path, line };
       const request = ++previewRequestRef.current;
       setPreview({ status: "loading", path, line });
 
@@ -193,8 +195,9 @@ function FilesSessionContent({ sessionId, target }: Props) {
       return root ? new Map([["", root]]) : new Map();
     });
     void loadDirectory("");
-    if (previewPathRef.current !== null) {
-      void openFile(previewPathRef.current);
+    const current = previewRef.current;
+    if (current) {
+      void openFile(current.path, current.line);
     }
   }, [loadDirectory, openFile]);
 
@@ -364,7 +367,7 @@ function FilePreview({
   onRetry,
 }: {
   preview: PreviewState | null;
-  onRetry: (path: string) => void;
+  onRetry: (path: string, line?: number) => void;
 }) {
   if (!preview) {
     return (
@@ -399,7 +402,7 @@ function FilePreview({
           label="Retry"
           size="sm"
           variant="secondary"
-          onClick={() => onRetry(preview.path)}
+          onClick={() => onRetry(preview.path, preview.line)}
         />
       </div>
     );

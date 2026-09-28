@@ -434,6 +434,77 @@ describe("SessionFilesPanel", () => {
     await waitFor(() => expect(readSessionFile).toHaveBeenCalledTimes(2));
   });
 
+  it("re-reads the target's file at the same line on refresh", async () => {
+    const user = userEvent.setup();
+    scriptListings({ "": rootListing });
+    readSessionFile.mockResolvedValue(fileContent("README.md"));
+
+    render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md", line: 3 }}
+      />,
+    );
+    const viewer = await screen.findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-line", "3");
+
+    await user.click(screen.getByRole("button", { name: "Refresh Session files" }));
+
+    await waitFor(() => expect(readSessionFile).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("session-file-viewer")).toHaveAttribute("data-line", "3");
+  });
+
+  it("retries a failed target read with its line", async () => {
+    const user = userEvent.setup();
+    scriptListings({ "": rootListing });
+    readSessionFile
+      .mockRejectedValueOnce(new Error("read failed"))
+      .mockResolvedValueOnce(fileContent("README.md"));
+
+    render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md", line: 7 }}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("read failed");
+    await user.click(within(alert).getByRole("button", { name: "Retry" }));
+
+    const viewer = await screen.findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-path", "README.md");
+    expect(viewer).toHaveAttribute("data-line", "7");
+    expect(readSessionFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the remembered line when a tree click re-opens the file", async () => {
+    const user = userEvent.setup();
+    scriptListings({ "": rootListing });
+    readSessionFile.mockResolvedValue(fileContent("README.md"));
+
+    render(
+      <SessionFilesPanel
+        sessionId="session-1"
+        target={{ sessionId: "session-1", path: "README.md", line: 3 }}
+      />,
+    );
+    const viewer = await screen.findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-line", "3");
+
+    await user.click(within(screen.getByRole("tree")).getByText("README.md"));
+    await waitFor(() => expect(readSessionFile).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-file-viewer")).not.toHaveAttribute("data-line"),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh Session files" }));
+    await waitFor(() => expect(readSessionFile).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-file-viewer")).not.toHaveAttribute("data-line"),
+    );
+  });
+
   it("opens a target-free tree click without a line", async () => {
     const user = userEvent.setup();
     scriptListings({ "": rootListing });

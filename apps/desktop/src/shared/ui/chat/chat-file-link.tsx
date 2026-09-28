@@ -25,14 +25,11 @@ export function parseChatFileHref(href: string): ChatFileRef | null {
   const [pathPart, hash = ""] = href.split("#", 2);
   const suffix = /:(\d+)(?::\d+)?$/.exec(pathPart ?? "");
   const path = suffix ? pathPart!.slice(0, suffix.index) : (pathPart ?? "");
-  if (!path) return null;
+  // A trailing slash names a directory, which is not a file reference — it
+  // stays a plain link and the click does nothing.
+  if (!path || path.endsWith("/")) return null;
   const line = Number(/^L(\d+)(?:-L?\d+)?$/.exec(hash)?.[1] ?? suffix?.[1]);
-  // A trailing slash names a directory; keep it so `docs/` doesn't read as a
-  // file named `docs`.
-  const trimmed = path.replace(/\/+$/, "");
-  const base = trimmed.slice(trimmed.lastIndexOf("/") + 1);
-  if (!base) return null;
-  const name = path.endsWith("/") ? `${base}/` : base;
+  const name = path.slice(path.lastIndexOf("/") + 1);
   return {
     path,
     name,

@@ -487,13 +487,16 @@ export function AgentWorkspaceSessionsPage() {
     }
     if (sessionChanges.loading || sessionChanges.refreshing) return;
     const diffRoot = selectedSessionProjection.checkout?.diffRoot ?? selectedSessionProjection.cwd ?? undefined;
-    const target = sessionChanges.changes
-      ? findSessionChangeTarget(
-          pendingChangeLink.link,
-          sessionChanges.changes,
-          diffRoot,
-        )
-      : null;
+    // A failed read keeps the previous snapshot around — it may predate this
+    // run's edits, so skip it and resolve straight against the Files surface.
+    const target =
+      sessionChanges.changes && !sessionChanges.error
+        ? findSessionChangeTarget(
+            pendingChangeLink.link,
+            sessionChanges.changes,
+            diffRoot,
+          )
+        : null;
     setPendingChangeLink(null);
     if (target) {
       setChangeTarget(target);
@@ -501,9 +504,9 @@ export function AgentWorkspaceSessionsPage() {
       setDockOpen(true);
       return;
     }
-    // Not in the Changes set — or the diff read failed entirely: fall back to
-    // previewing the file in the Files surface instead of dead-ending the
-    // click. Out-of-root and .git paths resolve to null and still do nothing.
+    // No reliable Changes match: fall back to previewing the file in the
+    // Files surface instead of dead-ending the click. Out-of-root, .git, and
+    // directory paths resolve to null and still do nothing.
     const file = findSessionFileTarget(
       pendingChangeLink.link,
       selectedSessionProjection.id,
@@ -514,7 +517,7 @@ export function AgentWorkspaceSessionsPage() {
       setActiveSurfaceId("files");
       setDockOpen(true);
     }
-  }, [pendingChangeLink, sessionChanges.changes, sessionChanges.loading, sessionChanges.refreshing, selectedSessionProjection, showDraft]);
+  }, [pendingChangeLink, sessionChanges.changes, sessionChanges.error, sessionChanges.loading, sessionChanges.refreshing, selectedSessionProjection, showDraft]);
 
   useEffect(() => {
     setTerminalInstanceCount(0);

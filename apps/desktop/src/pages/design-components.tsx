@@ -1435,7 +1435,7 @@ function ChatFileLinkGallery() {
             {"Setup notes live in [apps/desktop/README.md#L3](apps/desktop/README.md#L3)."}
           </ChatMarkdown>
         </Variant>
-        <Variant caption="directory keeps its trailing slash">
+        <Variant caption="directory links stay plain links (no chip)">
           <ChatMarkdown fileLinks>
             {"Everything under [docs/design/](docs/design/) applies."}
           </ChatMarkdown>

@@ -51,6 +51,8 @@ export function findSessionFileTarget(
   const root = diffRoot.replace(/\/$/, "");
   if (!link.absolutePath.startsWith(`${root}/`)) return null;
   const path = link.absolutePath.slice(root.length + 1);
-  if (!path || path.split("/", 1)[0] === ".git") return null;
+  // A trailing slash names a directory — there is no file to read, so the
+  // click dead-ends instead of surfacing a "not a file" error.
+  if (!path || path.endsWith("/") || path.split("/", 1)[0] === ".git") return null;
   return { sessionId, path, ...(link.line ? { line: link.line } : {}) };
 }

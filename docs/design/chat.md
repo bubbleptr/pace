@@ -40,7 +40,7 @@ token 与正文处于同一文本流，外层使用 `inline-flex` 与 `vertical-
 
 两个 Markdown 都钉死 `density="compact"`、`headingLevelStart=3`，不暴露这两个 prop。
 
-助手正文里的本地文件链接在 `fileLinks` 开关下渲染为 `chat-file-link` chip（FileIcon + `basename[:line]`，title 给完整路径）：链接文本只是重复目标时压缩，自定义文本保留；非文件链接维持原行为（http(s) 新窗口）。开关默认关——`components.link` 会接管**所有**链接渲染，只在有页面级点击委托的宿主（Live Chat）才开。点击先匹配 Session 的 Changes 集合（`findSessionChangeTarget`），不在变更集里的文件回落到 Files surface 打开预览并高亮滚动到 `:N` / `#LN` 指定的行（`findSessionFileTarget`）；checkout 之外和 `.git` 路径不动作。
+助手正文里的本地文件链接在 `fileLinks` 开关下渲染为 `chat-file-link` chip（FileIcon + `basename[:line]`，title 给完整路径）：链接文本只是重复目标时压缩，自定义文本保留；尾部 `/` 的目录链接不是文件引用，渲染为普通链接且点击不动作；非文件链接维持原行为（http(s) 新窗口）。开关默认关——`components.link` 会接管**所有**链接渲染，只在有页面级点击委托的宿主（Live Chat）才开。点击先匹配 Session 的 Changes 集合（`findSessionChangeTarget`），不在变更集里的文件回落到 Files surface 打开预览并高亮滚动到 `:N` / `#LN` 指定的行（`findSessionFileTarget`）；checkout 之外和 `.git` 路径不动作。
 
 ### ChatRunFailure
 

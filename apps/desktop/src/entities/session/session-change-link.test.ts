@@ -71,6 +71,14 @@ describe("Session file targets", () => {
     ).toBeNull();
   });
 
+  it("rejects a trailing-slash directory path — there is no file to preview", () => {
+    for (const href of ["src/deep/", "/work/repo/src/deep/"]) {
+      const link = parseSessionChangeLink(href, "/work/repo")!;
+      expect(link.absolutePath.endsWith("/")).toBe(true);
+      expect(findSessionFileTarget(link, "review", "/work/repo")).toBeNull();
+    }
+  });
+
   it("rejects .git paths, which the backend refuses to read", () => {
     for (const href of [".git", ".git/config", ".git/hooks/pre-commit"]) {
       const link = parseSessionChangeLink(href, "/work/repo")!;

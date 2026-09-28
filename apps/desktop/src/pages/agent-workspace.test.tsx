@@ -957,6 +957,52 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(viewer).toHaveAttribute("data-line", "2");
   });
 
+  it("opens Files, not the stale Changes match, when the click's refresh fails", async () => {
+    setDockedLayout(true);
+    addProjectToRegistry(mockProject);
+    const api = createMockApi();
+    let reads = 0;
+    window.pace = {
+      ...api,
+      async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+        // The click's refresh rejects; the snapshot from the first (stale)
+        // read must not be matched anyway.
+        if (command === "get_session_changes" && ++reads > 1) {
+          throw new Error("mock changes read failed");
+        }
+        const result = await api.invoke<T>(command, args);
+        if (command === "get_runtime_snapshot") {
+          const snapshot = result as unknown as import("@pace/core").RuntimeGatewaySnapshot;
+          for (const envelope of snapshot.events) {
+            const event = envelope.payload as import("@pace/core").AgentRuntimeEvent;
+            if (event.type === "message" && event.role === "assistant" && event.parts) {
+              for (const part of event.parts) {
+                if (part.partType === "text") {
+                  // src/new-file.ts is in the stale Changes snapshot AND exists
+                  // in the mock checkout.
+                  part.body = "See [the new file](src/new-file.ts).";
+                }
+              }
+            }
+          }
+        }
+        return result;
+      },
+    };
+    renderProjectSessions(`/projects/${encodeURIComponent(mockProject)}/sessions`, { seedProjects: false });
+    const chat = await screen.findByLabelText("Live Chat messages");
+    const link = await within(chat).findByRole("link", { name: "the new file" });
+    await waitFor(() => expect(reads).toBe(1));
+
+    expect(fireEvent.click(link)).toBe(false);
+    await waitFor(() => expect(reads).toBe(2));
+
+    const files = await screen.findByRole("complementary", { name: "Files" });
+    const viewer = await within(files).findByTestId("session-file-viewer");
+    expect(viewer).toHaveAttribute("data-path", "src/new-file.ts");
+    expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
+  });
+
   it("opens nothing for a chat link that resolves outside the checkout", async () => {
     setDockedLayout(true);
     addProjectToRegistry(mockProject);

@@ -30,11 +30,9 @@ describe("parseChatFileHref", () => {
     }
   });
 
-  it("keeps the trailing slash on directory links", () => {
-    expect(parseChatFileHref("src/utils/")).toEqual({
-      path: "src/utils/",
-      name: "utils/",
-    });
+  it("rejects directory links — a trailing slash is not a file", () => {
+    expect(parseChatFileHref("src/utils/")).toBeNull();
+    expect(parseChatFileHref("docs/")).toBeNull();
   });
 
   it("treats a dotted filename with a numeric suffix as a file, not a scheme", () => {
@@ -87,12 +85,12 @@ describe("ChatMarkdown file links", () => {
     expect(link).toHaveAttribute("title", "README.md:3");
   });
 
-  it("keeps a trailing slash on directory chips", () => {
+  it("renders a directory link as a plain link, not a chip", () => {
     render(<ChatMarkdown fileLinks>{"[docs/](docs/)"}</ChatMarkdown>);
 
-    expect(
-      screen.getByRole("link", { name: "docs/" }),
-    ).toHaveAttribute("data-slot", "chat-file-link");
+    const link = screen.getByRole("link", { name: "docs/" });
+    expect(link).not.toHaveAttribute("data-slot", "chat-file-link");
+    expect(link).not.toHaveAttribute("target");
   });
 
   it("keeps custom link text and still marks it as a file link", () => {
