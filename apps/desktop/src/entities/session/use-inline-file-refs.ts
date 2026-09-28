@@ -19,12 +19,16 @@ export type InlineFileRefScope = {
 
 const EMPTY_REFS: ReadonlySet<string> = new Set();
 
+// The backend's resolveFiles only inspects the first 100 paths
+// (MAX_RESOLVE_FILES), so a bigger batch must be split across requests.
+const RESOLVE_FILES_BATCH = 100;
+
 /**
  * The inline-code spans of `markdown` that are confirmed files in the
- * Session's checkout. Resolution is one batched `resolve_session_files` call
- * per (scope, markdown); nothing is requested for a null scope, no candidates,
- * or paths that can't sit inside the diff root. A failure is silent: the spans
- * simply stay plain code.
+ * Session's checkout. Resolution batches candidates into `resolve_session_files`
+ * calls per (scope, markdown); nothing is requested for a null scope, no
+ * candidates, or paths that can't sit inside the diff root. A failure is
+ * silent: the spans simply stay plain code.
  */
 export function useInlineFileRefs(
   scope: InlineFileRefScope | null,
@@ -62,16 +66,28 @@ export function useInlineFileRefs(
     if (!byPath.size) return;
 
     let stale = false;
-    void resolve(sessionId, [...byPath.keys()])
-      .then(({ files }) => {
+    const paths = [...byPath.keys()];
+    const chunks: string[][] = [];
+    for (let i = 0; i < paths.length; i += RESOLVE_FILES_BATCH) {
+      chunks.push(paths.slice(i, i + RESOLVE_FILES_BATCH));
+    }
+    // The confirmation belongs to this request only — an earlier result for
+    // the same key must not be served while it is in flight.
+    setResolved({ key: effectKey, refs: EMPTY_REFS });
+    void Promise.all(chunks.map((chunk) => resolve(sessionId, chunk)))
+      .then((results) => {
         if (stale) return;
         const refs = new Set<string>();
-        for (const path of files) {
-          for (const code of byPath.get(path) ?? []) refs.add(code);
+        for (const { files } of results) {
+          for (const path of files) {
+            for (const code of byPath.get(path) ?? []) refs.add(code);
+          }
         }
         setResolved({ key: effectKey, refs });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!stale) setResolved({ key: effectKey, refs: EMPTY_REFS });
+      });
     return () => {
       stale = true;
     };

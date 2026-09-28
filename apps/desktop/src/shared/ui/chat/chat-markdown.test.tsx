@@ -106,7 +106,7 @@ describe("chat inline code", () => {
 describe("chat inline code file references", () => {
   it("wraps a confirmed inline code span in a link around the code chip", () => {
     render(
-      <ChatMarkdown linkedInlineCode={new Set(["src/a.ts:12"])}>
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts:12"])}>
         {"See `src/a.ts:12` for details."}
       </ChatMarkdown>,
     );
@@ -121,7 +121,7 @@ describe("chat inline code file references", () => {
 
   it("leaves unconfirmed spans and inline code without the prop plain", () => {
     const { unmount } = render(
-      <ChatMarkdown linkedInlineCode={new Set(["src/a.ts"])}>
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts"])}>
         {"See `src/a.ts` and `src/other.ts`."}
       </ChatMarkdown>,
     );
@@ -143,9 +143,70 @@ describe("chat inline code file references", () => {
     );
   });
 
-  it("never links fenced code with the same text", () => {
+  it("ignores linkedInlineCode when fileLinks is off", () => {
     render(
       <ChatMarkdown linkedInlineCode={new Set(["src/a.ts"])}>
+        {"See `src/a.ts`."}
+      </ChatMarkdown>,
+    );
+
+    // Without the link override there is no inside-link marker, so the set
+    // is never applied.
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText("src/a.ts")).toHaveAttribute(
+      "data-slot",
+      "chat-inline-code",
+    );
+  });
+
+  it("does not nest an inline-code link inside another link", () => {
+    render(
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts"])}>
+        {"[`src/a.ts`](README.md) and `src/a.ts`"}
+      </ChatMarkdown>,
+    );
+
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(2);
+    const outer = links.find((link) => link.getAttribute("href") === "README.md")!;
+    // The code chip keeps rendering, only the nested <a> is suppressed.
+    expect(outer.querySelector('[data-slot="chat-inline-code"]')).toBeInTheDocument();
+    expect(outer.querySelector('[data-slot="chat-inline-code-link"]')).toBeNull();
+    const inner = links.find(
+      (link) => link.getAttribute("data-slot") === "chat-inline-code-link",
+    )!;
+    expect(inner).toHaveAttribute("href", "src/a.ts");
+  });
+
+  it("does not nest an inline-code link inside an external link", () => {
+    render(
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts"])}>
+        {"[`src/a.ts`](https://example.com)"}
+      </ChatMarkdown>,
+    );
+
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "https://example.com");
+    expect(links[0].querySelector('[data-slot="chat-inline-code-link"]')).toBeNull();
+  });
+
+  it("links a padded code span using its trimmed text", () => {
+    render(
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts"])}>
+        {"See `  src/a.ts  `."}
+      </ChatMarkdown>,
+    );
+
+    const link = screen.getByRole("link");
+    expect(link).toHaveAttribute("data-slot", "chat-inline-code-link");
+    expect(link).toHaveAttribute("href", "src/a.ts");
+    expect(link).toHaveAttribute("title", "src/a.ts");
+  });
+
+  it("never links fenced code with the same text", () => {
+    render(
+      <ChatMarkdown fileLinks linkedInlineCode={new Set(["src/a.ts"])}>
         {"```\nsrc/a.ts\n```"}
       </ChatMarkdown>,
     );

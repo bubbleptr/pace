@@ -1,8 +1,15 @@
 import { Link } from "@astryxdesign/core/Link";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode } from "react";
 import { FileIcon } from "@/shared/ui/icons";
 
 export type ChatFileRef = { path: string; name: string; line?: number };
+
+/**
+ * True while rendering inside a chat link's label. ChatInlineCode consults
+ * it so a confirmed file reference never mints a nested <a> — invalid HTML,
+ * and the inner anchor could swallow the outer link's click.
+ */
+export const chatInsideLinkContext = createContext(false);
 
 /**
  * Whether an href names a local file rather than a URL or document anchor.
@@ -73,7 +80,9 @@ export function ChatFileLink({
         type="inherit"
         {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       >
-        {children}
+        <chatInsideLinkContext.Provider value={true}>
+          {children}
+        </chatInsideLinkContext.Provider>
       </Link>
     );
   }
@@ -91,7 +100,9 @@ export function ChatFileLink({
       title={file.line ? `${file.path}:${file.line}` : file.path}
     >
       <FileIcon aria-hidden className="chat-file-link__icon" />
-      {compact ? (file.line ? `${file.name}:${file.line}` : file.name) : children}
+      <chatInsideLinkContext.Provider value={true}>
+        {compact ? (file.line ? `${file.name}:${file.line}` : file.name) : children}
+      </chatInsideLinkContext.Provider>
     </a>
   );
 }

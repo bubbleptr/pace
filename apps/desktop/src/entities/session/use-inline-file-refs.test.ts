@@ -99,4 +99,71 @@ describe("useInlineFileRefs", () => {
     await waitFor(() => expect(resolve).toHaveBeenCalled());
     expect(result.current.size).toBe(0);
   });
+
+  it("splits more than 100 distinct paths across chunked requests", async () => {
+    const names = Array.from({ length: 101 }, (_, i) => `dir/file${i}.ts`);
+    const calls: string[][] = [];
+    const resolve = vi.fn(async (_sessionId: string, paths: string[]) => {
+      calls.push(paths);
+      return { files: paths };
+    });
+    const { result } = renderHook(() =>
+      useInlineFileRefs(scope, names.map((name) => `\`${name}\``).join(" "), resolve),
+    );
+
+    await waitFor(() => expect(result.current.size).toBe(101));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toHaveLength(100);
+    expect(calls[1]).toEqual(["dir/file100.ts"]);
+  });
+
+  it("returns an empty set when any chunk of a batched request fails", async () => {
+    const names = Array.from({ length: 101 }, (_, i) => `dir/file${i}.ts`);
+    let call = 0;
+    const resolve = vi.fn(async (_sessionId: string, paths: string[]) => {
+      call += 1;
+      if (call === 2) throw new Error("rpc unavailable");
+      return { files: paths };
+    });
+    const { result } = renderHook(() =>
+      useInlineFileRefs(scope, names.map((name) => `\`${name}\``).join(" "), resolve),
+    );
+
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(result.current.size).toBe(0);
+  });
+
+  it("does not serve a stale confirmation when the same markdown is re-requested", async () => {
+    const gates: Array<{
+      res: (value: { files: string[] }) => void;
+      rej: (error: Error) => void;
+    }> = [];
+    const resolve = vi.fn(
+      () =>
+        new Promise<{ files: string[] }>((res, rej) => {
+          gates.push({ res, rej });
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ markdown }) => useInlineFileRefs(scope, markdown, resolve),
+      { initialProps: { markdown: "See `a.ts`." } },
+    );
+
+    await act(async () => {
+      gates[0]!.res({ files: ["a.ts"] });
+    });
+    expect(result.current.has("a.ts")).toBe(true);
+
+    // Leave B's request in flight; back on A, the old A result must not be
+    // served while the new request is pending.
+    rerender({ markdown: "See `b.ts`." });
+    rerender({ markdown: "See `a.ts`." });
+    expect(result.current.has("a.ts")).toBe(false);
+
+    await act(async () => {
+      gates[2]!.rej(new Error("rpc unavailable"));
+    });
+    expect(result.current.has("a.ts")).toBe(false);
+  });
 });

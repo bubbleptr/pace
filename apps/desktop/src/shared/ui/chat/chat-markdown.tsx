@@ -1,7 +1,10 @@
 import { Code } from "@astryxdesign/core/Code";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { createContext, useContext, type ComponentProps } from "react";
-import { ChatFileLink } from "@/shared/ui/chat/chat-file-link";
+import {
+  ChatFileLink,
+  chatInsideLinkContext,
+} from "@/shared/ui/chat/chat-file-link";
 
 /**
  * Chat sits under the page h1 (Sessions / Trajectory / …). Markdown `#` must
@@ -26,20 +29,25 @@ const linkedInlineCodeContext = createContext<ReadonlySet<string> | undefined>(
  */
 function ChatInlineCode({ children }: { children: string }) {
   const linkedInlineCode = useContext(linkedInlineCodeContext);
+  const insideLink = useContext(chatInsideLinkContext);
   const chip = (
     <Code className="chat-inline-code" data-slot="chat-inline-code">
       {children}
     </Code>
   );
+  // CommonMark strips only one surrounding space from a code span, so the
+  // text can still arrive padded; the confirmation set keys trimmed text.
+  const text = typeof children === "string" ? children.trim() : children;
   // The span stays a real <a>: the host's click delegation resolves it like
   // any other chat link, and href keeps the :line suffix for that resolution.
-  if (typeof children === "string" && linkedInlineCode?.has(children)) {
+  // A span already inside a link never gets a second nested anchor.
+  if (!insideLink && typeof text === "string" && linkedInlineCode?.has(text)) {
     return (
       <a
-        href={children}
+        href={text}
         className="chat-inline-code-link"
         data-slot="chat-inline-code-link"
-        title={children}
+        title={text}
       >
         {chip}
       </a>
@@ -74,6 +82,8 @@ type ChatMarkdownOwnProps = {
    * Inline-code spans confirmed to name real files (the host checks the
    * checkout and passes the surviving texts here); each renders as a link
    * around the code chip. Settled answers only — streaming never sets this.
+   * Requires `fileLinks`: without our link renderer there is no inside-link
+   * marker, so the set is ignored rather than risking nested anchors.
    */
   linkedInlineCode?: ReadonlySet<string>;
 };
@@ -95,7 +105,9 @@ export function ChatMarkdown({
       data-testid="markdown-renderer"
       {...rest}
     >
-      <linkedInlineCodeContext.Provider value={linkedInlineCode}>
+      <linkedInlineCodeContext.Provider
+        value={fileLinks ? linkedInlineCode : undefined}
+      >
         <Markdown
           components={
             fileLinks ? chatMarkdownFileLinkComponents : chatMarkdownComponents
