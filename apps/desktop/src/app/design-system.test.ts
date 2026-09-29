@@ -102,6 +102,67 @@ describe("Design system integration", () => {
     expect(styles).toContain("--color-foreground: var(--foreground);");
   });
 
+  it("applies squircle corners globally behind a support gate", () => {
+    const styles = readFileSync(
+      join(repoRoot, "apps/desktop/src/app/styles.css"),
+      "utf8",
+    );
+
+    // The single central lever for continuous-curvature corners: universal
+    // because corner-shape neither inherits nor rides a custom property.
+    expect(styles).toContain("@supports (corner-shape: squircle) {");
+    expect(styles).toMatch(
+      /@supports \(corner-shape: squircle\) \{\s*\*,\s*\*::before,\s*\*::after \{\s*corner-shape: squircle;/,
+    );
+  });
+
+  it("compensates the scalable radius tokens 1.5x for squircle", () => {
+    const styles = readFileSync(
+      join(repoRoot, "apps/desktop/src/app/styles.css"),
+      "utf8",
+    );
+
+    // theme-neutral scale ×1.5: inner 6→9, element 10→15, container 12→18,
+    // page/chat 28→42. Perceived roundness matches the pre-squircle look.
+    expect(styles).toContain("--radius-inner: 9px;");
+    expect(styles).toContain("--radius-element: 15px;");
+    expect(styles).toContain("--radius-container: 18px;");
+    expect(styles).toContain("--radius-page: 42px;");
+    expect(styles).toContain("--radius-chat: 42px;");
+  });
+
+  it("keeps circles and pills round under the global squircle rule", () => {
+    const styles = readFileSync(
+      join(repoRoot, "apps/desktop/src/app/styles.css"),
+      "utf8",
+    );
+    const astryx = readFileSync(
+      join(
+        repoRoot,
+        "apps/desktop/node_modules/@astryxdesign/core/dist/astryx.css",
+      ),
+      "utf8",
+    );
+
+    expect(styles).toContain(".rounded-full,");
+
+    // Astryx StyleX atomics that emit border-radius:50% / var(--radius-full).
+    // Content-addressed, so an upgrade that drops one must fail here loudly
+    // instead of silently squaring every circle in the app.
+    for (const atomic of [
+      ".x16rqkct",
+      ".xy0xnkn",
+      ".xjspbzw",
+      ".x19415el",
+      ".x1dgc8on",
+      ".x1wc3881",
+      ".x8agd5o",
+    ]) {
+      expect(styles).toContain(atomic);
+      expect(astryx).toContain(atomic);
+    }
+  });
+
   it("wires Astryx base styles and theme before the app renders", () => {
     const main = readFileSync(
       join(repoRoot, "apps/desktop/src/app/main.tsx"),

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { StrictMode } from "react";
 import { describe, expect, it } from "vitest";
 import {
+  CornerShapeSection,
   DataPaletteSection,
   DesignPageContent,
   RadiusScaleSection,
@@ -78,6 +79,22 @@ describe("Design tokens layer", () => {
     ]) {
       expect(within(section).getByText(token)).toBeInTheDocument();
     }
+  });
+
+  it("renders the corner-shape comparison with a menu mock", () => {
+    render(<CornerShapeSection />);
+
+    const section = screen.getByRole("region", { name: "Corner shape" });
+
+    for (const token of [
+      "--radius-element",
+      "--radius-container",
+      "--radius-chat",
+    ]) {
+      expect(within(section).getByText(token)).toBeInTheDocument();
+    }
+    expect(within(section).getAllByText("squircle (shipped)")).not.toHaveLength(0);
+    expect(within(section).getByText("menu mock")).toBeInTheDocument();
   });
 
   it("renders the Astryx type scale with live sample text", () => {
