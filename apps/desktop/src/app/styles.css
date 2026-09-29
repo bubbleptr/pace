@@ -73,6 +73,47 @@
   --success: var(--color-success);
   --warning: var(--color-warning);
   --radius: var(--radius-element);
+  /* Squircle compensation: a continuous-curvature corner reads tighter than
+     a round corner at the same radius, so the scalable tokens run at 1.5x
+     the theme-neutral values (inner 6, element 10, container 12, page/chat
+     28). --radius-none and --radius-full stay fixed anchors. Values are px
+     because --radius-chat arrives from core in px. */
+  --radius-inner: 9px;
+  --radius-element: 15px;
+  --radius-container: 18px;
+  --radius-page: 42px;
+  --radius-chat: 42px;
+}
+
+/* Continuous-curvature (squircle) corners everywhere, iOS-style. Chromium
+   139+; engines without support keep plain round corners. corner-shape does
+   not inherit and cannot be carried inside a custom property, so it is
+   applied universally — it only has a visible effect where a border-radius
+   exists. Radii are compensated 1.5x in the bridge above. */
+@supports (corner-shape: squircle) {
+  *,
+  *::before,
+  *::after {
+    corner-shape: squircle;
+  }
+
+  /* ...but circles and pills must stay truly round: a squircle at
+     radius-full deforms a circle into a rounded square. .rounded-full
+     covers Tailwind markup (the convention — do not set radius-full via
+     inline styles); the .x* selectors are Astryx StyleX atomics emitting
+     border-radius:50% / var(--radius-full). Hashed but content-addressed;
+     design-system.test.ts fails loudly if an @astryxdesign/core upgrade
+     drops one. */
+  .rounded-full,
+  .x16rqkct,
+  .xy0xnkn,
+  .xjspbzw,
+  .x19415el,
+  .x1dgc8on,
+  .x1wc3881,
+  .x8agd5o {
+    corner-shape: round;
+  }
 }
 
 /* Tailwind utility names generated from the bridge. `inline` keeps the

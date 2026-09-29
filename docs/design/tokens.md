@@ -2,7 +2,7 @@
 
 ## 允许哪一层
 
-三层，从下往上：Astryx 一级 token（`--color-*`、`--spacing-*`、`--radius-*`、`--font-size-*`、`--duration-*`，全部 `light-dark()`，随系统明暗自动切换）→ Pace 语义桥（`styles.css:59-76`，15 个）→ Tailwind 别名（`styles.css:81-97` 的 `@theme inline`，让 `text-foreground` / `bg-surface` / `border-separator` 这类类名可用）。
+三层，从下往上：Astryx 一级 token（`--color-*`、`--spacing-*`、`--radius-*`、`--font-size-*`、`--duration-*`，全部 `light-dark()`，随系统明暗自动切换）→ Pace 语义桥（`styles.css:59-86`，15 个）→ Tailwind 别名（`styles.css:122-138` 的 `@theme inline`，让 `text-foreground` / `bg-surface` / `border-separator` 这类类名可用）。
 
 组件代码只能引用**上两层**：语义桥（`var(--foreground)` 或类名 `text-foreground`）和 Astryx 一级 token（`var(--color-text-secondary)`）。原因：桥和一级 token 都会随主题解析，字面量不会；Tailwind 自带调色板（`text-gray-500`、`bg-zinc-900`）不经过 Astryx，明暗模式下必错。
 
@@ -14,7 +14,7 @@ const seriesColors = ["var(--pigui-data-blue)", "var(--pigui-data-orange)", /* �
 const seriesColors = ["#1677e8", "text-blue-600"];
 ```
 
-## 语义桥（`styles.css:59-76`，就这 15 个）
+## 语义桥（`styles.css:59-86`，就这 15 个）
 
 | 桥 token | 背后的 Astryx token | 用途 |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ const seriesColors = ["#1677e8", "text-blue-600"];
 | `--default` | `--color-neutral` | 中性强调 |
 | `--primary` | `--color-accent` | 强调色、选中态 |
 | `--danger` / `--success` / `--warning` | `--color-error` / `--color-success` / `--color-warning` | 文字与图标的状态色 |
-| `--radius` | `--radius-element`（8px） | 默认圆角 |
+| `--radius` | `--radius-element`（15px） | 默认圆角 |
 
 没有 `--info`、没有 `--accent-foreground`、没有 `--card`。要的语义不在表里，就直接用 Astryx 一级 token，不要往桥里加（桥里每加一个名字，`design-system.test.ts:86-103` 都要跟着改）。
 
@@ -48,7 +48,7 @@ const seriesColors = ["#1677e8", "text-blue-600"];
  └── 图形（图表段、徽章底、圆环弧）→ --pigui-data-*（见下）
 ```
 
-## 数据调色板 `--pigui-data-*`（`styles.css:99-110`）
+## 数据调色板 `--pigui-data-*`（`styles.css:140-162`）
 
 八个固定 hex，**没有明暗变体**（刻意：分类色在两种主题下读起来要一样）：`blue` `orange` `orange-strong` `amber` `green` `peach` `coral` `slate`。
 
@@ -65,9 +65,9 @@ context: { label: "CONTEXT", color: "var(--success)" }
 ## 间距、圆角、尺寸
 
 - 间距只用 Astryx 刻度：`--spacing-0 … --spacing-12`（4px 基数，另有 `0-5`=2px、`1-5`=6px）。Tailwind 的 `p-4` / `gap-2` 与之同基数，可用；`p-[13px]` 不可用。Stack 的 `gap` 传数字：`gap={2}`，不是 `gap="2"`。
-- 圆角只有 `--radius-inner`(4) `--radius-element`(8，即 `--radius`) `--radius-container`(12) `--radius-page`/`--radius-chat`(28) `--radius-full`。`rounded-[3px]` 不存在于系统里。
+- 圆角只有 `--radius-inner`(9) `--radius-element`(15，即 `--radius`) `--radius-container`(18) `--radius-page`/`--radius-chat`(42) `--radius-full`。`rounded-[3px]` 不存在于系统里。全局 `corner-shape: squircle`（`styles.css:93-117`，`@supports` 门控，不支持的引擎退化为普通圆角）：刻度值是 theme-neutral × 1.5 的补偿——squircle 同半径视觉更紧，补偿后感知圆润度与旧圆角一致；圆形和胶囊必须保持 `round`（squircle 会把正圆压成圆角方块），由 `.rounded-full` 和 Astryx 的 50%/`radius-full` 原子类显式还原，`design-system.test.ts` 守着原子类不随升级漂移。
 - 控件高度只有 `--size-element-sm/md/lg` = 28/32/36px。Surface 第一行的 40px（`h-10`）是唯一例外，理由见 `surface-bar.tsx`。
-- `--pigui-sidebar-*`（`styles.css:111-130`，20 个）只在 `widgets/app-frame/app-frame.tsx` 与 `styles.css` 的侧栏规则里用，值被 `app-frame.test.tsx` 按字面冻结；别处不引用，也不新增 `--pigui-color-*`（同一测试禁止）。
+- `--pigui-sidebar-*`（`styles.css:163-184`，20 个）只在 `widgets/app-frame/app-frame.tsx` 与 `styles.css` 的侧栏规则里用，值被 `app-frame.test.tsx` 按字面冻结；别处不引用，也不新增 `--pigui-color-*`（同一测试禁止）。
 - 运行时注入的布局 token（`--pigui-header-height` `--pigui-main-left` `--pigui-chrome-safe-left` `--pigui-session-dock-width`）由 `widgets/app-frame/app-frame.tsx` / `agent-workspace.tsx` 写在 style 上，CSS 只读不声明。
 
 ## 图标动画时长

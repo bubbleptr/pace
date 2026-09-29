@@ -882,7 +882,8 @@
   /* One step below Astryx's default so the chrome sits closer to the edge.
      The elevated shell has no border; the total content inset is unchanged. */
   --_chat-composer-padding: var(--spacing-2);
-  /* Astryx pairs --radius-chat (28) with --spacing-3 (12) so the 32px
+  /* Astryx pairs --radius-chat (28 upstream; 42 after the 1.5x squircle
+     compensation in styles.css) with --spacing-3 (12) so the 32px
      send button stays a circle: 28 − 12 = 16. Padding dropped one step,
      so the shell must follow: outer = padding + half the md button. */
   --_chat-composer-radius: calc(

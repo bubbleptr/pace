@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -197,6 +197,155 @@ export function RadiusScaleSection() {
   );
 }
 
+type CornerShapeStyle = CSSProperties & { cornerShape?: string };
+
+const cornerShapeRadii = [
+  "--radius-element",
+  "--radius-container",
+  "--radius-chat",
+] as const;
+
+const cornerShapeVariants = [
+  { label: "round", squircle: false },
+  { label: "squircle (shipped)", squircle: true },
+] as const;
+
+function MenuMock({ squircle }: { squircle: boolean }) {
+  const shape: CornerShapeStyle = {
+    // Baselines must pin corner-shape explicitly: the global squircle rule
+    // in styles.css would otherwise reshape them too.
+    cornerShape: squircle ? "squircle" : "round",
+    borderRadius: "var(--radius-container)",
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div
+        className="flex w-52 flex-col border border-separator bg-surface p-1.5"
+        style={{
+          ...shape,
+          // Same elevation as the sidebar popover in styles.css so the
+          // comparison judges the shadow Pace actually ships.
+          boxShadow: "0 4px 14px 0 rgba(24, 24, 27, 0.10)",
+        }}
+      >
+        {["All", "Unread", "Direct", "Groups"].map((item) => (
+          <div
+            key={item}
+            className="rounded-md px-3 py-1.5 text-sm text-foreground"
+          >
+            {item}
+          </div>
+        ))}
+        <div className="mx-2 my-1 border-t border-separator" />
+        <div className="rounded-md px-3 py-1.5 text-sm text-muted">
+          Mark all as read
+        </div>
+      </div>
+      <span className="text-[10px] text-muted">
+        {squircle ? "squircle (shipped)" : "round"}
+      </span>
+    </div>
+  );
+}
+
+const fullRadiusSpecimens = [
+  { label: "avatar 64px", className: "size-16 rounded-full" },
+  { label: "avatar 32px", className: "size-8 rounded-full" },
+  { label: "dot 8px", className: "size-2 rounded-full self-center" },
+  { label: "pill", className: "h-8 w-20 rounded-full" },
+  { label: "progress", className: "h-1 w-24 rounded-full self-center" },
+] as const;
+
+/**
+ * Corner shape decision record (CSS `corner-shape`). Squircle is shipped
+ * globally from styles.css with the scalable radius tokens compensated 1.5x
+ * (a squircle reads tighter than a round corner at the same radius);
+ * circles and pills (radius-full) stay round. Round specimens here pin
+ * corner-shape explicitly to show the pre-squircle look.
+ */
+export function CornerShapeSection() {
+  return (
+    <GallerySection title="Corner shape">
+      <div className="flex flex-col gap-4">
+        {cornerShapeRadii.map((token) => (
+          <div key={token} className="flex items-start gap-4">
+            <span className="w-36 shrink-0 pt-1">
+              <TokenLabel token={token} />
+            </span>
+            <div className="flex flex-wrap gap-4">
+              {cornerShapeVariants.map((variant) => {
+                const shape: CornerShapeStyle = {
+                  borderRadius: `var(${token})`,
+                  cornerShape: variant.squircle ? "squircle" : "round",
+                };
+
+                return (
+                  <div
+                    key={variant.label}
+                    className="flex flex-col items-center gap-2"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="size-20 border border-separator bg-surface-muted"
+                      style={shape}
+                    />
+                    <span className="text-[10px] text-muted">
+                      {variant.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <div className="flex items-start gap-4">
+          <span className="w-36 shrink-0 pt-1">
+            <code className="text-xs text-foreground">--radius-full</code>
+          </span>
+          {([false, true] as const).map((squircle) => (
+            <div key={String(squircle)} className="flex flex-col gap-2">
+              <span className="text-[10px] text-muted">
+                {squircle ? "squircle (rejected)" : "round (shipped)"}
+              </span>
+              <div className="flex items-start gap-6">
+                {fullRadiusSpecimens.map((specimen) => (
+                  <div
+                    key={specimen.label}
+                    className="flex flex-col items-center gap-2"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`${specimen.className} border border-separator bg-surface-muted`}
+                      style={
+                        {
+                          cornerShape: squircle ? "squircle" : "round",
+                        } as CornerShapeStyle
+                      }
+                    />
+                    <span className="text-[10px] text-muted">
+                      {specimen.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-start gap-4">
+          <span className="w-36 shrink-0 pt-1">
+            <code className="text-xs text-foreground">menu mock</code>
+          </span>
+          <div className="flex flex-wrap gap-6">
+            <MenuMock squircle={false} />
+            <MenuMock squircle />
+          </div>
+        </div>
+      </div>
+    </GallerySection>
+  );
+}
+
 export function TypeScaleSection() {
   return (
     <GallerySection title="Typography">
@@ -247,6 +396,7 @@ export function DesignPageContent() {
           <DataPaletteSection />
           <SpacingScaleSection />
           <RadiusScaleSection />
+          <CornerShapeSection />
           <TypeScaleSection />
         </>
       ) : (
