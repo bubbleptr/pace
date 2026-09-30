@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { platformWindowChrome } from "./window-chrome";
 
@@ -15,20 +13,8 @@ describe("platform window chrome", () => {
     });
   });
 
-  it("gives Linux native window controls instead of a frameless titlebar", () => {
-    const chrome = platformWindowChrome("linux");
-    const titlebar = readFileSync(
-      join(process.cwd(), "apps/desktop/src/widgets/app-frame/app-frame.tsx"),
-      "utf8",
-    );
-
-    expect(chrome).toEqual({
-      titleBarStyle: "hidden",
-      titleBarOverlay: { height: 40 },
-    });
-    expect(chrome).not.toHaveProperty("trafficLightPosition");
-    expect(chrome).not.toHaveProperty("vibrancy");
-    expect(titlebar).toContain('const titlebarHeight = "40px"');
+  it("lets the window manager draw the Linux title bar", () => {
+    expect(platformWindowChrome("linux")).toEqual({ frame: true });
   });
 
   it("does not invent window controls for other platforms", () => {

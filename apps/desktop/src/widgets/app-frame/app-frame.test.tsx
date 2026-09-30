@@ -1755,23 +1755,21 @@ describe("AppFrame", () => {
     expect(mainSource).toContain("minHeight: 720");
   });
 
-  it("reserves native Linux window controls on the right and no macOS traffic-light gutter", async () => {
+  it("sits the Linux header under the window frame with no caption gutter", async () => {
     document.documentElement.dataset.piguiPlatform = "linux";
     const user = userEvent.setup();
     const { container } = renderAppFrame("/trajectory");
 
     expect(await screen.findByText("Main content")).toBeInTheDocument();
     const headerChrome = screen.getByTestId("header-chrome");
-    const controls = screen.getByTestId("linux-window-controls-space");
 
     expect(within(headerChrome).queryByTestId("mac-traffic-space")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("linux-window-controls-space")).not.toBeInTheDocument();
     expect(headerChrome).toHaveStyle({
       "--pigui-chrome-safe-left": "40px",
-      "--pigui-chrome-safe-right": "138px",
+      "--pigui-chrome-safe-right": "0px",
       "--pigui-traffic-width": "0px",
     });
-    expect(controls).toHaveStyle({ width: "138px" });
-    expect(controls).not.toHaveAttribute("data-window-drag-region");
     expect(container.querySelectorAll("[data-window-drag-region]")).toHaveLength(2);
     expect(
       readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8"),

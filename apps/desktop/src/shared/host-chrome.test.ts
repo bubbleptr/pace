@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   hostWindowChrome,
-  linuxOverlaySafeRight,
   linuxToggleSafeLeft,
   macChromeSafeLeft,
   revealInFileManagerLabel,
@@ -19,16 +18,17 @@ describe("host window chrome", () => {
     expect(macChromeSafeLeft).toBe("132px");
   });
 
-  it("clears Linux caption buttons on the right and does not fake a left gutter", () => {
+  it("leaves Linux under a normal frame: no mac gutter and no caption spacer", () => {
     expect(hostWindowChrome("linux", { showSidebarToggle: true })).toEqual({
       platform: "linux",
       reserveMacTrafficLights: false,
       safeLeft: linuxToggleSafeLeft,
-      safeRight: linuxOverlaySafeRight,
+      safeRight: "0px",
       trafficWidth: "0px",
     });
     expect(linuxToggleSafeLeft).not.toBe(macChromeSafeLeft);
     expect(hostWindowChrome("linux", { showSidebarToggle: false }).safeLeft).toBe("0px");
+    expect(hostWindowChrome("linux").safeRight).toBe("0px");
   });
 
   it("names the file manager for the host", () => {

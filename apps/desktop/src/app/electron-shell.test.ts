@@ -38,7 +38,8 @@ describe("Electron shell", () => {
     expect(chrome).toContain('backgroundColor: "#00000000"');
     expect(chrome).toContain('platform === "darwin"');
     expect(chrome).toContain('platform === "linux"');
-    expect(chrome).toContain("titleBarOverlay:");
+    expect(chrome).toContain("frame: true");
+    expect(chrome).not.toContain("titleBarOverlay");
   });
 
   it("marks the document for sidebar vibrancy only on macOS", () => {

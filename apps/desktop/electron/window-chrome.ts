@@ -1,21 +1,19 @@
 /**
  * Native window chrome per OS.
  *
- * `titleBarStyle: "hidden"` keeps Pace's own 40px titlebar. On macOS that
- * still draws traffic lights. On Linux, hidden without `titleBarOverlay` is
- * frameless: no minimize, maximize, or close. The overlay puts those controls
- * on the right, over the custom titlebar, instead of adding a second frame.
- *
- * `height` matches `titlebarHeight` in the renderer (`40px`).
+ * macOS hides the title bar so Pace's 40px header can host the traffic lights.
+ * Linux keeps the default decorated frame: the window manager draws the title
+ * and min/max/close. Hiding the title bar there is frameless, and a client-side
+ * caption overlay sits on top of Pace's own header.
  */
 export type WindowChromeOptions = {
-  titleBarStyle: "hidden";
+  frame?: boolean;
+  titleBarStyle?: "hidden";
   trafficLightPosition?: { x: number; y: number };
   transparent?: boolean;
   vibrancy?: "under-window";
   visualEffectState?: "followWindow";
   backgroundColor?: string;
-  titleBarOverlay?: { height: number };
 };
 
 export function platformWindowChrome(platform: NodeJS.Platform): WindowChromeOptions {
@@ -33,10 +31,7 @@ export function platformWindowChrome(platform: NodeJS.Platform): WindowChromeOpt
   }
 
   if (platform === "linux") {
-    return {
-      titleBarStyle: "hidden",
-      titleBarOverlay: { height: 40 },
-    };
+    return { frame: true };
   }
 
   return { titleBarStyle: "hidden" };

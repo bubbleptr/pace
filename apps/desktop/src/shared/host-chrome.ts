@@ -10,13 +10,10 @@
 export const macChromeSafeLeft = "132px";
 export const macTrafficWidth = "88px";
 /**
- * Native min/max/close drawn by `titleBarOverlay` on the right. Three caption
- * buttons plus a little slack so toolbar actions are not covered.
- */
-export const linuxOverlaySafeRight = "138px";
-/**
  * The sidebar toggle is 28px. This slot keeps the title clear of that button
  * when the sidebar is collapsed. It is not the macOS traffic-light gutter.
+ * Linux does not reserve caption space: the window manager draws those
+ * controls in its own title bar, above this header.
  */
 export const linuxToggleSafeLeft = "40px";
 
@@ -56,22 +53,10 @@ export function hostWindowChrome(
     };
   }
 
-  const safeLeft = options.showSidebarToggle ? linuxToggleSafeLeft : "0px";
-
-  if (platform === "linux") {
-    return {
-      platform,
-      reserveMacTrafficLights: false,
-      safeLeft,
-      safeRight: linuxOverlaySafeRight,
-      trafficWidth: "0px",
-    };
-  }
-
   return {
     platform,
     reserveMacTrafficLights: false,
-    safeLeft,
+    safeLeft: options.showSidebarToggle ? linuxToggleSafeLeft : "0px",
     safeRight: "0px",
     trafficWidth: "0px",
   };

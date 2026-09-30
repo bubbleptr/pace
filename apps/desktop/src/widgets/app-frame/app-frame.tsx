@@ -1125,14 +1125,6 @@ function HeaderChrome({
             {toolbarActions}
           </div>
         ) : null}
-        {chrome.safeRight !== "0px" ? (
-          <div
-            aria-hidden="true"
-            className="h-full shrink-0"
-            data-testid="linux-window-controls-space"
-            style={{ width: chrome.safeRight }}
-          />
-        ) : null}
       </div>
       )}
     </div>

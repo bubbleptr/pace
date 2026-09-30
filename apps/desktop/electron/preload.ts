@@ -76,7 +76,7 @@ function markHostDocument() {
   }
 
   // The renderer has no Node `process` (sandbox). This attribute is how it
-  // tells macOS traffic lights from the Linux window-controls overlay.
+  // tells macOS traffic lights from a normal Linux window frame.
   root.dataset.piguiPlatform = process.platform;
   if (process.platform === "darwin") {
     root.setAttribute("data-pigui-vibrancy", "");

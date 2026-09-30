@@ -667,7 +667,8 @@ body {
 .pigui-header-chrome__pane-headers {
   position: absolute;
   top: 0;
-  /* Linux window controls overlay the right edge; macOS leaves this at 0. */
+  /* Caption buttons live in the macOS traffic lights or the Linux window
+     frame, not in this row, so the inset stays 0. */
   right: var(--pigui-chrome-safe-right, 0px);
   bottom: 0;
   left: var(--pigui-main-left);
