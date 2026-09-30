@@ -749,10 +749,11 @@ ipcMain.handle(
 app.setName("Pace");
 // Linux only keeps Electron's own version while the process name is still
 // "Electron". After setName, with no override, getVersion() is "0.0", and
-// electron-updater throws before createMainWindow(). macOS already reports
-// the packaged version and must not be overwritten.
+// electron-updater throws before createMainWindow(). Electron 42 implements
+// setVersion; the published App types omit it. macOS already reports the
+// packaged version and must not be overwritten.
 if (process.platform === "linux") {
-  app.setVersion(__PACE_APP_VERSION__);
+  (app as typeof app & { setVersion(version: string): void }).setVersion(__PACE_APP_VERSION__);
 }
 const userDataPath = resolveUserDataPath({
   appDataPath: app.getPath("appData"),

@@ -142,7 +142,7 @@ describe("Electron shell", () => {
   it("sets the package version on Linux before electron-updater reads it", () => {
     const main = readProjectFile("apps/desktop/electron/main.ts");
     const setName = main.indexOf('app.setName("Pace")');
-    const setVersion = main.indexOf("app.setVersion(__PACE_APP_VERSION__)");
+    const setVersion = main.indexOf(".setVersion(__PACE_APP_VERSION__)");
     const readUpdater = main.indexOf("autoUpdater: autoUpdater");
 
     expect(setName).toBeGreaterThan(-1);
