@@ -334,6 +334,12 @@ export function createAgentRuntimeEventNormalizer(
     }
 
     const name = typeof rawEvent.toolName === "string" ? rawEvent.toolName : "";
+    // Nested Tool Executions carry the calling execution's id; top-level
+    // events never get the key.
+    const parentage =
+      typeof rawEvent.parentToolCallId === "string"
+        ? { parentToolCallId: rawEvent.parentToolCallId }
+        : {};
 
     if (rawEvent.type === "tool_execution_start") {
       return [
@@ -342,6 +348,7 @@ export function createAgentRuntimeEventNormalizer(
           runId,
           turnId,
           toolCallId: rawEvent.toolCallId,
+          ...parentage,
           phase: "start",
           name,
           args: rawEvent.args,
@@ -358,6 +365,7 @@ export function createAgentRuntimeEventNormalizer(
           runId,
           turnId,
           toolCallId: rawEvent.toolCallId,
+          ...parentage,
           phase: "update",
           name,
           args: rawEvent.args,
@@ -374,6 +382,7 @@ export function createAgentRuntimeEventNormalizer(
         runId,
         turnId,
         toolCallId: rawEvent.toolCallId,
+        ...parentage,
         phase: "end",
         name,
         result: withoutStructuredContent(rawEvent.result),

@@ -537,6 +537,62 @@ describe("agent runtime event normalizer", () => {
     expect(end?.result).not.toHaveProperty("structuredContent");
   });
 
+  it("carries parentToolCallId on nested executions and leaves it off top-level ones", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      {
+        type: "tool_execution_start",
+        toolCallId: "call-1",
+        toolName: "codemode",
+        args: { code: "return 1" },
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        toolName: "mcp__probe__echo",
+        args: { text: "hi" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        toolName: "mcp__probe__echo",
+        result: { content: [{ type: "text", text: "ECHO:hi" }] },
+        isError: false,
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-1",
+        toolName: "codemode",
+        result: { content: [{ type: "text", text: "1" }] },
+        isError: false,
+      },
+    ]);
+
+    const toolEvents = events.filter((event) => event.type === "tool");
+    const nestedStart = toolEvents.find(
+      (event) => event.phase === "start" && event.toolCallId === "call-1/1",
+    );
+    const nestedEnd = toolEvents.find(
+      (event) => event.phase === "end" && event.toolCallId === "call-1/1",
+    );
+    const parentStart = toolEvents.find(
+      (event) => event.phase === "start" && event.toolCallId === "call-1",
+    );
+    const parentEnd = toolEvents.find(
+      (event) => event.phase === "end" && event.toolCallId === "call-1",
+    );
+
+    expect(nestedStart).toMatchObject({ parentToolCallId: "call-1" });
+    expect(nestedEnd).toMatchObject({ parentToolCallId: "call-1" });
+    expect(parentStart).not.toHaveProperty("parentToolCallId");
+    expect(parentEnd).not.toHaveProperty("parentToolCallId");
+  });
+
   it("names the tool on the opening tool_call part, before execution starts", () => {
     const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
     // The SDK's partial message already carries the parsed ToolCall block at

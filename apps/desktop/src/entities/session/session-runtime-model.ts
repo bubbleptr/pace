@@ -73,6 +73,10 @@ export type SessionRuntimeTool = {
   toolCallId: string;
   runId: string;
   turnId: string;
+  // Set on a Nested Tool Execution: the toolCallId of the execution that
+  // started it. Such executions have no tool_call part, so the Chain of
+  // Thought reaches them only through this parentage.
+  parentToolCallId?: string;
   // "announced": only seen as a message tool_call part; "running": execution
   // started; "done": execution ended.
   phase: "announced" | "running" | "done";
@@ -450,6 +454,11 @@ export function applyAgentRuntimeEvent(
         turnId: event.turnId,
         phase: event.phase === "end" ? "done" : "running",
         name: event.name || existing?.name,
+        ...(event.parentToolCallId !== undefined
+          ? { parentToolCallId: event.parentToolCallId }
+          : existing?.parentToolCallId !== undefined
+            ? { parentToolCallId: existing.parentToolCallId }
+            : {}),
         ...(existing?.argsText ? { argsText: existing.argsText } : {}),
         // Validated args from tool execution overwrite message-stream args.
         args: event.args !== undefined ? event.args : existing?.args,

@@ -89,6 +89,10 @@ export type AgentRuntimeEvent =
       runId: string;
       turnId: string;
       toolCallId: string;
+      // Set on a Nested Tool Execution: the toolCallId of the execution that
+      // started it (Pi `ctx.executeTool()`, e.g. codemode). Such executions
+      // have no tool_call part — the model never issued them.
+      parentToolCallId?: string;
       phase: AgentRunPhase;
       name: string;
       args?: unknown;

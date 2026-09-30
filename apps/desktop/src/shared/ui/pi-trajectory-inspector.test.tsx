@@ -63,6 +63,74 @@ function renderInspector(props: {
   );
 }
 
+describe("PiTrajectoryInspector nested calls", () => {
+  const codemodeStep: TrajectoryStep = {
+    id: "codemode",
+    turnIndex: 0,
+    stepIndex: 0,
+    kind: "tool",
+    name: "codemode",
+    toolCallId: "call-1",
+    nestedCalls: {
+      complete: false,
+      calls: [
+        {
+          id: "call-1/1",
+          name: "mcp__probe__echo",
+          argsText: '{\n  "text": "hi"\n}',
+          status: "ok",
+          durationMs: 42,
+        },
+        {
+          id: "call-1/2",
+          name: "bash",
+          argumentsBytes: 512,
+          status: "error",
+          error: "exit 1",
+        },
+      ],
+    },
+  };
+
+  it("lists the recorded calls with their status, args and errors", () => {
+    const { container } = render(
+      <PiTrajectoryInspector
+        step={codemodeStep}
+        tab="Summary"
+        turn={turn}
+        onClose={() => {}}
+        onTabChange={() => {}}
+      />,
+    );
+
+    const section = container.querySelector('[data-slot="nested-calls"]');
+    expect(section).toBeInTheDocument();
+    expect(section).toHaveTextContent("Nested calls (2)");
+    expect(section).toHaveTextContent("probe/echo");
+    expect(section).toHaveTextContent("42ms");
+    expect(section).toHaveTextContent('"text": "hi"');
+    expect(section).toHaveTextContent("Arguments omitted (512 bytes)");
+    expect(section).toHaveTextContent("exit 1");
+    expect(section).toHaveTextContent(
+      "Pi kept a partial record: some calls were dropped, had arguments omitted, or had not finished.",
+    );
+  });
+
+  it("omits the section when the step recorded no nested calls", () => {
+    const { container } = render(
+      <PiTrajectoryInspector
+        step={agentStep}
+        tab="Summary"
+        turn={turn}
+        onClose={() => {}}
+        onTabChange={() => {}}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="nested-calls"]')).not.toBeInTheDocument();
+  });
+});
+
 describe("PiTrajectoryInspector child controls", () => {
   it("hides send/stop when the record did not advertise them", () => {
     renderInspector({

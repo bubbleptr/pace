@@ -288,6 +288,12 @@ test("codemode scripts reach MCP tools in the shipped backend", async () => {
     assert.ok(codemodeEnd, "the runtime events must contain a codemode tool end");
     assert.ok(!codemodeEnd.payload.isError, `codemode must not error: ${JSON.stringify(codemodeEnd.payload.result).slice(0, 2000)}`);
     assert.ok(JSON.stringify(codemodeEnd.payload.result).includes("ECHO:bundled"), `the codemode result must include the MCP echo: ${JSON.stringify(codemodeEnd.payload.result).slice(0, 2000)}`);
+    // The nested MCP call must reach Pace with its parentage attached.
+    const nestedEnd = result.events.find((event) =>
+      event.payload?.type === "tool" && event.payload?.phase === "end" && event.payload?.name === "mcp__probe__echo");
+    assert.ok(nestedEnd, "the runtime events must contain the nested mcp__probe__echo tool end");
+    assert.equal(nestedEnd.payload.parentToolCallId, codemodeEnd.payload.toolCallId);
+    assert.ok(JSON.stringify(nestedEnd.payload.result).includes("ECHO:bundled"), `the nested result must include the MCP echo: ${JSON.stringify(nestedEnd.payload.result).slice(0, 2000)}`);
   } finally {
     server.close();
     await rm(root, { recursive: true, force: true });

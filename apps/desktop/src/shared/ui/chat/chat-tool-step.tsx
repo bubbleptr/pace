@@ -6,6 +6,7 @@ import {
   ChatToolGroup,
   formatToolDuration,
   hasToolDetail,
+  toolDisplayName,
   toolTargetFromArgs,
   type ChatToolItem,
 } from "@/shared/ui/chat/chat-tool";
@@ -117,7 +118,7 @@ export function summarizeTools(tools: ChatToolItem[]) {
     }
 
     return verb === FALLBACK
-      ? `Used ${tool.toolName ?? "a tool"}`
+      ? `Used ${toolDisplayName(tool.toolName) ?? "a tool"}`
       : `${verb.past} ${pluralize(1, verb.noun)}`;
   }
 
@@ -157,6 +158,7 @@ export function ChatToolStep({
 }: ChatToolStepProps) {
   const { tools } = step;
   const failed = tools.filter((tool) => tool.state === "output-error").length;
+  const nestedCount = tools.reduce((sum, tool) => sum + (tool.children?.length ?? 0), 0);
   const totalMs = tools.reduce((sum, tool) => sum + (tool.durationMs ?? 0), 0);
   // Line stats page in with the settled summary only; mid-burst a finished
   // call already has its result but the row is still paging call names.
@@ -172,6 +174,11 @@ export function ChatToolStep({
   );
   const active =
     tools.find((tool) => tool.toolCallId === step.activeToolCallId) ?? tools[tools.length - 1];
+  // While a Nested Tool Execution runs, the label names it after its parent.
+  const runningChildren = active?.children?.filter(
+    (child) => child.state === "input-available",
+  );
+  const runningChild = runningChildren?.[runningChildren.length - 1];
   const kind = step.live ? toolKindFromName(active?.toolName) : toolKindFromTools(tools);
   // One pager for the row's whole life: call to call, and then to the summary,
   // all turn at the same pace, so finishing the burst is a page turn too.
@@ -189,13 +196,22 @@ export function ChatToolStep({
             <span className="chat-tool-step__page">
               <ChatToolKindIcon kind={kind} />
               <TextShimmer className="chat-step__label">
-                {active?.toolName ? `Running ${active.toolName}…` : "Running…"}
+                {active?.toolName
+                  ? runningChild?.toolName
+                    ? `Running ${toolDisplayName(active.toolName)} › ${toolDisplayName(runningChild.toolName)}…`
+                    : `Running ${toolDisplayName(active.toolName)}…`
+                  : "Running…"}
               </TextShimmer>
             </span>
           ) : (
             <span className="chat-tool-step__page">
               <ChatToolKindIcon kind={kind} />
               <span className="chat-step__label">{summarizeTools(tools)}</span>
+              {nestedCount > 0 ? (
+                <span className="chat-step__meta" data-slot="chat-tool-nested-count">
+                  {nestedCount === 1 ? "1 nested call" : `${nestedCount} nested calls`}
+                </span>
+              ) : null}
               {diffStat ? (
                 <span className="chat-step__meta" data-slot="chat-tool-diff-stat">
                   <span className="text-success">+{diffStat.additions}</span>{" "}

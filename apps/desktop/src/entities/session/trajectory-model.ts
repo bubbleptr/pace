@@ -7,6 +7,20 @@ import { toolTargetFromArgs } from "@/shared/ui/chat/chat-tool";
 
 export type TrajectoryRole = "user" | "assistant" | "toolResult" | "annotation" | "unknown";
 
+/**
+ * One Nested Tool Execution as Pi's session log records it on the parent's
+ * toolResult message: no results, arguments possibly replaced by a byte count.
+ */
+export type TrajectoryNestedCall = {
+  id: string;
+  name: string;
+  argsText?: string;
+  argumentsBytes?: number;
+  status: "ok" | "error" | "unfinished";
+  durationMs?: number;
+  error?: string;
+};
+
 export type TrajectoryStep = {
   id: string;
   turnIndex: number;
@@ -22,6 +36,8 @@ export type TrajectoryStep = {
   isError?: boolean;
   isRunning?: boolean;
   durationMs?: number;
+  /** Executions this call started itself; `complete` is false when Pi dropped calls. */
+  nestedCalls?: { calls: TrajectoryNestedCall[]; complete: boolean };
   /** Native toolCallId on a tool step; used to join SubagentRecords. */
   toolCallId?: string;
 };
@@ -70,6 +86,65 @@ function payloadRecord(part: SessionContentPart): Record<string, unknown> | unde
 function payloadString(part: SessionContentPart, key: string) {
   const value = payloadRecord(part)?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+const NESTED_CALL_STATUSES = new Set<TrajectoryNestedCall["status"]>([
+  "ok",
+  "error",
+  "unfinished",
+]);
+
+// Pi records a parent's Nested Tool Executions on the toolResult message;
+// entries are capped and may be malformed, so keep only well-formed calls.
+function nestedCallsFromPayload(part: SessionContentPart): TrajectoryStep["nestedCalls"] {
+  const value = payloadRecord(part)?.nestedCalls;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const { calls: rawCalls, complete } = value as { calls?: unknown; complete?: unknown };
+  if (!Array.isArray(rawCalls)) {
+    return undefined;
+  }
+
+  const calls: TrajectoryNestedCall[] = [];
+
+  for (const entry of rawCalls) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const call = entry as Record<string, unknown>;
+
+    if (
+      typeof call.id !== "string" ||
+      typeof call.name !== "string" ||
+      typeof call.status !== "string" ||
+      !NESTED_CALL_STATUSES.has(call.status as TrajectoryNestedCall["status"])
+    ) {
+      continue;
+    }
+
+    calls.push({
+      id: call.id,
+      name: call.name,
+      ...(call.arguments !== undefined
+        ? { argsText: JSON.stringify(call.arguments, null, 2) }
+        : {}),
+      ...(typeof call.argumentsBytes === "number"
+        ? { argumentsBytes: call.argumentsBytes }
+        : {}),
+      status: call.status as TrajectoryNestedCall["status"],
+      ...(typeof call.durationMs === "number" ? { durationMs: call.durationMs } : {}),
+      ...(typeof call.error === "string" ? { error: call.error } : {}),
+    });
+  }
+
+  if (!calls.length) {
+    return undefined;
+  }
+
+  return { calls, complete: complete === true };
 }
 
 function formatValue(value: unknown) {
@@ -155,6 +230,10 @@ export function buildTrajectoryTurns(turns: SessionTurn[]): TrajectoryTurn[] {
         step.output = part.text ?? formatValue(part.payload);
         step.isError = part.isError;
         step.durationMs = part.durationMs;
+        const nestedCalls = nestedCallsFromPayload(part);
+        if (nestedCalls) {
+          step.nestedCalls = nestedCalls;
+        }
         continue;
       }
 

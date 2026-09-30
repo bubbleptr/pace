@@ -1,5 +1,5 @@
 import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
-import { formatToolDuration } from "@/shared/ui/chat/chat-tool";
+import { formatToolDuration, toolDisplayName } from "@/shared/ui/chat/chat-tool";
 import type { TrajectoryRole, TrajectoryRun, TrajectoryStep } from "@/entities/session/trajectory-model";
 
 /**
@@ -167,7 +167,7 @@ function LedgerRow({
       <span className="flex min-w-0 items-baseline gap-1.5">
         {step.kind === "tool" ? (
           <>
-            <span className="shrink-0 font-semibold text-foreground">{step.name}</span>
+            <span className="shrink-0 font-semibold text-foreground">{toolDisplayName(step.name)}</span>
             {request ? (
               <span className="min-w-0 max-w-[45%] truncate text-muted">{request}</span>
             ) : null}

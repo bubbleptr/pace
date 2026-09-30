@@ -3,6 +3,7 @@ import type { ComponentProps } from "react";
 import { TextShimmer } from "@/shared/ui/chat/text-shimmer";
 import {
   formatToolDuration,
+  toolDisplayName,
   toolTargetFromArgs,
   type ChatToolItem,
 } from "@/shared/ui/chat/chat-tool";
@@ -61,7 +62,7 @@ function RailToolNode({ tool }: { tool: ChatToolItem }) {
 
   const row = (
     <>
-      <span className="chain-of-thought-rail__tool-name">{tool.toolName ?? "tool"}</span>
+      <span className="chain-of-thought-rail__tool-name">{toolDisplayName(tool.toolName) ?? "tool"}</span>
       {target ? (
         <span className="chain-of-thought-rail__tool-target">{target}</span>
       ) : null}

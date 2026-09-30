@@ -9,6 +9,7 @@ import type {
   SessionRuntimeMessage,
   SessionRuntimeMessagePart,
   SessionRuntimeModel,
+  SessionRuntimeTool,
 } from "./session-runtime-model";
 
 export type CotPhase = "hidden" | "thinking" | "acting" | "answering" | "settled";
@@ -72,9 +73,76 @@ function serializeToolDetail(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+// The codemode tool's only argument is a `code` envelope; the detail pane is
+// more useful showing the script itself than escaped JSON. Partial JSON while
+// the call streams in stays raw.
+function codemodeArgsText(argsText: string, toolName: string | undefined): string {
+  if (toolName !== "codemode") {
+    return argsText;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(argsText);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as { code?: unknown }).code === "string"
+    ) {
+      return (parsed as { code: string }).code;
+    }
+  } catch {
+    // fall through: mid-stream partial JSON
+  }
+
+  return argsText;
+}
+
+/**
+ * Executions that `toolCallId` started itself (Pi ctx.executeTool(), e.g. a
+ * codemode script calling an MCP tool). They carry no tool_call part, so they
+ * never become steps of their own — the parent's item owns them. Reads the
+ * per-derivation `childrenByParent` index, whose lists are already in start
+ * order (model.tools insertion order).
+ */
+function nestedItems(
+  parentId: string,
+  childrenByParent: ReadonlyMap<string, SessionRuntimeTool[]>,
+): ChatToolItem[] {
+  const items: ChatToolItem[] = [];
+
+  for (const tool of childrenByParent.get(parentId) ?? []) {
+    const executed = tool.phase === "done";
+    const startedMs = parseTime(tool.startedAt);
+    const endedMs = executed ? parseTime(tool.updatedAt) : undefined;
+    const diffStat =
+      executed && !tool.isError ? toolDiffStatFromResult(tool.result) : undefined;
+    const children = nestedItems(tool.toolCallId, childrenByParent);
+
+    items.push({
+      state: executed
+        ? tool.isError
+          ? "output-error"
+          : "output-available"
+        : "input-available",
+      toolCallId: tool.toolCallId,
+      ...(tool.name ? { toolName: tool.name } : {}),
+      ...(tool.args !== undefined ? { argsText: JSON.stringify(tool.args) } : {}),
+      ...(tool.result !== undefined ? { output: serializeToolDetail(tool.result) } : {}),
+      ...(diffStat ? { diffStat } : {}),
+      ...(startedMs !== undefined && endedMs !== undefined
+        ? { durationMs: endedMs - startedMs }
+        : {}),
+      ...(children.length ? { children } : {}),
+    });
+  }
+
+  return items;
+}
+
 function toolItem(
   part: SessionRuntimeMessagePart,
   model: SessionRuntimeModel,
+  childrenByParent: ReadonlyMap<string, SessionRuntimeTool[]>,
 ): ChatToolItem {
   const tool = part.toolCallId ? model.tools.get(part.toolCallId) : undefined;
   const executed = tool?.phase === "done";
@@ -93,17 +161,20 @@ function toolItem(
       : "input-streaming";
   const diffStat =
     executed && !tool?.isError ? toolDiffStatFromResult(tool?.result) : undefined;
+  const argsText = part.body ? codemodeArgsText(part.body, toolName) : undefined;
+  const children = part.toolCallId ? nestedItems(part.toolCallId, childrenByParent) : [];
 
   return {
     state,
     ...(part.toolCallId ? { toolCallId: part.toolCallId } : {}),
     ...(toolName ? { toolName } : {}),
-    ...(part.body ? { argsText: part.body } : {}),
+    ...(argsText ? { argsText } : {}),
     ...(diffStat ? { diffStat } : {}),
     ...(tool?.result !== undefined ? { output: serializeToolDetail(tool.result) } : {}),
     ...(startedMs !== undefined && endedMs !== undefined
       ? { durationMs: endedMs - startedMs }
       : {}),
+    ...(children.length ? { children } : {}),
   };
 }
 
@@ -189,6 +260,23 @@ export function deriveCotView(
   const ticking = phase === "thinking" || phase === "acting";
   const steps: CotStep[] = [];
 
+  // Parent index for Nested Tool Executions, built once per derivation rather
+  // than rescanning model.tools inside every tool item's recursive lookup.
+  // Nested events share their parent's runId, so the filter also keeps an old
+  // Run's executions out of the current Run's steps.
+  const childrenByParent = new Map<string, SessionRuntimeTool[]>();
+
+  for (const tool of model.tools.values()) {
+    if (tool.parentToolCallId === undefined || tool.runId !== runId) {
+      continue;
+    }
+
+    const siblings = childrenByParent.get(tool.parentToolCallId) ?? [];
+
+    siblings.push(tool);
+    childrenByParent.set(tool.parentToolCallId, siblings);
+  }
+
   for (const message of messages) {
     const isCurrent = message === current;
 
@@ -202,7 +290,7 @@ export function deriveCotView(
         steps.push({
           kind: "tools",
           id: `${message.messageId}-tools-${slotIndex}`,
-          tools: slot.parts.map((part) => toolItem(part, model)),
+          tools: slot.parts.map((part) => toolItem(part, model, childrenByParent)),
           live,
           // Pi executes in order, so the active call is the first unexecuted one.
           ...(live && pending[0].toolCallId ? { activeToolCallId: pending[0].toolCallId } : {}),

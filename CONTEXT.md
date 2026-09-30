@@ -216,6 +216,10 @@ _Avoid_: Tool execution, tool run, function call, tool use
 Pi Runtime 对一个 Tool Call 的真实执行，由协议的 tool 事件 start/update/end 界定，通过 toolCallId 关联回 Tool Call，有 announced/running/done 状态、耗时和 isError。它发生在所属 Assistant Message 结束之后、下一个 Turn 开始之前。
 _Avoid_: Tool call, tool result message, tool step
 
+**Nested Tool Execution**:
+由另一个 Tool Execution 在执行过程中发起的 Tool Execution（例如 codemode 脚本经 `ctx.executeTool()` 调用 MCP 工具），通过 `parentToolCallId` 挂在发起它的 Tool Execution 下，toolCallId 形如 `<父 toolCallId>/<n>`。它没有对应的 Tool Call：模型没有发出这个调用意图。实时由带 `parentToolCallId` 的 tool 事件界定，结果可见；Pi session 日志只在父调用的 toolResult 消息上留一份有上限的 `nestedCalls` 记录（名称、参数、状态、耗时、错误，不含结果）。
+_Avoid_: Nested tool call, sub-tool, child tool call
+
 **Interim Output**:
 非最后一个 Turn 里 partType 为 text 的 Message Part，即模型在继续调用工具前对用户说的过程性话语。协议上它和 Final Answer 是同一种 Part，只有在所属 Assistant Message 结束并确认含 Tool Call 之后才能判定；Live 阶段一律先按 Final Answer 推定呈现。它在 UI 中归属 Chain of Thought 的时间线，不是独立回答气泡。
 _Avoid_: Partial answer, progress message, final answer, status

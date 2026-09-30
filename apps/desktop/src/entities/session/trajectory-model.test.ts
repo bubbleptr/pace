@@ -68,6 +68,90 @@ describe("buildTrajectoryTurns", () => {
     expect(step.toolCallId).toBe("call_1");
   });
 
+  it("reads the parent's toolResult nestedCalls record onto the tool step", () => {
+    const [turn] = buildTrajectoryTurns([
+      assistantTurn([
+        {
+          partType: "toolCall",
+          name: "codemode",
+          payload: { id: "call_1", arguments: { code: "return 1" } },
+        },
+        {
+          partType: "toolResult",
+          name: "codemode",
+          text: "1",
+          isError: false,
+          payload: {
+            toolCallId: "call_1",
+            nestedCalls: {
+              complete: false,
+              calls: [
+                {
+                  id: "call_1/1",
+                  name: "mcp__probe__echo",
+                  arguments: { text: "hi" },
+                  status: "ok",
+                  durationMs: 42,
+                },
+                {
+                  id: "call_1/2",
+                  name: "bash",
+                  argumentsBytes: 512,
+                  status: "error",
+                  error: "exit 1",
+                },
+                // Malformed entries are dropped, not carried.
+                { name: "mcp__probe__echo", status: "ok" },
+                { id: "call_1/4", name: "bash", status: "exploded" },
+              ],
+            },
+          },
+        },
+      ]),
+    ]);
+
+    expect(turn.steps[0].nestedCalls).toEqual({
+      complete: false,
+      calls: [
+        {
+          id: "call_1/1",
+          name: "mcp__probe__echo",
+          argsText: JSON.stringify({ text: "hi" }, null, 2),
+          status: "ok",
+          durationMs: 42,
+        },
+        {
+          id: "call_1/2",
+          name: "bash",
+          argumentsBytes: 512,
+          status: "error",
+          error: "exit 1",
+        },
+      ],
+    });
+  });
+
+  it("leaves nestedCalls absent when the toolResult carries none", () => {
+    const [turn] = buildTrajectoryTurns([
+      assistantTurn([
+        {
+          partType: "toolCall",
+          name: "bash",
+          payload: { id: "call_1", arguments: {} },
+        },
+        {
+          partType: "toolResult",
+          name: "bash",
+          text: "ok",
+          isError: false,
+          payload: { toolCallId: "call_1" },
+        },
+      ]),
+    ]);
+
+    expect(turn.steps[0]).not.toHaveProperty("nestedCalls");
+  });
+
   it("keeps an unmatched toolCall in the running state", () => {
     const [turn] = buildTrajectoryTurns([
       assistantTurn([
