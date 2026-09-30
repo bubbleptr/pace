@@ -518,6 +518,14 @@ export function createMockApi(): PaceRendererApi {
         case "search_workspace_files":
         case "list_provider_auth_status":
         case "test_provider_connection":
+        case "get_mcp_config":
+        case "probe_mcp_servers":
+        case "set_mcp_server_enabled":
+        case "set_mcp_server_exposure":
+        case "login_mcp_server":
+        case "logout_mcp_server":
+        case "add_mcp_server":
+        case "remove_mcp_server":
         case "update:status":
         case "get_chat_workspace_root":
         case "get_runtime_info":

@@ -3,7 +3,14 @@ import type { BackendRpcEvent } from "@pace/backend";
 import type { BrowserEvent } from "@/shared/browser-protocol";
 import type { NavigateRequest } from "@/shared/navigate-protocol";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type { SessionDetail } from "@pace/core";
+import type {
+  McpConfigReport,
+  McpExposure,
+  McpProbeReport,
+  McpServerConfigItem,
+  McpServerState,
+  SessionDetail,
+} from "@pace/core";
 import type { SessionSummary } from "@/entities/session/sessions";
 
 declare global {
@@ -32,6 +39,92 @@ const emptyConfigInventory = {
   themes: [],
 };
 const browserSessionSummaryFixture: SessionSummary[] = browserSessionSummaries;
+
+// Browser-dev MCP fixture. One mutable list backs both reads, so Settings
+// mutations (enable, exposure, sign-in, add, remove) stay consistent between
+// the config report and the probe report for the life of the page.
+type BrowserMcpServer = McpServerConfigItem & {
+  /** Probable state once enabled; `enabled: false` always reports "disabled". */
+  state: McpServerState;
+  tools: string[];
+  error?: string;
+};
+
+const browserMcpConfigPath = "/browser-dev/mcp.json";
+
+const browserMcpServers: BrowserMcpServer[] = [
+  {
+    name: "filesystem",
+    source: browserMcpConfigPath,
+    enabled: true,
+    exposure: "codemode",
+    kind: "stdio",
+    transport: "npx -y @modelcontextprotocol/server-filesystem ~/Documents",
+    usesOAuth: false,
+    state: "connected",
+    tools: ["read_file", "write_file", "list_directory", "search_files"],
+  },
+  {
+    name: "sentry",
+    source: browserMcpConfigPath,
+    enabled: true,
+    exposure: "codemode",
+    kind: "http",
+    transport: "https://mcp.sentry.dev/mcp",
+    usesOAuth: true,
+    state: "needs-auth",
+    tools: [],
+  },
+  {
+    name: "legacy-db",
+    source: browserMcpConfigPath,
+    enabled: true,
+    exposure: "direct",
+    kind: "stdio",
+    transport: "node scripts/db-mcp-server.js",
+    usesOAuth: false,
+    state: "failed",
+    tools: [],
+    error: 'MCP server "legacy-db" failed to connect: spawn node ENOENT',
+  },
+  {
+    name: "playwright",
+    source: browserMcpConfigPath,
+    enabled: false,
+    exposure: "deferred",
+    kind: "stdio",
+    transport: "npx -y @playwright/mcp@latest",
+    usesOAuth: false,
+    state: "connected",
+    tools: ["browser_navigate", "browser_click", "browser_snapshot"],
+  },
+];
+
+function browserMcpConfig(): McpConfigReport {
+  return {
+    configPath: browserMcpConfigPath,
+    errors: [],
+    servers: browserMcpServers.map(
+      ({ state: _state, tools: _tools, error: _error, ...item }) => item,
+    ),
+  };
+}
+
+function browserMcpProbe(): McpProbeReport {
+  return {
+    errors: [],
+    servers: browserMcpServers.map((server) => ({
+      name: server.name,
+      state: server.enabled ? server.state : "disabled",
+      tools: server.enabled ? server.tools : [],
+      ...(server.enabled && server.error ? { error: server.error } : {}),
+    })),
+  };
+}
+
+function browserMcpServer(name: unknown): BrowserMcpServer | undefined {
+  return browserMcpServers.find((server) => server.name === name);
+}
 
 export function isElectronRuntime() {
   return typeof window !== "undefined" && window.pace !== undefined;
@@ -323,6 +416,108 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
         message: "Connection tests run in the desktop app",
         detail: "",
       } as T);
+    case "get_mcp_config":
+      return Promise.resolve(browserMcpConfig() as T);
+    case "probe_mcp_servers":
+      return Promise.resolve(browserMcpProbe() as T);
+    case "set_mcp_server_enabled": {
+      const server = browserMcpServer(args?.name);
+      if (server) server.enabled = args?.enabled === true;
+      return Promise.resolve(browserMcpConfig() as T);
+    }
+    case "set_mcp_server_exposure": {
+      const server = browserMcpServer(args?.name);
+      if (server && typeof args?.exposure === "string") {
+        server.exposure = args.exposure as McpExposure;
+      }
+      return Promise.resolve(browserMcpConfig() as T);
+    }
+    case "login_mcp_server": {
+      const server = browserMcpServer(args?.name);
+      if (!server) {
+        return Promise.resolve({
+          ok: false,
+          message: `No MCP server named "${args?.name}".`,
+        } as T);
+      }
+      server.state = "connected";
+      if (server.tools.length === 0) {
+        server.tools = ["search_issues", "get_issue", "list_projects"];
+      }
+      return Promise.resolve({
+        ok: true,
+        message: `Signed in to MCP server "${server.name}".`,
+      } as T);
+    }
+    case "logout_mcp_server": {
+      const server = browserMcpServer(args?.name);
+      if (!server?.usesOAuth) {
+        return Promise.resolve({
+          ok: false,
+          message: `MCP server "${args?.name}" does not use OAuth.`,
+        } as T);
+      }
+      server.state = "needs-auth";
+      server.tools = [];
+      return Promise.resolve({
+        ok: true,
+        message: `Signed out of MCP server "${server.name}".`,
+      } as T);
+    }
+    case "add_mcp_server": {
+      const input = (args?.input ?? {}) as {
+        kind?: string;
+        name?: string;
+        command?: string;
+        url?: string;
+        args?: string[];
+        exposure?: McpExposure;
+      };
+      const name = input.name?.trim();
+      const command = input.command?.trim() ?? "";
+      const transport =
+        input.kind === "http"
+          ? (input.url?.trim() ?? "")
+          : [command, ...(input.args ?? [])].join(" ").trim();
+      if (!name || !transport || (input.kind !== "http" && !command)) {
+        return Promise.resolve({
+          ok: false,
+          message: "Invalid MCP server input.",
+        } as T);
+      }
+      browserMcpServers.push({
+        name,
+        source: browserMcpConfigPath,
+        enabled: true,
+        exposure: input.exposure ?? "codemode",
+        kind: input.kind === "http" ? "http" : "stdio",
+        transport,
+        // No headers can be entered in this form, so HTTP adds are OAuth-able.
+        usesOAuth: input.kind === "http",
+        state: "connected",
+        tools: [],
+      });
+      return Promise.resolve({
+        ok: true,
+        message: `Added global MCP server "${name}".`,
+      } as T);
+    }
+    case "remove_mcp_server": {
+      const index = browserMcpServers.findIndex(
+        (server) => server.name === args?.name,
+      );
+      if (index < 0) {
+        return Promise.resolve({
+          ok: false,
+          message: `No global MCP server named "${args?.name}".`,
+        } as T);
+      }
+      browserMcpServers.splice(index, 1);
+      return Promise.resolve({
+        ok: true,
+        message: `Removed global MCP server "${args?.name}".`,
+      } as T);
+    }
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);
     case "list_prompt_commands":
