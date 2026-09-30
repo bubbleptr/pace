@@ -28,6 +28,11 @@ yarn-error.log*
 test-results/
 e2e/screenshots/
 
+# Local UI verification screenshots and temporary scripts.
+/.scratch/composer-prompt-tokens/screenshots/
+/.scratch/corner-shape/
+/output/
+
 # Verification-skill proof runs. Cleanup deletes the disposable Electron
 # profile, not these artifacts. Do not commit a run.
 .cursor/skills/verify-pace/runs/
