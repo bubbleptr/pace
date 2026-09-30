@@ -26,7 +26,7 @@ Package 由 Source 标识，对应 settings 的 packages 项；展开后包含 E
 
 约定目录自动发现的资源没有 Package。Pace 将 Pi 元数据中 `metadata.source === "auto"` 的资源标为 Origin `drop-in`；Pi 本身仍将其归入 top-level，contract test 守住此映射。显式写入顶层数组的资源保留 top-level。
 
-Theme 只影响 Pi 终端，GUI 只读展示。drop-in 没有 Package Filter，不显示开关，提供 Reveal in Finder 和确认后删除；顶层显式资源同样不支持 Package Filter。Skill 开关后失效共享 inventory query，composer 插入菜单同步刷新。
+Theme 只影响 Pi 终端，GUI 只读展示。drop-in 没有 Package Filter，不显示开关，提供在系统文件管理器中显示（macOS 为 Reveal in Finder，Linux 为 Show in Files）和确认后删除；顶层显式资源同样不支持 Package Filter。Skill 开关后失效共享 inventory query，composer 插入菜单同步刷新。
 
 ### 3. 本地文件只提供 Add local resource
 

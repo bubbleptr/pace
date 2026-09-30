@@ -4,12 +4,12 @@ Pace 使用 `electron-builder` 生成 Apple Silicon `.app` 与 DMG。发布产�
 
 ## GitHub Actions
 
-仓库提供两条流程，只构建 macOS ARM64 产物：
+仓库提供两条流程。手动验证只构建 macOS ARM64；发版流程同时构建 macOS ARM64 与 Linux x64：
 
 - [Validate macOS ARM64 (manual)](../../.github/workflows/ci.yml)：仅在 Actions 中手动运行，用于按需验证未签名应用，不会由普通 PR、分支推送或合并自动触发。冻结安装依赖，运行发布预检与发布行为测试和完整单元测试，再执行类型检查、构建、内置运行时冒烟、未签名 `.app` 打包与完整 packaged-app E2E。不需要 Apple 凭据。
-- [Release macOS ARM64](../../.github/workflows/release-macos.yml)：推送 `v*` tag 时执行，也可以手动指定一个**已存在的 tag**重跑。校验版本与凭据后，执行测试、构建、原生依赖复制、签名、公证，挂载 DMG 后检查架构、签名、staple 和 Gatekeeper，并从镜像里的 App 运行完整 E2E。构建命令带 `--publish never`：`electron-builder.yml` 里的 GitHub `publish` 只用来生成 `latest-mac.yml`，真正的上传仍由 `scripts/publish-release.sh` 完成。全部成功后上传五个资产（DMG、zip、zip 的 `.blockmap`、`latest-mac.yml`、覆盖 DMG 与 zip 的 `SHA256SUMS.txt`），草稿上传完毕后自动公开发布带发布说明的 GitHub Release。缺任一资产都不会公开。
+- [Release](../../.github/workflows/release-macos.yml)：推送 `v*` tag 时执行，也可以手动指定一个**已存在的 tag**重跑。macOS job 校验版本与凭据后，执行测试、构建、原生依赖复制、签名、公证，挂载 DMG 后检查架构、签名、staple 和 Gatekeeper，并从镜像里的 App 运行完整 E2E。构建命令带 `--publish never`：`electron-builder.yml` 里的 GitHub `publish` 只用来生成 `latest-mac.yml` / `latest-linux.yml`，真正的上传仍由 `scripts/publish-release.sh` 完成。Linux x64 job 并行产出 AppImage、deb 与 `latest-linux.yml`（见 [Linux 打包与发布](linux.md)）。发布 job 等两边都成功，把资产放进同一个草稿；macOS 与 Linux 的必需资产都在之后才公开发布。缺任一资产都不会公开。已公开发布的版本不能再追加文件。
 
-构建机器固定为 `macos-15`（GitHub 标准 ARM64 runner），并在运行时确认 `darwin/arm64`。`stage:node-pty` 根据宿主平台选择原生模块，因此不能换成 Intel runner 后仅传 `--arm64`。Node 使用 24，Bun 固定为 1.3.12；升级 Bun 时同步修改两条 workflow。Release 上传 job 使用 Ubuntu，仅传输已验证的文件，不构建 Linux 产物。
+macOS 构建机器固定为 `macos-15`（GitHub 标准 ARM64 runner），并在运行时确认 `darwin/arm64`。`stage:node-pty` 根据宿主平台选择原生模块，因此不能换成 Intel runner 后仅传 `--arm64`。Linux 构建固定为 `ubuntu-latest` x64，同样在该宿主上执行 `stage:node-pty`。Node 使用 24，Bun 固定为 1.3.12；升级 Bun 时同步修改 workflow。Release 上传 job 使用 Ubuntu，只传输两边已经验证的文件，本身不再打包。Apple 凭据只进入 macOS 预检与签名步骤。
 
 构建 job 只有 `contents: read`；仅上传 Release 的 job 获得 `contents: write`，使用 GitHub 自动提供的 `GITHUB_TOKEN`，不需要额外 PAT。Apple 凭据仅传入预检与签名步骤，`.p8` 写入 runner 临时目录并在使用后删除。失败的 E2E 诊断保留 7 天。
 
@@ -60,7 +60,7 @@ Pace 使用 `electron-builder` 生成 Apple Silicon `.app` 与 DMG。发布产�
    git push origin v0.0.1
    ```
 
-4. 在 Actions 中等待 `Release macOS ARM64` 完成。流程先在草稿中上传五个资产，确认上传成功后自动公开发布，无需手动点击 Publish。正式版本标记为 Latest，预发布版本不替换 Latest。
+4. 在 Actions 中等待 `Release` 完成。流程先在草稿中上传 macOS 与 Linux 资产，确认两边都上传成功后自动公开发布，无需手动点击 Publish。正式版本标记为 Latest，预发布版本不替换 Latest。Linux 资产的说明见 [linux.md](linux.md)。
 
 `electron-updater` 在 macOS 上消费 zip 与 `latest-mac.yml`（其中的 sha512 是完整性校验依据，必须原样上传，不要改写）。DMG 仍给首次安装用。`SHA256SUMS.txt` 只覆盖 DMG 与 zip，不含 blockmap / yml。
 
@@ -68,7 +68,7 @@ Pace 使用 `electron-builder` 生成 Apple Silicon `.app` 与 DMG。发布产�
 
 预发布版本可使用 `0.1.0-rc.1` / `v0.1.0-rc.1`，生成的 Release 会标记为 prerelease。支持 SemVer 构建元数据，例如 `0.0.1+build.001`；标签和两处 `package.json` 必须保留完全相同的版本字符串。数字型预发布标识不允许前导零，构建元数据中的数字不受此限制。
 
-补齐 Secrets 或遇到临时公证失败后，可以重跑失败的 workflow，或在 Actions → Release macOS ARM64 → Run workflow 输入原 tag。已有草稿会替换同名附件、保留手工编辑的发布说明，上传成功后自动公开；已公开发布的版本会拒绝覆盖，需要创建新版本。若只是最终上传失败，可仅重跑失败的 job；构建附件保留 7 天，过期后需重新构建。
+补齐 Secrets 或遇到临时公证失败后，可以重跑失败的 workflow，或在 Actions → Release → Run workflow 输入原 tag。已有草稿会替换同名附件、保留手工编辑的发布说明，上传成功后自动公开；已公开发布的版本会拒绝覆盖，需要创建新版本。若只是最终上传失败，可仅重跑失败的 job；macOS 与 Linux 构建附件各保留 7 天，过期后需重新构建。公开前草稿里必须同时有两边的资产。
 
 ### 本地检查流水线的前置逻辑
 

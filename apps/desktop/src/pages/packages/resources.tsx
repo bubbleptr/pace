@@ -19,6 +19,7 @@ import {
 } from "@astryxdesign/core/SegmentedControl";
 import { createContext, useContext, useRef, useState, type ReactNode } from "react";
 import { Box, Cancel, Palette, Puzzle, RefreshCw, Settings2, Sparkles, Wrench } from "@/shared/ui/icons";
+import { revealInFileManagerLabel, revealedInFileManagerMessage } from "@/shared/host-chrome";
 import { invoke } from "@/shared/runtime";
 
 import type { ConfigInventory, ResourceInfo, PackageInfo, PackageProgressEvent, PackageActionResult, AddLocalResourceResult, CheckPackageUpdatesResult } from "@pace/core";
@@ -183,7 +184,7 @@ function ResourceControls({ resource }: { resource: ResourceInfo }) {
   const actions = useContext(ActionsContext);
   if (!actions) return null;
   if (resource.origin === "drop-in") return <HStack gap={2}>
-    <Button label="Reveal in Finder" size="sm" variant="ghost" onClick={() => void actions.run("reveal_project_in_finder", { path: resource.path })} />
+    <Button label={revealInFileManagerLabel()} size="sm" variant="ghost" onClick={() => void actions.run("reveal_project_in_finder", { path: resource.path })} />
     <Button label={`Delete ${resource.name}`} size="sm" variant="destructive" isDisabled={actions.pending} onClick={() => {
       if (window.confirm(`Delete ${resource.path}? Removing the file disables it. A Skill deletes its whole directory.`)) void actions.run("remove_local_resource", { path: resource.path });
     }} />
@@ -233,7 +234,7 @@ export function PackageManagement({ inventory, children }: { inventory: ConfigIn
       if (["update_package", "install_package", "remove_package"].includes(command)) {
         await client.invalidateQueries({ queryKey: ["package-updates"] });
       }
-      setMessage(command === "reveal_project_in_finder" ? "Revealed in Finder" : nextSessionCopy);
+      setMessage(command === "reveal_project_in_finder" ? revealedInFileManagerMessage() : nextSessionCopy);
       return true;
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
     finally { busy.current = false; setPending(false); }

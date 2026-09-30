@@ -1,4 +1,4 @@
-name: Release macOS ARM64
+name: Release
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-macos-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 defaults:
@@ -131,8 +131,97 @@ jobs:
             hdiutil detach "$RUNNER_TEMP/pigui-dmg"
           fi
 
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.preflight.outputs.version }}
+      prerelease: ${{ steps.preflight.outputs.prerelease }}
+      appImage: ${{ steps.preflight.outputs.appImage }}
+      deb: ${{ steps.preflight.outputs.deb }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate release version and architecture
+        id: preflight
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/release-linux.mjs "$RELEASE_TAG"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.12'
+      - run: bun install --frozen-lockfile
+      - run: bun run test:release
+      - name: Build and validate the bundled runtime
+        run: bun run build:release
+      - run: bun run stage:node-pty
+      - name: Package AppImage and deb
+        env:
+          # appimagetool is itself an AppImage. This lets the build run without FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: ./node_modules/.bin/electron-builder --config electron-builder.yml --linux --x64 --publish never
+      - name: Install Playwright Chromium and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          bunx playwright install chromium
+          sudo bunx playwright install-deps chromium
+      # linux-unpacked is the packaged app (isPackaged). electron-updater throws
+      # before the window exists when Linux still reports version 0.0, so a
+      # window that opens is the setVersion check. --ozone-platform=x11 is only
+      # for Xvfb; production builds do not set it.
+      - name: Test the unpacked package
+        timeout-minutes: 15
+        run: bun run test:e2e:packaged:linux --workers=1 --max-failures=1 --reporter=line
+      - name: Test the AppImage opens
+        timeout-minutes: 10
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          appimage="dist/${{ steps.preflight.outputs.appImage }}"
+          chmod +x "$appimage"
+          PACE_E2E_EXECUTABLE="$appimage" \
+            env -u WAYLAND_DISPLAY \
+            PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11 \
+            APPIMAGE_EXTRACT_AND_RUN=1 \
+            xvfb-run -s "-screen 0 1920x1080x24" \
+            bunx playwright test --config e2e/playwright.config.ts e2e/smoke/m5-2-preflight.spec.ts --workers=1 --max-failures=1 --reporter=line
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        env:
+          APPIMAGE_NAME: ${{ steps.preflight.outputs.appImage }}
+          DEB_NAME: ${{ steps.preflight.outputs.deb }}
+        run: sha256sum "$APPIMAGE_NAME" "${APPIMAGE_NAME}.blockmap" latest-linux.yml "$DEB_NAME" > SHA256SUMS-linux.txt
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64-release
+          path: |
+            dist/${{ steps.preflight.outputs.appImage }}
+            dist/${{ steps.preflight.outputs.appImage }}.blockmap
+            dist/latest-linux.yml
+            dist/${{ steps.preflight.outputs.deb }}
+            dist/SHA256SUMS-linux.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64-release-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   release:
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -146,15 +235,28 @@ jobs:
         with:
           name: macos-arm64-release
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-x64-release
+          path: dist
       - name: Verify downloaded assets
         working-directory: dist
-        run: sha256sum --check SHA256SUMS.txt
+        run: |
+          sha256sum --check SHA256SUMS.txt
+          sha256sum --check SHA256SUMS-linux.txt
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           VERSION: ${{ needs.build.outputs.version }}
+          LINUX_VERSION: ${{ needs.build-linux.outputs.version }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          LINUX_PRERELEASE: ${{ needs.build-linux.outputs.prerelease }}
           DMG_NAME: ${{ needs.build.outputs.artifact }}
-        run: bash scripts/publish-release.sh
+          APPIMAGE_NAME: ${{ needs.build-linux.outputs.appImage }}
+          DEB_NAME: ${{ needs.build-linux.outputs.deb }}
+        run: |
+          test "$VERSION" = "$LINUX_VERSION"
+          test "$PRERELEASE" = "$LINUX_PRERELEASE"
+          bash scripts/publish-release.sh

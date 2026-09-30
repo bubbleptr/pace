@@ -63,7 +63,7 @@ updater 更新的是整个 App bundle，随之携带经过验证的 Pi 运行时
 
 - 每个发布版本多出 zip、blockmap 与 `latest-mac.yml` 三个资产；发布脚本与其行为测试需要同步扩展。
 - 首个带 updater 的版本是分水岭：之前的版本用户仍需手动下载一次。
-- Linux：electron-updater 支持 AppImage，但当前没有 Linux 发布流程，本 ADR 不为 Linux 启用 updater；未来增加 Linux 发布时按同一模式接入（`latest-linux.yml`）。deb 不在 electron-updater 支持范围内。
+- Linux：x64 AppImage 与 macOS 走同一个 `v*` tag 和同一份草稿，公开前必须同时有 `latest-linux.yml`、AppImage 及其 blockmap（见 `docs/release/linux.md`）。deb 只用于安装，不自动更新。不签名，不覆盖 arm64 / rpm / snap / flatpak。
 - Windows 尚无目标，不涉及。
 - 版本号仍由维护者手动提升（`docs/release/macos.md`），updater 只比较 SemVer，不改变发版流程。
 

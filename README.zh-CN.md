@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/github/v/release/BubblePtr/pace?display_name=tag" alt="Release"></a>
-  <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20arm64-black" alt="Platform: macOS arm64"></a>
+  <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20arm64%20%7C%20Linux%20x64-black" alt="Platform: macOS arm64 and Linux x64"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/BubblePtr/pace" alt="License: Apache-2.0"></a>
 </p>
 
@@ -32,7 +32,13 @@ Pi 是运行在终端里的编程智能体，拥有类似 VS Code 的扩展体�
 
 ### 安装
 
-**预编译安装包（推荐）。** 适用于 Apple Silicon Mac 的安装包已完成签名和公证，发布在 [GitHub Releases](https://github.com/BubblePtr/pace/releases)。下载并打开 DMG，将 Pace 拖入“应用程序”文件夹即可。后续可在应用内更新（ADR-0033）。
+**预编译安装包（推荐）。** 每个 [GitHub Release](https://github.com/BubblePtr/pace/releases) 都包含已签名并公证的 Apple Silicon DMG，以及 Linux x64 的 AppImage 和 deb。
+
+- **macOS。** 打开 DMG，将 Pace 拖入“应用程序”。之后可在应用内更新（ADR-0033）。
+- **Linux AppImage。** `chmod +x` 后直接运行。应用内更新只覆盖 AppImage。若因缺少 FUSE 无法启动，加上 `--appimage-extract-and-run`。
+- **Linux deb。** 用 `apt` 安装。deb 不会自动更新，升级时重新安装新包。
+
+说明见 [`docs/release/linux.md`](docs/release/linux.md)。
 
 **从源码运行。** 需要 Bun 1.3.x 与 Node 24：
 
@@ -43,7 +49,7 @@ bun install
 bun run dev
 ```
 
-**运行要求。** 搭载 Apple Silicon 芯片的 Mac，运行 macOS 12 或更高版本。Pi 运行时已随应用内置（ADR-0031），无需单独安装 `pi`；若本机已装 Pi，Pace 会共享 `~/.pi/agent` 下的会话、认证与扩展。Linux 的 AppImage 与 deb 打包脚本已就绪但尚未正式发布；暂不支持 Windows。
+**运行要求。** 搭载 Apple Silicon 芯片、运行 macOS 12 或更高版本的 Mac，或 64 位 Linux。Pi 运行时已随应用内置（ADR-0031），无需单独安装 `pi`；若本机已装 Pi，Pace 会共享 `~/.pi/agent` 下的会话、认证与扩展。暂不支持 Windows 与 Intel Mac。
 
 ### 开始第一次会话
 
@@ -55,7 +61,7 @@ bun run dev
 ## 什么时候不需要 Pace
 
 - 你只在终端里用 Pi，不需要通过图形界面查看费用、思维链或工具调用。
-- 你使用 Windows 电脑或 Intel Mac。目前仅提供适用于 Apple Silicon Mac 的安装包。
+- 你使用 Windows 电脑或 Intel Mac。安装包目前提供给 Apple Silicon Mac 与 64 位 Linux。
 - 你想要一个不依赖 Pi 的独立智能体客户端。Pace 不实现智能体的执行循环，推理执行与上下文管理均由 Pi 负责。
 
 ## 设计原则
@@ -216,7 +222,7 @@ bun run dist:mac               # 签名 + 公证的 DMG（需要 Apple 凭据）
 bun run dist:linux             # AppImage + deb（x64）
 ```
 
-完整的签名、公证与发布流水线见 [`docs/release/macos.md`](docs/release/macos.md)。
+签名、公证与发布流水线见 [`docs/release/macos.md`](docs/release/macos.md)。Linux 的 AppImage 与 deb 随同一个 tag 发布：[`docs/release/linux.md`](docs/release/linux.md)。
 
 界面开发提供两个仅在开发环境中可用的工具：
 
@@ -231,7 +237,7 @@ bun run dist:linux             # AppImage + deb（x64）
 - [`CONTEXT.md`](CONTEXT.md)：领域术语表。统一代码、测试和 Issue 中使用的名称。
 - [`docs/adr/`](docs/adr/)：架构决策记录，记录了控制平面方向的调整（[ADR-0001](docs/adr/0001-agent-workspace-control-plane.md)）及各个界面面板的设计决策。
 - [`docs/design/`](docs/design/)：用哪些 token、哪些 Astryx 变体、哪些自建组件。
-- [`docs/release/macos.md`](docs/release/macos.md)、[`docs/dogfooding.md`](docs/dogfooding.md)：发版与日常使用 Pace。
+- [`docs/release/macos.md`](docs/release/macos.md)、[`docs/release/linux.md`](docs/release/linux.md)、[`docs/dogfooding.md`](docs/dogfooding.md)：发版与日常使用 Pace。
 - [`docs/agents/`](docs/agents/)：面向开发者与智能体贡献者的协作指南，涵盖 Issue 管理、分诊标签和领域文档。
 - [`.scratch/<feature>/PRD.md`](.scratch/)：某个时间点的产品需求记录。
 

@@ -68,12 +68,20 @@ const api: PaceRendererApi = {
 
 contextBridge.exposeInMainWorld("pace", api);
 
-function markMacVibrancyDocument() {
-  if (process.platform === "darwin") {
+function markHostDocument() {
+  const root = document.documentElement;
+  if (!root) {
     // HTTP dev pages can run preload before the HTML root is parsed.
-    document.documentElement?.setAttribute("data-pigui-vibrancy", "");
+    return;
+  }
+
+  // The renderer has no Node `process` (sandbox). This attribute is how it
+  // tells macOS traffic lights from the Linux window-controls overlay.
+  root.dataset.piguiPlatform = process.platform;
+  if (process.platform === "darwin") {
+    root.setAttribute("data-pigui-vibrancy", "");
   }
 }
 
-markMacVibrancyDocument();
-window.addEventListener("DOMContentLoaded", markMacVibrancyDocument, { once: true });
+markHostDocument();
+window.addEventListener("DOMContentLoaded", markHostDocument, { once: true });

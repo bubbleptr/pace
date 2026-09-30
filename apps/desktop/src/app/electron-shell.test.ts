@@ -25,22 +25,28 @@ describe("Electron shell", () => {
   it("uses secure BrowserWindow defaults for the renderer", () => {
     const main = readProjectFile("apps/desktop/electron/main.ts");
 
+    const chrome = readProjectFile("apps/desktop/electron/window-chrome.ts");
+
     expect(main).toContain("contextIsolation: true");
     expect(main).toContain("sandbox: true");
     expect(main).toContain("nodeIntegration: false");
-    expect(main).toContain('titleBarStyle: "hidden"');
-    expect(main).toContain("trafficLightPosition: { x: 16, y: 13 }");
-    expect(main).toContain("transparent: true");
-    expect(main).toContain('vibrancy: "under-window"');
-    expect(main).toContain('backgroundColor: "#00000000"');
-    expect(main).toContain('process.platform === "darwin"');
+    expect(main).toContain("platformWindowChrome(process.platform)");
+    expect(chrome).toContain('titleBarStyle: "hidden"');
+    expect(chrome).toContain("trafficLightPosition: { x: 16, y: 13 }");
+    expect(chrome).toContain("transparent: true");
+    expect(chrome).toContain('vibrancy: "under-window"');
+    expect(chrome).toContain('backgroundColor: "#00000000"');
+    expect(chrome).toContain('platform === "darwin"');
+    expect(chrome).toContain('platform === "linux"');
+    expect(chrome).toContain("titleBarOverlay:");
   });
 
   it("marks the document for sidebar vibrancy only on macOS", () => {
     const preload = readProjectFile("apps/desktop/electron/preload.ts");
 
     expect(preload).toContain('process.platform === "darwin"');
-    expect(preload).toContain('data-pigui-vibrancy');
+    expect(preload).toContain("data-pigui-vibrancy");
+    expect(preload).toContain("dataset.piguiPlatform = process.platform");
   });
 
   it("sets the Pace Dock icon during electron-vite dev", () => {

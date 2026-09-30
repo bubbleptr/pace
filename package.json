@@ -13,7 +13,7 @@
     "dev": "bun --filter @pace/desktop dev",
     "dev:mock": "vite --config vite.mock.config.ts --mode mock",
     "test": "vitest run",
-    "test:release": "node --test scripts/test-release-macos.mjs scripts/test-release-publish.mjs",
+    "test:release": "node --test scripts/test-release-macos.mjs scripts/test-release-linux.mjs scripts/test-release-publish.mjs",
     "test:bundled-runtime": "node --test scripts/test-bundled-runtime.mjs",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:linux": "env -u WAYLAND_DISPLAY PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11 xvfb-run -s \"-screen 0 1920x1080x24\" playwright test --config e2e/playwright.config.ts",

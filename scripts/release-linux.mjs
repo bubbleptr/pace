@@ -3,28 +3,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { parseReleaseVersion } from "./release-version.mjs";
 
-const requiredSecrets = [
-  "CSC_LINK",
-  "CSC_KEY_PASSWORD",
-  "APPLE_API_KEY_P8",
-  "APPLE_API_KEY_ID",
-  "APPLE_API_ISSUER",
-];
-
-export function validateRelease({ tag, rootVersion, appVersion, platform, arch, secrets = {} }) {
+export function validateLinuxRelease({ tag, rootVersion, appVersion, platform, arch }) {
   const { version, prerelease } = parseReleaseVersion({ tag, rootVersion, appVersion });
-  // Staging resolves the host's node-pty binary, so cross-compilation would ship the wrong module.
-  if (platform !== "darwin" || arch !== "arm64") {
-    throw new Error(`macOS releases require darwin/arm64; received ${platform}/${arch}.`);
+  // stage:node-pty copies the host binary. An arm64 or macOS runner would ship the wrong module.
+  if (platform !== "linux" || arch !== "x64") {
+    throw new Error(`Linux releases require linux/x64; received ${platform}/${arch}.`);
   }
-  const missing = requiredSecrets.filter(name => !secrets[name]?.trim());
-  if (missing.length) throw new Error(`Missing release secrets: ${missing.join(", ")}.`);
 
   return {
     version,
     prerelease,
-    artifact: `Pace-${version}-arm64.dmg`,
-    zipArtifact: `Pace-${version}-arm64.zip`,
+    appImage: `Pace-${version}-x64.AppImage`,
+    deb: `Pace-${version}-x64.deb`,
   };
 }
 
@@ -32,13 +22,12 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try {
     const repo = fileURLToPath(new URL("../", import.meta.url));
     const readVersion = path => JSON.parse(readFileSync(resolve(repo, path), "utf8")).version;
-    const release = validateRelease({
+    const release = validateLinuxRelease({
       tag: process.argv[2],
       rootVersion: readVersion("package.json"),
       appVersion: readVersion("apps/desktop/package.json"),
       platform: process.platform,
       arch: process.arch,
-      secrets: process.env,
     });
     const output = Object.entries(release).map(([key, value]) => `${key}=${value}`).join("\n") + "\n";
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);

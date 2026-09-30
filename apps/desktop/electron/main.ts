@@ -43,6 +43,7 @@ import { isTrustedInvokeSender } from "./ipc-sender-guard";
 import { installAppMenu } from "./app-menu";
 import { navigateAppWindow } from "./app-navigation";
 import { createAppUpdater, type AppUpdater, type AutoUpdaterLike } from "./updater";
+import { platformWindowChrome } from "./window-chrome";
 
 declare const __PACE_APP_VERSION__: string;
 
@@ -142,18 +143,7 @@ function createMainWindow() {
     // Headless macOS runners can expose displays smaller than the E2E viewport.
     enableLargerThanScreen: backgroundWindowForEndToEnd,
     title: "Pace",
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 16, y: 13 },
-    ...(process.platform === "darwin"
-      ? {
-          // Transparent web contents are required for vibrancy to show through
-          // CSS; `sidebar` material is too dense to read as glass.
-          transparent: true,
-          vibrancy: "under-window" as const,
-          visualEffectState: "followWindow" as const,
-          backgroundColor: "#00000000",
-        }
-      : {}),
+    ...platformWindowChrome(process.platform),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,

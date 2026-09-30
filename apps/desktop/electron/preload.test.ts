@@ -13,6 +13,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.documentElement.removeAttribute("data-pigui-vibrancy");
+  delete document.documentElement.dataset.piguiPlatform;
 });
 
 describe("renderer preload", () => {
@@ -29,5 +30,17 @@ describe("renderer preload", () => {
     rootGetter.mockReturnValue(root);
     window.dispatchEvent(new Event("DOMContentLoaded"));
     expect(root).toHaveAttribute("data-pigui-vibrancy");
+    expect(root.dataset.piguiPlatform).toBe("darwin");
+  });
+
+  it("marks Linux without the macOS vibrancy gutter signal", async () => {
+    vi.resetModules();
+    vi.stubGlobal("process", { ...process, platform: "linux" });
+
+    await import("./preload");
+    window.dispatchEvent(new Event("DOMContentLoaded"));
+
+    expect(document.documentElement.dataset.piguiPlatform).toBe("linux");
+    expect(document.documentElement).not.toHaveAttribute("data-pigui-vibrancy");
   });
 });
