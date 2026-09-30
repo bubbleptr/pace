@@ -140,7 +140,10 @@ function nestedCallsFromPayload(part: SessionContentPart): TrajectoryStep["neste
     });
   }
 
-  if (!calls.length) {
+  // An empty list still means something when the record is partial: Pi
+  // dropped every call, so the Inspector shows "Nested calls (0)" plus the
+  // partial-record note instead of nothing.
+  if (!calls.length && complete !== false) {
     return undefined;
   }
 

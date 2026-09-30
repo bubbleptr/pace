@@ -131,6 +131,33 @@ describe("buildTrajectoryTurns", () => {
     });
   });
 
+  it("keeps an empty calls list when the record is partial", () => {
+    const turnsWith = (nestedCalls: unknown) =>
+      buildTrajectoryTurns([
+        assistantTurn([
+          {
+            partType: "toolCall",
+            name: "codemode",
+            payload: { id: "call_1", arguments: { code: "return 1" } },
+          },
+          {
+            partType: "toolResult",
+            name: "codemode",
+            text: "1",
+            isError: false,
+            payload: { toolCallId: "call_1", nestedCalls },
+          },
+        ]),
+      ]);
+
+    expect(turnsWith({ calls: [], complete: false })[0].steps[0].nestedCalls).toEqual({
+      calls: [],
+      complete: false,
+    });
+    expect(turnsWith({ calls: [], complete: true })[0].steps[0]).not.toHaveProperty("nestedCalls");
+    expect(turnsWith({ calls: [] })[0].steps[0]).not.toHaveProperty("nestedCalls");
+  });
+
   it("leaves nestedCalls absent when the toolResult carries none", () => {
     const [turn] = buildTrajectoryTurns([
       assistantTurn([

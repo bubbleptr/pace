@@ -260,6 +260,82 @@ describe("ChatToolStep", () => {
     expect([...rows].every((row) => row.getAttribute("data-tool-count") === "1")).toBe(true);
   });
 
+  it("counts every descendant, not only direct children", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            children: [
+              tool({
+                toolCallId: "c1/1",
+                toolName: "mcp__probe__echo",
+                children: [tool({ toolCallId: "c1/1/1", toolName: "read" })],
+              }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-nested-count"]')).toHaveTextContent(
+      "2 nested calls",
+    );
+  });
+
+  it("counts failed descendants separately from top-level failures", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            children: [
+              tool({ toolCallId: "c1/1", toolName: "bash", state: "output-error" }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-nested-failed"]')).toHaveTextContent(
+      "1 nested failed",
+    );
+    expect(screen.queryByText("1 failed")).not.toBeInTheDocument();
+  });
+
+  it("names the deepest running descendant in the live label", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step(
+          [
+            tool({
+              toolCallId: "c1",
+              toolName: "codemode",
+              state: "input-available",
+              children: [
+                tool({
+                  toolCallId: "c1/1",
+                  toolName: "mcp__probe__echo",
+                  state: "input-available",
+                  children: [
+                    tool({ toolCallId: "c1/1/1", toolName: "bash", state: "input-available" }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+          { live: true, activeToolCallId: "c1" },
+        )}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="text-shimmer"]')).toHaveTextContent(
+      "Running codemode › bash…",
+    );
+  });
+
   it("counts a call's nested executions in the settled meta", () => {
     const { container } = render(
       <ChatToolStep

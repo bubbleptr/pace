@@ -147,6 +147,17 @@ type ChatToolStepOwnProps = {
   step: ChatToolStepItem;
 };
 
+/** Every Nested Tool Execution under `tool`, deepest level included, in start order. */
+function descendantsOf(tool: ChatToolItem): ChatToolItem[] {
+  const descendants: ChatToolItem[] = [];
+
+  for (const child of tool.children ?? []) {
+    descendants.push(child, ...descendantsOf(child));
+  }
+
+  return descendants;
+}
+
 export type ChatToolStepProps = Omit<ComponentProps<"div">, keyof ChatToolStepOwnProps | "children"> &
   ChatToolStepOwnProps;
 
@@ -158,7 +169,11 @@ export function ChatToolStep({
 }: ChatToolStepProps) {
   const { tools } = step;
   const failed = tools.filter((tool) => tool.state === "output-error").length;
-  const nestedCount = tools.reduce((sum, tool) => sum + (tool.children?.length ?? 0), 0);
+  const descendants = tools.flatMap(descendantsOf);
+  const nestedCount = descendants.length;
+  // Failed descendants get their own meta: a parent that caught its child's
+  // failure still succeeded, so `failed` stays a top-level count.
+  const nestedFailed = descendants.filter((tool) => tool.state === "output-error").length;
   const totalMs = tools.reduce((sum, tool) => sum + (tool.durationMs ?? 0), 0);
   // Line stats page in with the settled summary only; mid-burst a finished
   // call already has its result but the row is still paging call names.
@@ -174,11 +189,24 @@ export function ChatToolStep({
   );
   const active =
     tools.find((tool) => tool.toolCallId === step.activeToolCallId) ?? tools[tools.length - 1];
-  // While a Nested Tool Execution runs, the label names it after its parent.
-  const runningChildren = active?.children?.filter(
-    (child) => child.state === "input-available",
-  );
-  const runningChild = runningChildren?.[runningChildren.length - 1];
+  // While a Nested Tool Execution runs, the label names the deepest one still
+  // running: descend from the active call, following the last running child.
+  let runningChild: ChatToolItem | undefined;
+  let cursor = active;
+
+  while (cursor) {
+    const running = (cursor.children ?? []).filter(
+      (child) => child.state === "input-available",
+    );
+    const next = running[running.length - 1];
+
+    if (!next) {
+      break;
+    }
+
+    runningChild = next;
+    cursor = next;
+  }
   const kind = step.live ? toolKindFromName(active?.toolName) : toolKindFromTools(tools);
   // One pager for the row's whole life: call to call, and then to the summary,
   // all turn at the same pace, so finishing the burst is a page turn too.
@@ -210,6 +238,14 @@ export function ChatToolStep({
               {nestedCount > 0 ? (
                 <span className="chat-step__meta" data-slot="chat-tool-nested-count">
                   {nestedCount === 1 ? "1 nested call" : `${nestedCount} nested calls`}
+                </span>
+              ) : null}
+              {nestedFailed > 0 ? (
+                <span
+                  className="chat-step__meta chat-step__meta--error"
+                  data-slot="chat-tool-nested-failed"
+                >
+                  {nestedFailed === 1 ? "1 nested failed" : `${nestedFailed} nested failed`}
                 </span>
               ) : null}
               {diffStat ? (

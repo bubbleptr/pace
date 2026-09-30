@@ -116,6 +116,25 @@ describe("PiTrajectoryInspector nested calls", () => {
     );
   });
 
+  it("renders an empty list with the partial-record note when every call was dropped", () => {
+    const { container } = render(
+      <PiTrajectoryInspector
+        step={{ ...codemodeStep, nestedCalls: { calls: [], complete: false } }}
+        tab="Summary"
+        turn={turn}
+        onClose={() => {}}
+        onTabChange={() => {}}
+      />,
+    );
+
+    const section = container.querySelector('[data-slot="nested-calls"]');
+    expect(section).toBeInTheDocument();
+    expect(section).toHaveTextContent("Nested calls (0)");
+    expect(section).toHaveTextContent(
+      "Pi kept a partial record: some calls were dropped, had arguments omitted, or had not finished.",
+    );
+  });
+
   it("omits the section when the step recorded no nested calls", () => {
     const { container } = render(
       <PiTrajectoryInspector
