@@ -474,6 +474,125 @@ describe("agent runtime event normalizer", () => {
     ]);
   });
 
+  it("strips structuredContent from tool results on the way to the journal and renderer", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+    // Pi 0.99 bash results carry a programmatic-caller payload of up to 1 MiB in
+    // structuredContent that Pace never reads; only `content` is model-facing.
+    const details = { command: "echo ok", exitCode: 0 };
+    const structuredContent = {
+      output: "x".repeat(1000),
+      truncated: false,
+      exit_code: 0,
+      wall_time_seconds: 0.1,
+    };
+
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      {
+        type: "tool_execution_start",
+        toolCallId: "call-1",
+        toolName: "bash",
+        args: { command: "echo ok" },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId: "call-1",
+        toolName: "bash",
+        args: { command: "echo ok" },
+        partialResult: {
+          content: [{ type: "text", text: "ok" }],
+          details,
+          structuredContent,
+        },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-1",
+        toolName: "bash",
+        result: {
+          content: [{ type: "text", text: "ok" }],
+          details,
+          structuredContent,
+        },
+        isError: false,
+      },
+    ]);
+
+    const toolEvents = events.filter((event) => event.type === "tool");
+    expect(toolEvents).toHaveLength(3);
+
+    const update = toolEvents.find((event) => event.phase === "update");
+    expect(update?.result).toEqual({
+      content: [{ type: "text", text: "ok" }],
+      details,
+    });
+    expect(update?.result).not.toHaveProperty("structuredContent");
+
+    const end = toolEvents.find((event) => event.phase === "end");
+    expect(end?.result).toEqual({
+      content: [{ type: "text", text: "ok" }],
+      details,
+    });
+    expect(end?.result).not.toHaveProperty("structuredContent");
+  });
+
+  it("carries parentToolCallId on nested executions and leaves it off top-level ones", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
+
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      {
+        type: "tool_execution_start",
+        toolCallId: "call-1",
+        toolName: "codemode",
+        args: { code: "return 1" },
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        toolName: "mcp__probe__echo",
+        args: { text: "hi" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        toolName: "mcp__probe__echo",
+        result: { content: [{ type: "text", text: "ECHO:hi" }] },
+        isError: false,
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-1",
+        toolName: "codemode",
+        result: { content: [{ type: "text", text: "1" }] },
+        isError: false,
+      },
+    ]);
+
+    const toolEvents = events.filter((event) => event.type === "tool");
+    const nestedStart = toolEvents.find(
+      (event) => event.phase === "start" && event.toolCallId === "call-1/1",
+    );
+    const nestedEnd = toolEvents.find(
+      (event) => event.phase === "end" && event.toolCallId === "call-1/1",
+    );
+    const parentStart = toolEvents.find(
+      (event) => event.phase === "start" && event.toolCallId === "call-1",
+    );
+    const parentEnd = toolEvents.find(
+      (event) => event.phase === "end" && event.toolCallId === "call-1",
+    );
+
+    expect(nestedStart).toMatchObject({ parentToolCallId: "call-1" });
+    expect(nestedEnd).toMatchObject({ parentToolCallId: "call-1" });
+    expect(parentStart).not.toHaveProperty("parentToolCallId");
+    expect(parentEnd).not.toHaveProperty("parentToolCallId");
+  });
+
   it("names the tool on the opening tool_call part, before execution starts", () => {
     const normalizer = createAgentRuntimeEventNormalizer({ piSessionId });
     // The SDK's partial message already carries the parsed ToolCall block at

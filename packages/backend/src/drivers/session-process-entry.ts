@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { createPiSdkDriver } from "./pi-sdk-driver";
+import { createPaceBuiltInExtensions } from "./pi-builtin-extensions";
 import {
   createPublicPiSdkRuntimeFactory,
   createPublicPiSdkRuntimeForker,
@@ -24,7 +25,10 @@ const options = {
     // so changing cwd before loading extensions cannot affect other Sessions.
     process.chdir(input.cwd);
     const settingsManager = piSdk.SettingsManager.create(input.cwd, agentDir);
-    const resourceLoader = new piSdk.DefaultResourceLoader({ cwd: input.cwd, agentDir, settingsManager });
+    const resourceLoader = new piSdk.DefaultResourceLoader({
+      cwd: input.cwd, agentDir, settingsManager,
+      extensionFactories: createPaceBuiltInExtensions(),
+    });
     await resourceLoader.reload();
     const modelRuntime = await createPaceModelRuntime({ agentDir, dataDir });
     return { agentDir, settingsManager, resourceLoader, modelRuntime };

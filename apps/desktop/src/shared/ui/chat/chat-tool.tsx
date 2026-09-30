@@ -4,6 +4,7 @@ import {
   type ChatToolCallStatus,
 } from "@astryxdesign/core";
 import type { ComponentProps } from "react";
+import { ChatToolKindIcon, toolKindFromName } from "@/shared/ui/chat/chat-tool-kind";
 
 /**
  * Lifecycle of a tool invocation as rendered in the trace. Mirrors the state
@@ -17,6 +18,8 @@ export type ToolPartState =
 
 export type ChatToolItem = {
   argsText?: string;
+  /** Nested Tool Executions this call started, in start order. */
+  children?: ChatToolItem[];
   /** Per-edit line counts; rendered as Astryx additions/deletions stats. */
   diffStat?: { additions: number; deletions: number };
   durationMs?: number;
@@ -25,6 +28,24 @@ export type ChatToolItem = {
   toolCallId?: string;
   toolName?: string;
 };
+
+/**
+ * Display name for a tool call: `mcp__<server>__<tool>` reads as
+ * `<server>/<tool>`, matching how Pi's TUI titles MCP calls. Anything else is
+ * returned unchanged. Data layers keep the raw name; this is render-only.
+ */
+export function toolDisplayName(name: string | undefined): string | undefined {
+  if (!name?.startsWith("mcp__")) {
+    return name;
+  }
+
+  const rest = name.slice("mcp__".length);
+  const separator = rest.indexOf("__");
+
+  return separator === -1
+    ? rest
+    : `${rest.slice(0, separator)}/${rest.slice(separator + 2)}`;
+}
 
 const statusMap: Record<ToolPartState, ChatToolCallStatus> = {
   "input-streaming": "running",
@@ -87,13 +108,15 @@ export function formatToolDuration(durationMs: number | undefined): string | und
 }
 
 export function hasToolDetail(tool: ChatToolItem) {
-  return tool.argsText != null || tool.output != null;
+  return tool.argsText != null || tool.output != null || (tool.children?.length ?? 0) > 0;
 }
 
 /**
  * The args and output panes of one call. Rendered inside the Astryx row when
  * it expands, and directly by a single-call ChatToolStep, whose own row
  * already names the call — a second header there would only cost a click.
+ * Nested Tool Executions sit between args and result, in the same per-call
+ * row shape a multi-call ChatToolStep uses.
  */
 export type ChatToolDetailProps = Omit<ComponentProps<"div">, "children"> & {
   tool: ChatToolItem;
@@ -106,6 +129,16 @@ export function ChatToolDetail({ tool, className, ...rest }: ChatToolDetailProps
         <pre className="chat-tool__section" data-slot="chat-tool-args">
           {tool.argsText}
         </pre>
+      ) : null}
+      {tool.children?.length ? (
+        <ol className="chat-tool-step__list" data-slot="chat-tool-children">
+          {tool.children.map((child, index) => (
+            <li key={child.toolCallId ?? index} className="chat-tool-step__item">
+              <ChatToolKindIcon kind={toolKindFromName(child.toolName)} />
+              <ChatToolGroup tools={[child]} />
+            </li>
+          ))}
+        </ol>
       ) : null}
       {tool.output !== undefined ? (
         <pre className="chat-tool__section" data-slot="chat-tool-result">
@@ -120,7 +153,7 @@ function toAstryxCall(tool: ChatToolItem, index: number): ChatToolCallItem {
   const resultDetail = hasToolDetail(tool) ? <ChatToolDetail tool={tool} /> : undefined;
 
   return {
-    name: tool.toolName ?? "tool",
+    name: toolDisplayName(tool.toolName) ?? "tool",
     status: statusMap[tool.state],
     target: toolTargetFromArgs(tool.argsText),
     ...(tool.diffStat
@@ -175,6 +208,7 @@ export type ChatToolProps = Omit<ComponentProps<"div">, keyof ChatToolItem | "ch
 
 export function ChatTool({
   argsText,
+  children,
   diffStat,
   durationMs,
   output,
@@ -195,7 +229,7 @@ export function ChatTool({
       <ChatToolCalls
         calls={[
           toAstryxCall(
-            { argsText, diffStat, durationMs, output, state, toolCallId, toolName },
+            { argsText, children, diffStat, durationMs, output, state, toolCallId, toolName },
             0,
           ),
         ]}

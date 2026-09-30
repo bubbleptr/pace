@@ -114,6 +114,20 @@ function toolNameFromPartial(partial: unknown, contentIndex: number) {
   return toolName ? { toolName } : {};
 }
 
+// Pi tool results can carry a `structuredContent` payload for programmatic
+// callers (codemode scripts) — bash's alone reaches 1 MiB. The model-facing
+// `content` is what Pace displays, so the payload must not reach the Session
+// Event Journal or cross IPC to the renderer.
+function withoutStructuredContent(result: unknown): unknown {
+  if (!isRecord(result) || !("structuredContent" in result)) {
+    return result;
+  }
+
+  const { structuredContent: _dropped, ...rest } = result;
+
+  return rest;
+}
+
 // Token/cost truth rides on the assistant message's usage block; it becomes a
 // hidden usage event so projections can aggregate without parsing messages.
 function usageSummaryFromMessage(message: Record<string, unknown>) {
@@ -320,6 +334,12 @@ export function createAgentRuntimeEventNormalizer(
     }
 
     const name = typeof rawEvent.toolName === "string" ? rawEvent.toolName : "";
+    // Nested Tool Executions carry the calling execution's id; top-level
+    // events never get the key.
+    const parentage =
+      typeof rawEvent.parentToolCallId === "string"
+        ? { parentToolCallId: rawEvent.parentToolCallId }
+        : {};
 
     if (rawEvent.type === "tool_execution_start") {
       return [
@@ -328,6 +348,7 @@ export function createAgentRuntimeEventNormalizer(
           runId,
           turnId,
           toolCallId: rawEvent.toolCallId,
+          ...parentage,
           phase: "start",
           name,
           args: rawEvent.args,
@@ -344,10 +365,11 @@ export function createAgentRuntimeEventNormalizer(
           runId,
           turnId,
           toolCallId: rawEvent.toolCallId,
+          ...parentage,
           phase: "update",
           name,
           args: rawEvent.args,
-          result: rawEvent.partialResult,
+          result: withoutStructuredContent(rawEvent.partialResult),
           surface: "trace",
           origin,
         },
@@ -360,9 +382,10 @@ export function createAgentRuntimeEventNormalizer(
         runId,
         turnId,
         toolCallId: rawEvent.toolCallId,
+        ...parentage,
         phase: "end",
         name,
-        result: rawEvent.result,
+        result: withoutStructuredContent(rawEvent.result),
         isError: typeof rawEvent.isError === "boolean" ? rawEvent.isError : undefined,
         surface: "trace",
         origin,

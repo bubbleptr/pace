@@ -55,6 +55,7 @@ import {
   type WorkspaceFileSearcher,
 } from "./workspace/workspace-file-search";
 import { createPiSdkDriver } from "./drivers/pi-sdk-driver";
+import { createPaceBuiltInExtensions } from "./drivers/pi-builtin-extensions";
 import { inspectRuntime } from "./drivers/pi-runtime-info";
 import {
   createTerminalManager,
@@ -255,6 +256,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
       const settingsManager = piSdk.SettingsManager.create(input.cwd, agentDir);
       const resourceLoader = new piSdk.DefaultResourceLoader({
         cwd: input.cwd, agentDir, settingsManager,
+        extensionFactories: createPaceBuiltInExtensions(),
       });
       await resourceLoader.reload();
       const modelRuntime = await createPaceModelRuntime({ agentDir, dataDir });

@@ -109,6 +109,7 @@ export const uiRegions: UiRegion[] = [
   { term: "Chain of Thought", match: { components: ["AssistantRunTrajectory", "ChatChainOfThought", "ChatChainOfThoughtSteps", "ChatChainOfThoughtStep", "ChatChainOfThoughtRail"] } },
   { term: "Thinking", match: { components: ["ChatThoughtStep", "ChatThoughtMarkdown"] } },
   { term: "Tool Call", match: { components: ["ChatTool", "ChatToolGroup", "ChatToolStep", "RailToolNode"] } },
+  { term: "Nested Tool Execution", match: { components: ["NestedCallRow"], selectors: ['[data-slot="chat-tool-children"]'] } },
   { term: "Assistant Message", match: { components: ["AssistantMessageContent", "ChatMessageAssistant"] } },
   { term: "Execution Checkout", match: { components: ["GitBranchPicker", "CheckoutStrategyPicker"] } },
   { term: "Empty Workspace State", match: { testIds: ["empty-workspace-state"] } },

@@ -72,6 +72,10 @@ describe("summarizeTools", () => {
     expect(summarizedCommand.endsWith("…")).toBe(true);
   });
 
+  it("reads MCP names as server/tool, like Pi's TUI", () => {
+    expect(summarizeTools([tool({ toolName: "mcp__probe__echo" })])).toBe("Used probe/echo");
+  });
+
   it("counts a burst by what its calls did, not by how many they were", () => {
     expect(
       summarizeTools([
@@ -256,6 +260,128 @@ describe("ChatToolStep", () => {
     expect([...rows].every((row) => row.getAttribute("data-tool-count") === "1")).toBe(true);
   });
 
+  it("counts every descendant, not only direct children", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            children: [
+              tool({
+                toolCallId: "c1/1",
+                toolName: "mcp__probe__echo",
+                children: [tool({ toolCallId: "c1/1/1", toolName: "read" })],
+              }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-nested-count"]')).toHaveTextContent(
+      "2 nested calls",
+    );
+  });
+
+  it("counts failed descendants separately from top-level failures", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            children: [
+              tool({ toolCallId: "c1/1", toolName: "bash", state: "output-error" }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-nested-failed"]')).toHaveTextContent(
+      "1 nested failed",
+    );
+    expect(screen.queryByText("1 failed")).not.toBeInTheDocument();
+  });
+
+  it("names the deepest running descendant in the live label", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step(
+          [
+            tool({
+              toolCallId: "c1",
+              toolName: "codemode",
+              state: "input-available",
+              children: [
+                tool({
+                  toolCallId: "c1/1",
+                  toolName: "mcp__probe__echo",
+                  state: "input-available",
+                  children: [
+                    tool({ toolCallId: "c1/1/1", toolName: "bash", state: "input-available" }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+          { live: true, activeToolCallId: "c1" },
+        )}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="text-shimmer"]')).toHaveTextContent(
+      "Running codemode › bash…",
+    );
+  });
+
+  it("counts a call's nested executions in the settled meta", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            argsText: "return 1",
+            children: [
+              tool({ toolCallId: "c1/1", toolName: "mcp__probe__echo" }),
+              tool({ toolCallId: "c1/2", toolName: "bash", state: "output-error" }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="chat-tool-nested-count"]')).toHaveTextContent(
+      "2 nested calls",
+    );
+  });
+
+  it("names the running nested execution after its parent while live", () => {
+    const { container } = render(
+      <ChatToolStep
+        step={step(
+          [
+            tool({
+              toolCallId: "c1",
+              toolName: "codemode",
+              state: "input-available",
+              children: [
+                tool({ toolCallId: "c1/1", toolName: "mcp__probe__echo", state: "input-available" }),
+              ],
+            }),
+          ],
+          { live: true, activeToolCallId: "c1" },
+        )}
+      />,
+    );
+
+    expect(container.querySelector('[data-slot="text-shimmer"]')).toHaveTextContent(
+      "Running codemode › probe/echo…",
+    );
+  });
+
   // One call is the one-element burst, but the step row already says what
   // the call did: a second header inside the panel only costs a second click.
   it("opens a single call's args and output with one click", async () => {
@@ -286,5 +412,36 @@ describe("ChatToolStep", () => {
     );
     expect(container.querySelector('[data-slot="chat-tool-group"]')).not.toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("lists a call's nested executions inside the expanded detail", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ChatToolStep
+        step={step([
+          tool({
+            toolCallId: "c1",
+            toolName: "codemode",
+            argsText: 'return await tools.mcp__probe__echo({ text: "hi" })',
+            children: [
+              tool({
+                toolCallId: "c1/1",
+                toolName: "mcp__probe__echo",
+                argsText: '{"text":"hi"}',
+                output: "ECHO:hi",
+              }),
+              tool({ toolCallId: "c1/2", toolName: "bash", state: "output-error", output: "exit 1" }),
+            ],
+          }),
+        ])}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /codemode/ }));
+
+    const children = container.querySelector('[data-slot="chat-tool-children"]');
+    expect(children).toBeInTheDocument();
+    expect(children).toHaveTextContent("probe/echo");
+    expect(children).toHaveTextContent("bash");
   });
 });

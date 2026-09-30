@@ -1109,6 +1109,52 @@ function PiTrajectoryInspectorGallery() {
             />
           </div>
         </Variant>
+        <Variant caption="codemode step — Nested calls list with omitted args, an error, and a partial record">
+          <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
+            <PiTrajectoryInspector
+              step={{
+                id: "codemode-nested",
+                turnIndex: 1,
+                stepIndex: 0,
+                kind: "tool",
+                name: "codemode",
+                toolCallId: "call-1",
+                durationMs: 860,
+                nestedCalls: {
+                  complete: false,
+                  calls: [
+                    {
+                      id: "call-1/1",
+                      name: "mcp__probe__echo",
+                      argsText: JSON.stringify({ text: "hi" }, null, 2),
+                      status: "ok",
+                      durationMs: 42,
+                    },
+                    {
+                      id: "call-1/2",
+                      name: "mcp__probe__fetch",
+                      argumentsBytes: 512,
+                      status: "unfinished",
+                      durationMs: 7,
+                    },
+                    {
+                      id: "call-1/3",
+                      name: "bash",
+                      argsText: JSON.stringify({ command: "exit 1" }, null, 2),
+                      status: "error",
+                      durationMs: 120,
+                      error: "exit status 1",
+                    },
+                  ],
+                },
+              }}
+              tab="Summary"
+              turn={trajectoryTurns[1]}
+              onClose={() => {}}
+              onTabChange={() => {}}
+            />
+          </div>
+        </Variant>
         <Variant caption="Agent step — Send on a settled child (stop hidden)">
           <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
             <PiTrajectoryInspector
@@ -2216,6 +2262,64 @@ const failedToolStep: ChatToolStepItem = {
   ],
 };
 
+const settledCodemodeStep: ChatToolStepItem = {
+  kind: "tools",
+  id: "design-tools-codemode",
+  live: false,
+  tools: [
+    {
+      toolCallId: "design-codemode-1",
+      toolName: "codemode",
+      state: "output-available",
+      durationMs: 860,
+      // cot-view unwraps {"code": ...} into the script before it lands here.
+      argsText: 'const r = await tools.mcp__probe__echo({ text: "hi" });\nreturn r.content[0].text;',
+      output: "ECHO:hi",
+      children: [
+        {
+          toolCallId: "design-codemode-1/1",
+          toolName: "mcp__probe__echo",
+          state: "output-available",
+          durationMs: 42,
+          argsText: JSON.stringify({ text: "hi" }),
+          output: "ECHO:hi",
+        },
+        {
+          toolCallId: "design-codemode-1/2",
+          toolName: "bash",
+          state: "output-error",
+          durationMs: 120,
+          argsText: JSON.stringify({ command: "exit 1" }),
+          output: "exit status 1",
+        },
+      ],
+    },
+  ],
+};
+
+const liveCodemodeStep: ChatToolStepItem = {
+  kind: "tools",
+  id: "design-tools-codemode-live",
+  live: true,
+  activeToolCallId: "design-codemode-live-1",
+  tools: [
+    {
+      toolCallId: "design-codemode-live-1",
+      toolName: "codemode",
+      state: "input-available",
+      argsText: 'const r = await tools.mcp__probe__echo({ text: "hi" });\nreturn r.content[0].text;',
+      children: [
+        {
+          toolCallId: "design-codemode-live-1/1",
+          toolName: "mcp__probe__echo",
+          state: "input-available",
+          argsText: JSON.stringify({ text: "hi" }),
+        },
+      ],
+    },
+  ],
+};
+
 function ChatPixelLoaderGallery() {
   return (
     <GallerySection title="ChatPixelLoader">
@@ -2370,6 +2474,12 @@ function ChatToolStepGallery() {
         </Variant>
         <Variant caption="settled, mixed kinds">
           <ChatToolStep step={mixedKindToolStep} />
+        </Variant>
+        <Variant caption="settled, codemode with nested calls (MCP ok + bash failed)">
+          <ChatToolStep step={settledCodemodeStep} />
+        </Variant>
+        <Variant caption="live, codemode running a nested MCP call">
+          <ChatToolStep step={liveCodemodeStep} />
         </Variant>
       </div>
     </GallerySection>

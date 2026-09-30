@@ -25,6 +25,25 @@ const photonWasmPath = requireFromPi.resolve(
   "@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 );
 
+// Pi's config.js is the anchor for codemode's bundled runtime: the emitted
+// codemode-worker.js and quickjs.wasm resolve relative to whichever chunk ends
+// up containing it, so both the transform and the guard below key off its id.
+const piConfigModuleId = realpathSync(join(piPackageDirectory, "dist/config.js"));
+const piCodemodeWorkerEntry = join(
+  piPackageDirectory,
+  "dist/extensions/codemode/worker.js",
+);
+// quickjs-wasi is a dependency of pi-codemode, not pi-coding-agent, so resolve
+// the wasm through pi-codemode's own package the way its imports do: pi's deps
+// sit beside it in the same scope directory (bun isolated install), which is
+// also where Node's upward node_modules walk finds it.
+const piCodemodeDirectory = realpathSync(
+  join(dirname(piPackageDirectory), "pi-codemode"),
+);
+const quickJsWasmPath = createRequire(
+  join(piCodemodeDirectory, "package.json"),
+).resolve("quickjs-wasi/quickjs.wasm");
+
 function copyMainRuntimeAssets(): Plugin {
   return {
     name: "pigui-copy-main-runtime-assets",
@@ -38,6 +57,12 @@ function copyMainRuntimeAssets(): Plugin {
 
       await mkdir(dirname(outputPath), { recursive: true });
       await copyFile(photonWasmPath, outputPath);
+      // Codemode's QuickJS runtime is looked up beside the chunk that contains
+      // pi's dist/config.js (see rewritePiQuickJsWasmResolution).
+      await copyFile(
+        quickJsWasmPath,
+        resolve(options.dir, "chunks/quickjs.wasm"),
+      );
       // Pi resolves built-in themes through its public package asset directory.
       const themes = "dist/modes/interactive/theme";
       const themeDirectory = resolve(options.dir, "pi-assets", themes);
@@ -67,6 +92,66 @@ const __dirname = import.meta.dirname;
 const require = __cjs_mod__.createRequire(import.meta.url);
 `;
 
+// Pi's dist/config.js resolves the codemode QuickJS wasm through createRequire,
+// which cannot work in the packaged app: electron-builder ships no node_modules.
+// Point it at the copy emitted beside the chunk instead. The replacement must
+// match exactly once so a Pi upgrade that rewrites this lookup fails the build
+// loudly instead of silently breaking codemode.
+const QUICKJS_WASM_REQUIRE =
+  'createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm")';
+
+function rewritePiQuickJsWasmResolution(): Plugin {
+  return {
+    name: "pigui-pi-quickjs-wasm-path",
+    apply: "build",
+    transform(code, id) {
+      if (id !== piConfigModuleId) {
+        return null;
+      }
+      const occurrences = code.split(QUICKJS_WASM_REQUIRE).length - 1;
+      if (occurrences !== 1) {
+        throw new Error(
+          `Expected exactly one "${QUICKJS_WASM_REQUIRE}" in ${id}, found ${occurrences}.`,
+        );
+      }
+      return {
+        code:
+          'import { fileURLToPath as __paceFileURLToPath } from "node:url";\n' +
+          code.replace(
+            QUICKJS_WASM_REQUIRE,
+            '__paceFileURLToPath(new URL("./quickjs.wasm", import.meta.url))',
+          ),
+        map: null,
+      };
+    },
+  };
+}
+
+// getCodemodeWorkerUrl() and the wasm lookup above both resolve relative to the
+// emitted chunk that contains pi's dist/config.js. If chunk splitting ever moves
+// it out of chunks/, both files land in the wrong place — fail the build.
+function assertPiConfigChunkLocation(): Plugin {
+  return {
+    name: "pigui-pi-config-chunk-location",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const chunk = Object.values(bundle).find(
+        (output) =>
+          output.type === "chunk" && output.moduleIds.includes(piConfigModuleId),
+      );
+      if (!chunk) {
+        throw new Error("No emitted main chunk contains pi's dist/config.js.");
+      }
+      if (!chunk.fileName.startsWith("chunks/")) {
+        throw new Error(
+          `Pi's dist/config.js must stay under chunks/ (emitted as ${chunk.fileName}); ` +
+            "codemode-worker.js and quickjs.wasm resolve relative to it.",
+        );
+      }
+    },
+  };
+}
+
 function hoistCommonJsShim(): Plugin {
   return {
     name: "pigui-hoist-cjs-shim",
@@ -86,6 +171,9 @@ const mainBuild = {
       main: resolve(__dirname, "electron/main.ts"),
       backend: resolve(__dirname, "electron/backend.ts"),
       "session-worker": resolve(__dirname, "electron/session-worker.ts"),
+      // Pi's bundled codemode entry; getCodemodeWorkerUrl() resolves
+      // ./codemode-worker.js beside the chunk containing dist/config.js.
+      "chunks/codemode-worker": piCodemodeWorkerEntry,
     },
     output: {
       entryFileNames: "[name].js",
@@ -148,6 +236,8 @@ export default defineConfig({
     plugins: [
       externalizeDepsPlugin({ exclude: [...internalPackages, "electron-updater"] }),
       copyMainRuntimeAssets(),
+      rewritePiQuickJsWasmResolution(),
+      assertPiConfigChunkLocation(),
       hoistCommonJsShim(),
     ],
     build: mainBuild as any,

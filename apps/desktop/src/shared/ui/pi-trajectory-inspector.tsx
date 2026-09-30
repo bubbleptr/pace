@@ -1,9 +1,13 @@
 import type { ComponentProps } from "react";
 import { useState } from "react";
-import { formatToolDuration } from "@/shared/ui/chat/chat-tool";
+import { formatToolDuration, toolDisplayName } from "@/shared/ui/chat/chat-tool";
 import type { RuntimeToolSchema } from "@pace/core";
 import { isSettledSubagentState, type SubagentRecord } from "@pace/core";
-import type { TrajectoryStep, TrajectoryTurn } from "@/entities/session/trajectory-model";
+import type {
+  TrajectoryNestedCall,
+  TrajectoryStep,
+  TrajectoryTurn,
+} from "@/entities/session/trajectory-model";
 import { TrajectoryStepBadge, trajectoryStepStatus, trajectoryStepType } from "@/shared/ui/pi-trajectory-ledger";
 
 /**
@@ -50,6 +54,44 @@ function formatTime(value?: string) {
     return undefined;
   }
   return new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(date);
+}
+
+// Same glyph/color conventions as trajectoryStepStatus in the ledger.
+const NESTED_CALL_STATUS: Record<
+  TrajectoryNestedCall["status"],
+  { glyph: string; className: string }
+> = {
+  ok: { glyph: "✓", className: "text-success" },
+  error: { glyph: "✕", className: "text-danger" },
+  unfinished: { glyph: "…", className: "text-muted" },
+};
+
+function NestedCallRow({ call }: { call: TrajectoryNestedCall }) {
+  const status = NESTED_CALL_STATUS[call.status];
+
+  return (
+    <li>
+      <div className="flex items-baseline gap-2">
+        <span aria-hidden="true" className={`text-xs ${status.className}`}>
+          {status.glyph}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-foreground">
+          {toolDisplayName(call.name)}
+        </span>
+        <span className="text-xs tabular-nums text-muted">
+          {formatToolDuration(call.durationMs)}
+        </span>
+      </div>
+      {call.argsText !== undefined ? (
+        <CodeBlock value={call.argsText} />
+      ) : call.argumentsBytes !== undefined ? (
+        <p className="mt-1 text-xs text-muted">
+          Arguments omitted ({call.argumentsBytes} bytes)
+        </p>
+      ) : null}
+      {call.error ? <p className="mt-1 text-xs text-danger">{call.error}</p> : null}
+    </li>
+  );
 }
 
 function Field({ label, children }: { label: string; children?: React.ReactNode }) {
@@ -175,7 +217,7 @@ export function PiTrajectoryInspector({
         </div>
         <h2 className="mt-1 flex min-w-0 items-baseline gap-2">
           <span className="truncate font-mono text-sm font-semibold text-foreground">
-            {step.name ?? step.kind}
+            {toolDisplayName(step.name) ?? step.kind}
           </span>
           <span aria-hidden="true" className={`text-xs ${status.className}`}>
             {status.glyph}
@@ -222,6 +264,24 @@ export function PiTrajectoryInspector({
                   className="max-h-56 max-w-full rounded-md object-contain outline outline-1 -outline-offset-1 outline-black/10"
                   src={step.imageUrl}
                 />
+              </div>
+            ) : null}
+            {step.nestedCalls ? (
+              <div className="mt-3 border-t border-border pt-3" data-slot="nested-calls">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  Nested calls ({step.nestedCalls.calls.length})
+                </p>
+                <ol className="mt-1 flex flex-col gap-2">
+                  {step.nestedCalls.calls.map((call) => (
+                    <NestedCallRow call={call} key={call.id} />
+                  ))}
+                </ol>
+                {!step.nestedCalls.complete ? (
+                  <p className="mt-2 text-xs text-muted">
+                    Pi kept a partial record: some calls were dropped, had arguments
+                    omitted, or had not finished.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {childSession || canSend || canStop ? (

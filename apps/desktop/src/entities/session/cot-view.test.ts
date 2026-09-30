@@ -202,6 +202,113 @@ function replay(
 }
 
 describe("CoT view derivation", () => {
+  it("attaches Nested Tool Executions to their parent call and unwraps codemode's script args", () => {
+    const m1 = message(1);
+    const m2 = message(2);
+    const call = m1.part(0, "tool_call");
+    const answer = m2.part(0, "text");
+
+    // Nested executions arrive as tool events with parentToolCallId and no
+    // tool_call part — the model never issued them.
+    const nested = (
+      ms: number,
+      phase: "start" | "end",
+      event: Partial<Extract<AgentRuntimeEvent, { type: "tool" }>> & { toolCallId: string; name: string },
+    ): Beat => ({
+      ms,
+      event: {
+        type: "tool",
+        runId,
+        turnId: `${runId}:turn-1`,
+        phase,
+        surface: "trace",
+        origin: "sdk",
+        ...event,
+      } as AgentRuntimeEvent,
+    });
+
+    const { final, viewAt } = replay([
+      runStart(0),
+      m1.start(100),
+      call.start(200),
+      call.end(300, '{"code":"return 1"}', "call-1"),
+      m1.end(400, [call.snapshot('{"code":"return 1"}', "call-1")]),
+      toolStart(500, "call-1", "codemode"),
+      nested(600, "start", {
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        name: "mcp__probe__echo",
+        args: { text: "hi" },
+      }),
+      nested(700, "start", {
+        toolCallId: "call-1/2",
+        parentToolCallId: "call-1",
+        name: "bash",
+        args: { command: "exit 1" },
+      }),
+      nested(800, "end", {
+        toolCallId: "call-1/1",
+        parentToolCallId: "call-1",
+        name: "mcp__probe__echo",
+        result: { content: [{ type: "text", text: "ECHO:hi" }] },
+        isError: false,
+      }),
+      nested(900, "end", {
+        toolCallId: "call-1/2",
+        parentToolCallId: "call-1",
+        name: "bash",
+        result: { content: [{ type: "text", text: "boom" }] },
+        isError: true,
+      }),
+      toolEnd(1000, "call-1", "codemode", { content: [{ type: "text", text: "1" }] }),
+      m2.start(1100),
+      answer.start(1200),
+      answer.end(1300, "Done."),
+      m2.end(1400, [answer.snapshot("Done.")]),
+      runEnd(1500),
+    ]);
+
+    // While the parent runs, a started-but-unfinished nested execution is
+    // input-available — it has args but no result yet.
+    const liveStep = viewAt(700).steps.find((step) => step.kind === "tools");
+    const liveChildren =
+      liveStep?.kind === "tools" ? liveStep.tools[0].children : undefined;
+    expect(liveChildren?.[0]).toMatchObject({
+      toolCallId: "call-1/1",
+      toolName: "mcp__probe__echo",
+      state: "input-available",
+      argsText: '{"text":"hi"}',
+    });
+
+    const steps = final.steps;
+    const toolsSteps = steps.filter((step) => step.kind === "tools");
+    expect(toolsSteps).toHaveLength(1);
+    const toolsStep = toolsSteps[0] as Extract<(typeof steps)[number], { kind: "tools" }>;
+    expect(toolsStep.tools).toHaveLength(1);
+
+    const [codemode] = toolsStep.tools;
+    // The detail pane shows the script, not the escaped JSON envelope.
+    expect(codemode.argsText).toBe("return 1");
+    expect(codemode.children?.map((child) => child.toolCallId)).toEqual([
+      "call-1/1",
+      "call-1/2",
+    ]);
+    expect(codemode.children?.[0]).toMatchObject({
+      toolName: "mcp__probe__echo",
+      state: "output-available",
+      argsText: '{"text":"hi"}',
+      output: JSON.stringify({ content: [{ type: "text", text: "ECHO:hi" }] }),
+      durationMs: 200,
+    });
+    expect(codemode.children?.[1]).toMatchObject({
+      toolName: "bash",
+      state: "output-error",
+      argsText: '{"command":"exit 1"}',
+      output: JSON.stringify({ content: [{ type: "text", text: "boom" }] }),
+      durationMs: 200,
+    });
+  });
+
   it("preserves a failed run outcome for the settled header", () => {
     let model = createSessionRuntimeModel();
     for (const [index, beat] of [runStart(0), runEnd(1400, "failed")].entries()) {
