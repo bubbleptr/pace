@@ -28,5 +28,9 @@ yarn-error.log*
 test-results/
 e2e/screenshots/
 
+# Verification-skill proof runs. Cleanup deletes the disposable Electron
+# profile, not these artifacts. Do not commit a run.
+.cursor/skills/verify-pace/runs/
+
 # Pi creates its model store in any agent dir a runtime opens, including the test fixture.
 fixtures/pi-agent/models-store.json
