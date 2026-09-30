@@ -20,7 +20,14 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    exclude: [...configDefaults.exclude, "e2e/**", "**/out/**", "**/.claude/worktrees/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "e2e/**",
+      "**/out/**",
+      "**/.claude/worktrees/**",
+      // Playwright drive scripts, not Vitest suites.
+      ".cursor/**",
+    ],
     pool: "forks",
     // @lobehub/icons ships extensionless directory imports that Node's ESM
     // resolver rejects; let Vite resolve them so pages using brand icons stay

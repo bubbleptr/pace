@@ -16,11 +16,11 @@ body:
     validations:
       required: true
   - type: input
-    id: macos-version
+    id: os
     attributes:
-      label: macOS version
-      description: Apple menu → About This Mac.
-      placeholder: macOS 15.1
+      label: Operating system
+      description: macOS (Apple menu → About This Mac) or your Linux distribution.
+      placeholder: macOS 15.1 or Ubuntu 24.04
     validations:
       required: true
   - type: textarea

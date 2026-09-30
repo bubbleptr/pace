@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${GH_REPO:?}" "${RELEASE_TAG:?}" "${VERSION:?}" "${PRERELEASE:?}" "${DMG_NAME:?}" "${RUNNER_TEMP:?}" "${GITHUB_STEP_SUMMARY:?}"
+: "${GH_REPO:?}" "${RELEASE_TAG:?}" "${VERSION:?}" "${PRERELEASE:?}" "${DMG_NAME:?}" "${APPIMAGE_NAME:?}" "${DEB_NAME:?}" "${RUNNER_TEMP:?}" "${GITHUB_STEP_SUMMARY:?}"
 
+# A published release cannot gain assets later. macOS and Linux must both be
+# in this draft before draft=false.
 zip_name="${DMG_NAME%.dmg}.zip"
 assets=(
   "dist/$DMG_NAME"
@@ -10,6 +12,11 @@ assets=(
   "dist/${zip_name}.blockmap"
   "dist/latest-mac.yml"
   "dist/SHA256SUMS.txt"
+  "dist/$APPIMAGE_NAME"
+  "dist/${APPIMAGE_NAME}.blockmap"
+  "dist/latest-linux.yml"
+  "dist/$DEB_NAME"
+  "dist/SHA256SUMS-linux.txt"
 )
 
 # A published version is immutable, including when a workflow is re-run.

@@ -666,7 +666,12 @@ body {
    Only the first pane yields to traffic lights when navigation is collapsed. */
 .pigui-header-chrome__pane-headers {
   position: absolute;
-  inset: 0 0 0 var(--pigui-main-left);
+  top: 0;
+  /* Caption buttons live in the macOS traffic lights or the Linux window
+     frame, not in this row, so the inset stays 0. */
+  right: var(--pigui-chrome-safe-right, 0px);
+  bottom: 0;
+  left: var(--pigui-main-left);
   height: var(--pigui-header-height);
   pointer-events: auto;
   -webkit-app-region: drag;

@@ -74,6 +74,11 @@ import { useSessionProjectionsOptional } from "@/entities/session/use-session-pr
 import { useUpdateStatus } from "@/entities/update/use-update-status";
 import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
 import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
+import {
+  hostWindowChrome,
+  readHostPlatform,
+  revealInFileManagerLabel,
+} from "@/shared/host-chrome";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
 import {
   checkProjectDirectories,
@@ -157,8 +162,6 @@ const titlebarControlStyle = {
   width: "28px",
   height: "28px",
 } as CSSProperties;
-const trafficWidth = "88px";
-const chromeSafeLeft = "132px";
 const sidebarAnimationMs = 220;
 
 function getActiveTab(pathname: string) {
@@ -574,7 +577,7 @@ function ProjectActionsMenu({
           onClick: () => onRenameProject(project.id),
         },
         {
-          label: "Reveal in Finder",
+          label: revealInFileManagerLabel(),
           icon: <FolderOpen aria-hidden="true" />,
           onClick: () => onRevealProject(project.id),
         },
@@ -1030,11 +1033,13 @@ function HeaderChrome({
   showSidebarToggle?: boolean;
   onToggleSidebar?: () => void;
 }) {
+  const chrome = hostWindowChrome(readHostPlatform(), { showSidebarToggle });
   const chromeStyle = {
-    "--pigui-chrome-safe-left": chromeSafeLeft,
+    "--pigui-chrome-safe-left": chrome.safeLeft,
+    "--pigui-chrome-safe-right": chrome.safeRight,
     "--pigui-header-height": titlebarHeight,
     "--pigui-main-left": mainLeft,
-    "--pigui-traffic-width": trafficWidth,
+    "--pigui-traffic-width": chrome.trafficWidth,
     height: titlebarHeight,
   } as CSSProperties;
   const titleTrackStyle = {
@@ -1057,13 +1062,15 @@ function HeaderChrome({
       style={chromeStyle}
     >
       <div className="pigui-header-chrome__left" data-testid="header-chrome-left">
-        <div
-          aria-hidden="true"
-          className="h-full shrink-0"
-          data-window-drag-region
-          data-testid="mac-traffic-space"
-          style={{ width: trafficWidth }}
-        />
+        {chrome.reserveMacTrafficLights ? (
+          <div
+            aria-hidden="true"
+            className="h-full shrink-0"
+            data-window-drag-region
+            data-testid="mac-traffic-space"
+            style={{ width: chrome.trafficWidth }}
+          />
+        ) : null}
         {showSidebarToggle ? (
           <button
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}

@@ -11,10 +11,25 @@ const publishScript = fileURLToPath(new URL("./publish-release.sh", import.meta.
 const releaseAssets = (version) => {
   const artifact = `Pace-${version}-arm64.dmg`;
   const zipArtifact = `Pace-${version}-arm64.zip`;
+  const appImage = `Pace-${version}-x64.AppImage`;
+  const deb = `Pace-${version}-x64.deb`;
   return {
     artifact,
     zipArtifact,
-    files: [artifact, zipArtifact, `${zipArtifact}.blockmap`, "latest-mac.yml", "SHA256SUMS.txt"],
+    appImage,
+    deb,
+    files: [
+      artifact,
+      zipArtifact,
+      `${zipArtifact}.blockmap`,
+      "latest-mac.yml",
+      "SHA256SUMS.txt",
+      appImage,
+      `${appImage}.blockmap`,
+      "latest-linux.yml",
+      deb,
+      "SHA256SUMS-linux.txt",
+    ],
   };
 };
 
@@ -24,7 +39,7 @@ function runPublish(t, { existing = null, fail = "", prerelease = false, omit = 
   mkdirSync(join(dir, "bin"));
   mkdirSync(join(dir, "dist"));
   const version = prerelease ? "0.0.1-rc.1" : "0.0.1";
-  const { artifact, files } = releaseAssets(version);
+  const { artifact, appImage, deb, files } = releaseAssets(version);
   for (const file of files) {
     if (file !== omit) writeFileSync(join(dir, "dist", file), `verified-test-${file}`);
   }
@@ -56,6 +71,8 @@ if (operation === 'api') {
       VERSION: version,
       PRERELEASE: String(prerelease),
       DMG_NAME: artifact,
+      APPIMAGE_NAME: appImage,
+      DEB_NAME: deb,
       RUNNER_TEMP: dir,
       GITHUB_STEP_SUMMARY: join(dir, "summary"),
     },

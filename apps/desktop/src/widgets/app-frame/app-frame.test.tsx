@@ -219,6 +219,8 @@ describe("AppFrame", () => {
     window.localStorage.clear();
     delete window.pace;
     resetUpdateStatusStore();
+    // These cases lock the macOS titlebar. Linux is asserted on its own.
+    document.documentElement.dataset.piguiPlatform = "darwin";
   });
 
   it("renders Empty Workspace State when the Project Registry is empty", async () => {
@@ -1186,7 +1188,7 @@ describe("AppFrame", () => {
 
   it("keeps titlebar controls on the native traffic-light center line", async () => {
     const { container } = renderAppFrame("/trajectory");
-    const mainSource = readFileSync(join(process.cwd(), "apps/desktop/electron/main.ts"), "utf8");
+    const mainSource = readFileSync(join(process.cwd(), "apps/desktop/electron/window-chrome.ts"), "utf8");
 
     expect(await screen.findByText("Main content")).toBeInTheDocument();
 
@@ -1742,13 +1744,41 @@ describe("AppFrame", () => {
 
   it("extends web content into the native macOS titlebar overlay", () => {
     const mainSource = readFileSync(join(process.cwd(), "apps/desktop/electron/main.ts"), "utf8");
+    const chromeSource = readFileSync(join(process.cwd(), "apps/desktop/electron/window-chrome.ts"), "utf8");
 
-    expect(mainSource).toContain('titleBarStyle: "hidden"');
-    expect(mainSource).toContain("trafficLightPosition: { x: 16, y: 13 }");
+    expect(mainSource).toContain("platformWindowChrome(process.platform)");
+    expect(chromeSource).toContain('titleBarStyle: "hidden"');
+    expect(chromeSource).toContain("trafficLightPosition: { x: 16, y: 13 }");
     expect(mainSource).toContain("width: 1280");
     expect(mainSource).toContain("height: 840");
     expect(mainSource).toContain("minWidth: 960");
     expect(mainSource).toContain("minHeight: 720");
+  });
+
+  it("sits the Linux header under the window frame with no caption gutter", async () => {
+    document.documentElement.dataset.piguiPlatform = "linux";
+    const user = userEvent.setup();
+    const { container } = renderAppFrame("/trajectory");
+
+    expect(await screen.findByText("Main content")).toBeInTheDocument();
+    const headerChrome = screen.getByTestId("header-chrome");
+
+    expect(within(headerChrome).queryByTestId("mac-traffic-space")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("linux-window-controls-space")).not.toBeInTheDocument();
+    expect(headerChrome).toHaveStyle({
+      "--pigui-chrome-safe-left": "40px",
+      "--pigui-chrome-safe-right": "0px",
+      "--pigui-traffic-width": "0px",
+    });
+    expect(container.querySelectorAll("[data-window-drag-region]")).toHaveLength(2);
+    expect(
+      readFileSync(join(process.cwd(), "apps/desktop/src/app/styles.css"), "utf8"),
+    ).toContain("right: var(--pigui-chrome-safe-right, 0px);");
+
+    const projectGroup = screen.getByTestId("sidebar-projects");
+    await user.click(within(projectGroup).getByRole("button", { name: "Project actions for Pig" }));
+    expect(screen.getByRole("menuitem", { name: "Show in Files" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
   });
 
   it("does not replace macOS titlebar gestures with React window API handlers", () => {

@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/github/v/release/BubblePtr/pace?display_name=tag" alt="Release"></a>
-  <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20arm64-black" alt="Platform: macOS arm64"></a>
+  <a href="https://github.com/BubblePtr/pace/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20arm64%20%7C%20Linux%20x64-black" alt="Platform: macOS arm64 and Linux x64"></a>
   <a href="https://github.com/BubblePtr/pace/actions"><img src="https://img.shields.io/github/actions/workflow/status/BubblePtr/pace/release-macos.yml?label=release" alt="Release workflow"></a>
 </p>
 
@@ -32,7 +32,13 @@ Pi is a coding agent that runs in the terminal, with a highly extensible system 
 
 ### Install
 
-**Prebuilt installers (recommended).** Signed and notarized installers for Apple Silicon Macs are available on [GitHub Releases](https://github.com/BubblePtr/pace/releases). Open the downloaded DMG and drag Pace into Applications. Subsequent updates are available in the app (ADR-0033).
+**Prebuilt installers (recommended).** Each [GitHub Release](https://github.com/BubblePtr/pace/releases) ships a signed and notarized DMG for Apple Silicon Macs, plus a Linux x64 AppImage and deb.
+
+- **macOS.** Open the DMG and drag Pace into Applications. Later updates install from the app (ADR-0033).
+- **Linux AppImage.** `chmod +x` the AppImage and run it. This is the build that receives in-app updates. If it fails to start because FUSE is missing, run it with `--appimage-extract-and-run`.
+- **Linux deb.** Install with `apt`. Deb builds do not auto-update; install the new package when you want to upgrade.
+
+Details: [`docs/release/linux.md`](docs/release/linux.md).
 
 **Run from source.** Requires Bun 1.3.x and Node 24:
 
@@ -43,7 +49,7 @@ bun install
 bun run dev
 ```
 
-**Requirements.** An Apple Silicon Mac running macOS 12 or later. The Pi runtime is bundled with the app (ADR-0031), so no separate `pi` install is needed. If Pi is already installed, Pace shares the sessions, auth configuration and extensions under `~/.pi/agent`. Linux AppImage and deb packaging scripts are available but have not shipped as official releases; Windows is not supported yet.
+**Requirements.** An Apple Silicon Mac running macOS 12 or later, or 64-bit Linux. The Pi runtime is bundled with the app (ADR-0031), so no separate `pi` install is needed. If Pi is already installed, Pace shares the sessions, auth configuration and extensions under `~/.pi/agent`. Windows and Intel Macs are not supported yet.
 
 ### Start your first session
 
@@ -55,7 +61,7 @@ bun run dev
 ## When Pace is not a fit
 
 - You use Pi in the terminal and do not need a graphical view of costs, chain of thought or tool calls.
-- You use Windows or an Intel Mac. Installers are currently available only for Apple Silicon Macs.
+- You use Windows or an Intel Mac. Installers are Apple Silicon Macs and 64-bit Linux.
 - You want a standalone agent client that does not depend on Pi. Pace does not implement an agent loop; Pi handles inference and context management.
 
 ## Design principles
@@ -235,7 +241,7 @@ bun run dist:mac               # signed + notarized DMG (needs Apple credentials
 bun run dist:linux             # AppImage + deb (x64)
 ```
 
-The signing, notarization and release pipeline is documented in [`docs/release/macos.md`](docs/release/macos.md).
+The signing, notarization and release pipeline is documented in [`docs/release/macos.md`](docs/release/macos.md). Linux AppImage and deb builds ship on the same tag: [`docs/release/linux.md`](docs/release/linux.md).
 
 Two dev-only tools help when working on the UI locally:
 
@@ -253,7 +259,7 @@ Two dev-only tools help when working on the UI locally:
 
 - [`docs/design/`](docs/design/): which tokens, which Astryx variants, which self-built components.
 
-- [`docs/release/macos.md`](docs/release/macos.md), [`docs/dogfooding.md`](docs/dogfooding.md): shipping and daily-driving Pace.
+- [`docs/release/macos.md`](docs/release/macos.md), [`docs/release/linux.md`](docs/release/linux.md), [`docs/dogfooding.md`](docs/dogfooding.md): shipping and daily-driving Pace.
 
 - [`docs/agents/`](docs/agents/): how issues, triage labels and domain docs are organized for both human and agent contributors.
 

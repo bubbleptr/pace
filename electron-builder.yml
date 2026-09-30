@@ -73,6 +73,9 @@ dmg:
       path: /Applications
 
 linux:
+  # Global forceCodeSigning stays on for macOS. Linux has no signing identity
+  # in CI; setting false here stops this platform from inheriting the global flag.
+  forceCodeSigning: false
   # Point at the icns so electron-builder derives the full hicolor set
   # (16→512); a single PNG would install only that one size.
   icon: build/icon.icns
