@@ -6,6 +6,8 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import type {
   ExecutionCheckoutGitClient,
+  McpAddServerInput,
+  McpExposure,
   ModelCatalogInvalidatedPayload,
   ProviderAuthId,
   PromptCommandCatalog,
@@ -34,6 +36,10 @@ import {
   createProviderAuthService,
   type ProviderAuthService,
 } from "./workspace/provider-auth";
+import {
+  createMcpServersService,
+  type McpServersService,
+} from "./workspace/mcp-servers";
 import { createModelCatalog, type ModelCatalog } from "./workspace/model-catalog";
 import { readSettingsPreferredModel } from "./workspace/pi-settings";
 import { createNodeExecutionCheckoutGitClient } from "./workspace/execution-checkout";
@@ -140,6 +146,7 @@ export type BackendServiceOptions = {
   piSessionListAll?: () => Promise<PiSessionListItem[]>;
   environmentPreflight?: EnvironmentPreflightReader;
   providerAuth?: ProviderAuthService;
+  mcpServers?: McpServersService;
   modelCatalog?: ModelCatalog;
   terminalManager?: TerminalManager;
   /** Fetch the signed-in accounts' model lists once at startup (the app sets this; tests do not). */
@@ -235,6 +242,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
       agentDir,
       runtime: getModelRuntime,
     });
+  const mcpServers = options.mcpServers ?? createMcpServersService({ agentDir });
   const piSessionListAll =
     options.piSessionListAll ??
     (async () => {
@@ -375,6 +383,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             staticPromptCommands,
             environmentPreflight,
             providerAuth,
+            mcpServers,
             piSessionListAll,
             runtimeGateway,
             runtimeDriver,
@@ -416,6 +425,7 @@ async function dispatchRequest(input: {
   staticPromptCommands: StaticPromptCommandsResolver;
   environmentPreflight: EnvironmentPreflightReader;
   providerAuth: ProviderAuthService;
+  mcpServers: McpServersService;
   piSessionListAll: () => Promise<PiSessionListItem[]>;
   runtimeGateway: RuntimeGatewayService;
   runtimeDriver: PiRuntimeDriver;
@@ -601,6 +611,28 @@ async function dispatchRequest(input: {
         requiredString(params.providerId, "providerId") as ProviderAuthId,
         optionalString(params.modelId),
       );
+    case "get_mcp_config":
+      return input.mcpServers.getConfig();
+    case "probe_mcp_servers":
+      return input.mcpServers.probe();
+    case "login_mcp_server":
+      return input.mcpServers.login(requiredString(params.name, "name"));
+    case "logout_mcp_server":
+      return input.mcpServers.logout(requiredString(params.name, "name"));
+    case "set_mcp_server_enabled":
+      return input.mcpServers.setEnabled(
+        requiredString(params.name, "name"),
+        requiredBoolean(params.enabled, "enabled"),
+      );
+    case "set_mcp_server_exposure":
+      return input.mcpServers.setExposure(
+        requiredString(params.name, "name"),
+        requiredMcpExposure(params.exposure),
+      );
+    case "add_mcp_server":
+      return input.mcpServers.add(mcpAddServerInput(params.input));
+    case "remove_mcp_server":
+      return input.mcpServers.remove(requiredString(params.name, "name"));
     case "list_available_model_controls":
       return input.modelCatalog.list();
     case "refresh_model_catalog":
@@ -1030,6 +1062,61 @@ function requiredString(value: unknown, name: string) {
   }
 
   return value;
+}
+
+function requiredBoolean(value: unknown, name: string) {
+  if (typeof value !== "boolean") {
+    throw new Error(`${name} must be a boolean`);
+  }
+
+  return value;
+}
+
+const MCP_EXPOSURES: readonly McpExposure[] = [
+  "codemode",
+  "codemode-deferred",
+  "deferred",
+  "direct",
+  "hidden",
+];
+
+function requiredMcpExposure(value: unknown): McpExposure {
+  if (typeof value !== "string" || !MCP_EXPOSURES.includes(value as McpExposure)) {
+    throw new Error(`exposure must be one of ${MCP_EXPOSURES.map((entry) => `"${entry}"`).join(", ")}`);
+  }
+
+  return value as McpExposure;
+}
+
+function mcpAddServerInput(value: unknown): McpAddServerInput {
+  const input = requiredRecord(value, "input");
+  const name = requiredString(input.name, "input.name");
+  const exposure =
+    input.exposure === undefined ? undefined : requiredMcpExposure(input.exposure);
+
+  if (input.kind === "http") {
+    return {
+      kind: "http",
+      name,
+      url: requiredString(input.url, "input.url"),
+      ...(exposure ? { exposure } : {}),
+    };
+  }
+
+  if (input.kind === "stdio") {
+    return {
+      kind: "stdio",
+      name,
+      command: requiredString(input.command, "input.command"),
+      args:
+        input.args === undefined
+          ? []
+          : requiredStringArray(input.args, "input.args"),
+      ...(exposure ? { exposure } : {}),
+    };
+  }
+
+  throw new Error('input.kind must be "stdio" or "http"');
 }
 
 function optionalString(value: unknown) {

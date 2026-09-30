@@ -209,6 +209,9 @@ const rendererBuild = {
 const coreAlias = {
   "@pace/core": resolve(__dirname, "../../packages/core/src/index.ts"),
   "@pace/backend": resolve(__dirname, "../../packages/backend/src/index.ts"),
+  // Not in Pi's package exports map, so bundled by file path like the codemode
+  // worker entry above; the alias pins the backend to the installed Pi version.
+  "@pace/pi-mcp": join(piPackageDirectory, "dist/extensions/mcp"),
   "@": resolve(__dirname, "src"),
 };
 

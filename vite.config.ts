@@ -10,6 +10,12 @@ export default defineConfig({
     alias: {
       "@pace/core": resolve(__dirname, "packages/core/src/index.ts"),
       "@pace/backend": resolve(__dirname, "packages/backend/src/index.ts"),
+      // Not in Pi's package exports map, so resolved by file path; the alias
+      // pins the backend to the installed Pi version (contract-tested).
+      "@pace/pi-mcp": resolve(
+        __dirname,
+        "packages/backend/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp",
+      ),
       "@": resolve(__dirname, "apps/desktop/src"),
     },
   },

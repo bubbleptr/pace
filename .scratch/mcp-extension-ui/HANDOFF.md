@@ -1,7 +1,7 @@
 # Handoff：MCP 与扩展交互在 Pace 中的呈现
 
 - 日期：2026-09-30
-- 状态：待讨论。本文是交接材料，不是决策记录。
+- 状态：已决（2026-10-01）。不做 `ctx.ui` 桥，MCP 管理放进设置页，见 [mcp-settings/PRD.md](../mcp-settings/PRD.md)；会话内 notify 暂缓，见 #416。下文保留为当时的交接材料。§3.3 “不能依赖 `pi` CLI” 已被推翻：`pi mcp` 的核心函数 `runMcpCommand` 可以打包进 Pace。
 - 关联：PR #412（Pi 0.99.1，加载内置 codemode / tool_search / MCP，[ADR-0046](../../docs/adr/0046-load-pi-builtin-extensions.md)）、PR #414（Nested Tool Execution 呈现）、[ADR-0018](../../docs/adr/0018-runtime-gateway-api-and-pi-drivers.md)、[ADR-0031](../../docs/adr/0031-bundled-pi-runtime-and-extension-compatibility.md)、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)（草案）、[extension-host-contract/HANDOFF.md](../extension-host-contract/HANDOFF.md)
 - 目的：Pi 0.99 适配的前两步已经完成，第三步有设计取舍。本文把已查明的事实和待决问题交给新会话，避免重查。
 

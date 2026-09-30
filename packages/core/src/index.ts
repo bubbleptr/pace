@@ -173,3 +173,14 @@ export {
   type BrowserAnnotationPayload,
   type BrowserAnnotationViewport,
 } from "./browser-annotation";
+
+export type {
+  McpExposure,
+  McpServerState,
+  McpServerConfigItem,
+  McpConfigReport,
+  McpServerProbe,
+  McpProbeReport,
+  McpActionResult,
+  McpAddServerInput,
+} from "./mcp-servers";
