@@ -44,6 +44,8 @@ import { installAppMenu } from "./app-menu";
 import { navigateAppWindow } from "./app-navigation";
 import { createAppUpdater, type AppUpdater, type AutoUpdaterLike } from "./updater";
 
+declare const __PACE_APP_VERSION__: string;
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -745,6 +747,13 @@ ipcMain.handle(
 
 // Must run before any session/profile access, so it sits ahead of whenReady.
 app.setName("Pace");
+// Linux only keeps Electron's own version while the process name is still
+// "Electron". After setName, with no override, getVersion() is "0.0", and
+// electron-updater throws before createMainWindow(). macOS already reports
+// the packaged version and must not be overwritten.
+if (process.platform === "linux") {
+  app.setVersion(__PACE_APP_VERSION__);
+}
 const userDataPath = resolveUserDataPath({
   appDataPath: app.getPath("appData"),
   isPackaged: app.isPackaged,

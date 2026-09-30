@@ -88,12 +88,6 @@ if (process.platform === "linux" && !display && !xvfb) {
   );
 }
 
-if (process.platform === "linux") {
-  warnings.push(
-    "On Linux, app.setName(\"Pace\") makes app.getVersion() return \"0.0\" until the main process calls app.setVersion (electron/shell/common/application_info_linux.cc). electron-updater throws ERR_UPDATER_INVALID_VERSION inside whenReady, before createMainWindow, so launchPace times out in firstWindow. A desktop file does not supply the version. macOS does not use this fallback.",
-  );
-}
-
 const report = {
   ok: problems.length === 0,
   repoRoot,

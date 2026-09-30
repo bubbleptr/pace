@@ -90,8 +90,8 @@ if (!instance.closed && typeof instance.pid === "number") {
 if (isDisposableRoot(instance.testRoot) && existsSync(instance.testRoot)) {
   rmSync(instance.testRoot, { recursive: true, force: true });
   process.stdout.write(`removed ${instance.testRoot}\n`);
-} else if (instance.testRoot) {
-  process.stdout.write(`left ${instance.testRoot} in place (not a pace-e2e temp root, or already gone)\n`);
+} else if (instance.testRoot && existsSync(instance.testRoot)) {
+  process.stdout.write(`left ${instance.testRoot} in place (not a pace-e2e temp root)\n`);
 }
 
 const closed = {

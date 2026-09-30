@@ -36,7 +36,7 @@ Preconditions:
 
 ## Gotchas
 
-- On Linux, run under Xvfb with `--ozone-platform=x11`. A tiling compositor puts the window back under 1280px and the dock does not stay beside Chat. `resizeWindow` waits until `innerWidth` is within 32px of the request. Xvfb does not get past the current Linux startup failure: `app.getVersion()` is `0.0` after `app.setName("Pace")`, electron-updater throws, and no window opens. See `../SKILL.md`.
+- On Linux, run under Xvfb with `--ozone-platform=x11`. A tiling compositor puts the window back under 1280px and the dock does not stay beside Chat. `resizeWindow` waits until `innerWidth` is within 32px of the request.
 - Narrow widths truncate file-name headers to zero width. Assert the exact diff line, or `getByText("src/app.ts").filter({ visible: true })`, not a zero-width header.
 - Changes reads the checkout from disk. Appending lines after launch is visible only after the panel refreshes; the seeded diff is already on disk before launch, which is what this recipe uses.
 - `testApp.close()` deletes the checkout. Copy the file into the evidence directory first.

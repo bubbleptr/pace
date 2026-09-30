@@ -41,9 +41,7 @@ env -u WAYLAND_DISPLAY PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11 \
   ./node_modules/.bin/playwright test --config .cursor/skills/verify-pace/drive/playwright.config.ts
 ```
 
-`ELECTRON_OZONE_PLATFORM_HINT=x11` does not work. A tiling Wayland compositor overrides `setSize` after a few hundred milliseconds, so Session dock proofs on Linux run under Xvfb. macOS omits `xvfb-run` and the ozone switch. Packaged binaries are `dist/mac-arm64/Pace.app/Contents/MacOS/Pace` and `dist/linux-unpacked/pace`; pass them as `PACE_E2E_EXECUTABLE`. Official installers are Apple Silicon only.
-
-Linux window blocker, confirmed against this repo's unpackaged build: `app.setName("Pace")` in `apps/desktop/electron/main.ts` runs before `createMainWindow()`. On Linux, Electron's `GetApplicationVersion` (`shell/common/application_info_linux.cc`) returns the Electron version only while the name is still `Electron`. After `setName`, with no `app.setVersion`, the version is the fallback string `0.0`. `electron-updater` throws `ERR_UPDATER_INVALID_VERSION` when `autoUpdater` is first read, still inside `whenReady`, so the BrowserWindow is never created and `launchPace` times out in `firstWindow`. A `.desktop` file does not provide that version. macOS does not use this fallback. Doctor reports it as a warning. Do not treat an Xvfb or sandbox retry as a fix.
+`ELECTRON_OZONE_PLATFORM_HINT=x11` does not work. A tiling Wayland compositor overrides `setSize` after a few hundred milliseconds, so Session dock proofs on Linux run under Xvfb. macOS omits `xvfb-run` and the ozone switch. Packaged binaries are `dist/mac-arm64/Pace.app/Contents/MacOS/Pace` and `dist/linux-unpacked/pace`; pass them as `PACE_E2E_EXECUTABLE`. Official installers are Apple Silicon only. On Linux the main process calls `app.setVersion` with the desktop package version after `app.setName("Pace")`, so electron-updater does not see version `0.0` and the window can open.
 
 Teardown of one drive is `testApp.close()` from the fixture, which closes Electron and deletes that temp root. See Cleanup before killing anything by hand.
 

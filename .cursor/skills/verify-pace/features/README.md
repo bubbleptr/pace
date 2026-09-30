@@ -7,7 +7,7 @@ This directory is the maintained source for verifying Pace's user-facing behavio
 - Doctor exits 0: `node .cursor/skills/verify-pace/scripts/doctor.mjs`.
 - The build artifact is `apps/desktop/out/main/main.js`. Do not drive `bun run dev`.
 - Every drive calls `launchPace`, which uses a fresh `/tmp/pace-e2e-*` data directory, Pi agent directory, and `--user-data-dir`. Never point `PACE_DATA_DIR` at `~/.pace` or `~/.pace-dev`.
-- On Linux, run under Xvfb with `PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11` and `WAYLAND_DISPLAY` unset. See `e2e/README.md`. That display setup is not sufficient today: after `app.setName("Pace")`, Linux `app.getVersion()` is `0.0`, electron-updater throws before the window exists, and `firstWindow` times out. See the Launch section of `../SKILL.md`.
+- On Linux, run under Xvfb with `PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11` and `WAYLAND_DISPLAY` unset. See `e2e/README.md`.
 - Resize to 1440×900 before Session dock assertions.
 - Do not send a prompt to a model. Seeded auth is the placeholder `pace-e2e-placeholder`.
 - Evidence goes to `PACE_VERIFY_EVIDENCE`, outside the temp root. Cleanup must leave it in place.

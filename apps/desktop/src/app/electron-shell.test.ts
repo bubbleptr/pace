@@ -139,6 +139,18 @@ describe("Electron shell", () => {
     expect(main).toContain("killBackendForEndToEndTest");
   });
 
+  it("sets the package version on Linux before electron-updater reads it", () => {
+    const main = readProjectFile("apps/desktop/electron/main.ts");
+    const setName = main.indexOf('app.setName("Pace")');
+    const setVersion = main.indexOf("app.setVersion(__PACE_APP_VERSION__)");
+    const readUpdater = main.indexOf("autoUpdater: autoUpdater");
+
+    expect(setName).toBeGreaterThan(-1);
+    expect(setVersion).toBeGreaterThan(setName);
+    expect(readUpdater).toBeGreaterThan(setVersion);
+    expect(main).toContain('process.platform === "linux"');
+  });
+
   it("navigates the renderer through pigui:navigate instead of executeJavaScript", () => {
     const main = readProjectFile("apps/desktop/electron/main.ts");
     const navigation = readProjectFile("apps/desktop/electron/app-navigation.ts");
