@@ -101,8 +101,8 @@ export type PublicPiSdkAgentSession = {
   };
   setSessionName?(name: string): void;
   prompt(text: string, options?: { images?: ReturnType<typeof toPiImageContent>[] }): Promise<void>;
-  followUp?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
-  steer?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
+  followUp?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<unknown>;
+  steer?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<unknown>;
   abort(): Promise<void>;
   dispose(): void;
   extensionRunner?: {
