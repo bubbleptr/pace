@@ -49,6 +49,21 @@ macOS 构建机器固定为 `macos-15`（GitHub 标准 ARM64 runner），并在�
 
 首版从 `0.0.1` 开始，标签为 `v0.0.1`。版本遵循 [SemVer 2.0.0](https://semver.org/lang/zh-CN/)：兼容修复提升 PATCH，兼容的新功能提升 MINOR，不兼容的公共接口变更提升 MAJOR。`0.y.z` 属于初始开发阶段，尚不保证接口稳定。版本号由维护者根据变更内容决定，流水线不会在每次合入时自动升版。
 
+#### 怎么选版本号
+
+看自上一个 tag 以来合入 `main` 的全部变更，按其中级别最高的一项决定。`v0.0.1` 至 `v0.0.16` 不论内容一律只升 PATCH，不符合下面的规则；从 `v0.1.0` 起按规则执行。
+
+| 本次包含 | `0.y.z` 阶段 | `1.0.0` 之后 |
+|---|---|---|
+| 不兼容变更：journal / 投影格式需要迁移或重建、配置或数据目录变更、移除功能、平台或最低系统要求收紧 | MINOR（`0.1.3` → `0.2.0`） | MAJOR |
+| 用户可感知的新功能：新分区、新面板、新平台、新安装包、内置 Pi 升级带来新能力 | MINOR（`0.1.3` → `0.2.0`） | MINOR |
+| 只有修复、性能、样式与文案打磨、内置 Pi 的兼容性补丁升级 | PATCH（`0.1.3` → `0.1.4`） | PATCH |
+
+- 提交前缀只是线索：一条用户可感知的 `feat` 就足以升 MINOR；只影响内部的 `feat(backend)` 不算。`refactor`、`test`、`docs`、`chore` 不会单独触发发版。
+- 提升 MINOR 时 PATCH 归零。不要为了“看起来改动小”而降级成 PATCH。
+- `0.y` 阶段 MINOR 同时承担“可能不兼容”的含义，README 已经说明 journal 与投影格式可能在 minor 版本之间变化；发布说明里要写清楚需要用户做什么。
+- `1.0.0` 在 journal / 投影格式与升级路径可以承诺稳定时发布，届时单独决定。
+
 1. 在功能分支中同步修改根 `package.json` 与 `apps/desktop/package.json` 的 `version`，同步 `bun.lock` 中桌面 workspace 的版本，并运行 `bun install --frozen-lockfile` 验证后一同提交。两处清单版本都必须与 tag 去掉 `v` 后完全一致；其他内部 workspace 包无需同步升级。
 2. 通过 PR 合并版本变更及 workflow。普通 PR 不自动执行 macOS 打包或 E2E；需要提前验证时，在 Actions 手动运行 `Validate macOS ARM64 (manual)`。下一步的标签发版流程会执行完整测试。
 3. 从最新 `main` 创建并推送对应 tag。例如两处版本均为 `0.0.1` 时：
