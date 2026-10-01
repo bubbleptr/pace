@@ -72,6 +72,14 @@ dmg:
       type: link
       path: /Applications
 
+# The global artifactName's ${arch} expands to x86_64 for AppImage and amd64
+# for deb (builder-util getArtifactArchName). Release scripts, docs and the
+# updater feed use -x64; only x64 is built, so pin the name per target.
+appImage:
+  artifactName: ${productName}-${version}-x64.${ext}
+deb:
+  artifactName: ${productName}-${version}-x64.${ext}
+
 linux:
   # Global forceCodeSigning stays on for macOS. Linux has no signing identity
   # in CI; setting false here stops this platform from inheriting the global flag.

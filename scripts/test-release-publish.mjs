@@ -24,8 +24,9 @@ const releaseAssets = (version) => {
       `${zipArtifact}.blockmap`,
       "latest-mac.yml",
       "SHA256SUMS.txt",
+      // The AppImage blockmap is embedded in the AppImage itself
+      // (latest-linux.yml's blockMapSize); no sidecar is produced.
       appImage,
-      `${appImage}.blockmap`,
       "latest-linux.yml",
       deb,
       "SHA256SUMS-linux.txt",
@@ -109,6 +110,9 @@ test("a stable release is published only after every required asset reaches its 
   assert.ok(edit.includes("--prerelease=false"));
   assert.ok(edit.includes("--latest=true"));
   assert.ok(calls.indexOf(edit) > calls.indexOf(create));
+  // The AppImage blockmap is embedded; nothing may upload a sidecar.
+  const uploads = calls.filter(args => args[1] === "upload").flat();
+  assert.ok(!uploads.some(arg => arg.endsWith(".AppImage.blockmap")));
 });
 
 test("a prerelease is published without becoming the latest stable release", t => {

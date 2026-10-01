@@ -12,8 +12,9 @@ assets=(
   "dist/${zip_name}.blockmap"
   "dist/latest-mac.yml"
   "dist/SHA256SUMS.txt"
+  # The AppImage blockmap is embedded in the file (latest-linux.yml's
+  # blockMapSize); there is no .blockmap sidecar to ship.
   "dist/$APPIMAGE_NAME"
-  "dist/${APPIMAGE_NAME}.blockmap"
   "dist/latest-linux.yml"
   "dist/$DEB_NAME"
   "dist/SHA256SUMS-linux.txt"
