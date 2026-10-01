@@ -170,8 +170,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
-          bunx playwright install chromium
-          sudo bunx playwright install-deps chromium
+          # sudo resets PATH and cannot find bunx; Playwright elevates the apt
+          # step with sudo itself when it is not running as root.
+          bunx playwright install --with-deps chromium
       # linux-unpacked is the packaged app (isPackaged). electron-updater throws
       # before the window exists when Linux still reports version 0.0, so a
       # window that opens is the setVersion check. --ozone-platform=x11 is only
