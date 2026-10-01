@@ -29,6 +29,8 @@ export type McpServerConfigItem = {
   transport: string;
   /** Pi's OAuth rule: HTTP without an Authorization header. */
   usesOAuth: boolean;
+  /** OAuth tokens for this server's URL exist in Pi's mcp-auth.json. */
+  hasStoredCredentials: boolean;
 };
 
 export type McpConfigReport = {

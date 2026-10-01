@@ -217,12 +217,7 @@ describe("mcp-servers service", () => {
       mcpServers: {
         "test-stdio": {
           command: process.execPath,
-          args: [
-            join(
-              process.cwd(),
-              "packages/backend/src/workspace/fixtures/mcp-test-server.mjs",
-            ),
-          ],
+          args: [join(import.meta.dirname, "fixtures/mcp-test-server.mjs")],
         },
       },
     });
@@ -311,6 +306,54 @@ describe("mcp-servers service", () => {
     } finally {
       await new Promise((resolve) => httpServer.close(resolve));
     }
+  });
+
+  it("reports whether an OAuth server has stored credentials", async () => {
+    const port = 8999;
+    await writeMcpJson(agentDir, {
+      mcpServers: {
+        "signed-in": { url: `http://127.0.0.1:${port}/mcp` },
+        unsigned: { url: `http://127.0.0.1:${port}/other` },
+      },
+    });
+    // Pi keys mcp-auth.json by the normalized server URL string.
+    await writeFile(
+      join(agentDir, "mcp-auth.json"),
+      JSON.stringify({
+        [`http://127.0.0.1:${port}/mcp`]: {
+          tokens: { access_token: "t", token_type: "Bearer" },
+        },
+      }),
+    );
+    const service = createMcpServersService({ agentDir });
+
+    const before = await service.getConfig();
+    expect(
+      before.servers.find((entry) => entry.name === "signed-in")
+        ?.hasStoredCredentials,
+    ).toBe(true);
+    expect(
+      before.servers.find((entry) => entry.name === "unsigned")
+        ?.hasStoredCredentials,
+    ).toBe(false);
+
+    const logout = await service.logout("signed-in");
+    expect(logout.ok).toBe(true);
+    const after = await service.getConfig();
+    expect(
+      after.servers.find((entry) => entry.name === "signed-in")
+        ?.hasStoredCredentials,
+    ).toBe(false);
+  });
+
+  it("reports no stored credentials for stdio servers", async () => {
+    await writeMcpJson(agentDir, {
+      mcpServers: {
+        "stdio-only": { command: "any-command" },
+      },
+    });
+    const config = await createMcpServersService({ agentDir }).getConfig();
+    expect(config.servers[0]?.hasStoredCredentials).toBe(false);
   });
 
   it("fails logout for a server that does not use OAuth", async () => {

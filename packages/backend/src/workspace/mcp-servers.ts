@@ -11,6 +11,7 @@ import {
   updateMcpServerConfig,
   type McpServerEntry,
 } from "@pace/pi-mcp/config.js";
+import { McpOAuthCredentialStore } from "@pace/pi-mcp/oauth.js";
 import type { McpExposure as PiMcpExposure } from "@earendil-works/pi-coding-agent";
 import type {
   McpActionResult,
@@ -92,9 +93,13 @@ function requiredName(name: string) {
   }
 }
 
-function toConfigItem(entry: McpServerEntry): McpServerConfigItem {
+function toConfigItem(
+  entry: McpServerEntry,
+  credentials: McpOAuthCredentialStore,
+): McpServerConfigItem {
   const { config } = entry;
   const http = "url" in config;
+  const usesOAuth = http && !hasAuthorizationHeader(config.headers);
   return {
     name: entry.name,
     source: entry.source,
@@ -104,7 +109,11 @@ function toConfigItem(entry: McpServerEntry): McpServerConfigItem {
     transport: http
       ? config.url
       : [config.command, ...(config.args ?? [])].join(" "),
-    usesOAuth: http && !hasAuthorizationHeader(config.headers),
+    usesOAuth,
+    // Read through Pi's own store so "signed in" matches what `pi mcp
+    // logout` would remove; keyed by the normalized URL.
+    hasStoredCredentials:
+      usesOAuth && credentials.tokens(config.url) !== undefined,
   };
 }
 
@@ -143,11 +152,14 @@ export function createMcpServersService(
       cwd: commandBase.cwd,
       projectTrusted: false,
     });
+    // The default store resolves <agentDir>/mcp-auth.json via Pi's getAgentDir(),
+    // the same store runMcpCommand's commands read.
+    const credentials = new McpOAuthCredentialStore();
     return {
       configPath,
       servers: loaded.servers
         .filter((entry) => entry.scope === "global" && entry.source === configPath)
-        .map(toConfigItem),
+        .map((entry) => toConfigItem(entry, credentials)),
       errors: loaded.errors,
     };
   }
