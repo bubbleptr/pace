@@ -61,6 +61,7 @@ const browserMcpServers: BrowserMcpServer[] = [
     kind: "stdio",
     transport: "npx -y @modelcontextprotocol/server-filesystem ~/Documents",
     usesOAuth: false,
+    hasStoredCredentials: false,
     state: "connected",
     tools: ["read_file", "write_file", "list_directory", "search_files"],
   },
@@ -72,8 +73,35 @@ const browserMcpServers: BrowserMcpServer[] = [
     kind: "http",
     transport: "https://mcp.sentry.dev/mcp",
     usesOAuth: true,
+    hasStoredCredentials: false,
     state: "needs-auth",
     tools: [],
+  },
+  {
+    name: "linear",
+    source: browserMcpConfigPath,
+    enabled: true,
+    exposure: "codemode",
+    kind: "http",
+    transport: "https://mcp.linear.app/mcp",
+    usesOAuth: true,
+    // Signed-in OAuth server: connected and able to sign out.
+    hasStoredCredentials: true,
+    state: "connected",
+    tools: ["search_issues", "get_issue", "list_projects"],
+  },
+  {
+    name: "internal-api",
+    source: browserMcpConfigPath,
+    enabled: true,
+    exposure: "deferred",
+    kind: "http",
+    transport: "http://localhost:8321/mcp",
+    usesOAuth: true,
+    // OAuth-shaped by config but never signed in: connected, no Sign out.
+    hasStoredCredentials: false,
+    state: "connected",
+    tools: ["get_status"],
   },
   {
     name: "legacy-db",
@@ -83,6 +111,7 @@ const browserMcpServers: BrowserMcpServer[] = [
     kind: "stdio",
     transport: "node scripts/db-mcp-server.js",
     usesOAuth: false,
+    hasStoredCredentials: false,
     state: "failed",
     tools: [],
     error: 'MCP server "legacy-db" failed to connect: spawn node ENOENT',
@@ -95,6 +124,7 @@ const browserMcpServers: BrowserMcpServer[] = [
     kind: "stdio",
     transport: "npx -y @playwright/mcp@latest",
     usesOAuth: false,
+    hasStoredCredentials: false,
     state: "connected",
     tools: ["browser_navigate", "browser_click", "browser_snapshot"],
   },
@@ -441,6 +471,7 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
         } as T);
       }
       server.state = "connected";
+      server.hasStoredCredentials = true;
       if (server.tools.length === 0) {
         server.tools = ["search_issues", "get_issue", "list_projects"];
       }
@@ -457,6 +488,14 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
           message: `MCP server "${args?.name}" does not use OAuth.`,
         } as T);
       }
+      // Pi's logout reports "No stored credentials" when nothing was stored.
+      if (!server.hasStoredCredentials) {
+        return Promise.resolve({
+          ok: false,
+          message: `No stored credentials for MCP server "${server.name}".`,
+        } as T);
+      }
+      server.hasStoredCredentials = false;
       server.state = "needs-auth";
       server.tools = [];
       return Promise.resolve({
@@ -494,6 +533,7 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
         transport,
         // No headers can be entered in this form, so HTTP adds are OAuth-able.
         usesOAuth: input.kind === "http",
+        hasStoredCredentials: false,
         state: "connected",
         tools: [],
       });

@@ -198,6 +198,9 @@ function McpServerRow({
     onMutate: () => setRowError(null),
     onSuccess: (result) => {
       if (result.ok) {
+        // Stored credentials changed, so the config (not just the probe)
+        // decides which OAuth button the row shows next.
+        void queryClient.invalidateQueries({ queryKey: MCP_CONFIG_KEY });
         void queryClient.invalidateQueries({ queryKey: MCP_PROBE_KEY });
       } else {
         setRowError(result.message || "Sign-in failed.");
@@ -211,6 +214,7 @@ function McpServerRow({
     onMutate: () => setRowError(null),
     onSuccess: (result) => {
       if (result.ok) {
+        void queryClient.invalidateQueries({ queryKey: MCP_CONFIG_KEY });
         void queryClient.invalidateQueries({ queryKey: MCP_PROBE_KEY });
       } else {
         setRowError(result.message || "Sign-out failed.");
@@ -238,7 +242,11 @@ function McpServerRow({
   const controlsBusy = enabledMutation.isPending || exposureMutation.isPending;
   const oauthBusy = signInMutation.isPending || signOutMutation.isPending;
   const showSignIn = server.usesOAuth && probe?.state === "needs-auth";
-  const showSignOut = server.usesOAuth && probe?.state === "connected";
+  // usesOAuth only describes the config shape (HTTP without an Authorization
+  // header); sign-out requires actual stored credentials. When sign-in applies,
+  // it takes precedence over offering sign-out for a stale credential.
+  const showSignOut =
+    server.usesOAuth && server.hasStoredCredentials && !showSignIn;
 
   return (
     <>

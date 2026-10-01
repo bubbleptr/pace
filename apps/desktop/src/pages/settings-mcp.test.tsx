@@ -22,6 +22,7 @@ const mcpConfig: McpConfigReport = {
       kind: "stdio",
       transport: "npx -y @modelcontextprotocol/server-filesystem .",
       usesOAuth: false,
+      hasStoredCredentials: false,
     },
     {
       name: "sentry",
@@ -31,6 +32,7 @@ const mcpConfig: McpConfigReport = {
       kind: "http",
       transport: "https://mcp.sentry.dev/mcp",
       usesOAuth: true,
+      hasStoredCredentials: false,
     },
     {
       name: "legacy-db",
@@ -40,6 +42,7 @@ const mcpConfig: McpConfigReport = {
       kind: "stdio",
       transport: "node db-server.js",
       usesOAuth: false,
+      hasStoredCredentials: false,
     },
     {
       name: "playwright",
@@ -49,6 +52,7 @@ const mcpConfig: McpConfigReport = {
       kind: "stdio",
       transport: "npx -y @playwright/mcp",
       usesOAuth: false,
+      hasStoredCredentials: false,
     },
   ],
 };
@@ -319,6 +323,46 @@ describe("Settings — MCP servers", () => {
     ).toHaveTextContent('already exists');
     expect(
       screen.getByRole("dialog", { name: "Add server" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Sign out only when credentials are stored", async () => {
+    const connectedProbe: McpProbeReport = {
+      errors: [],
+      servers: mcpProbe.servers.map((server) =>
+        server.name === "sentry"
+          ? { ...server, state: "connected" as const }
+          : server,
+      ),
+    };
+    const configWith = (hasStoredCredentials: boolean): McpConfigReport => ({
+      ...mcpConfig,
+      servers: mcpConfig.servers.map((server) =>
+        server.name === "sentry"
+          ? { ...server, hasStoredCredentials }
+          : server,
+      ),
+    });
+
+    // A connected OAuth-shaped server without stored credentials cannot sign out.
+    const first = renderMcpSection({
+      config: configWith(false),
+      probe: connectedProbe,
+    });
+    let sentry = await screen.findByTestId("mcp-server-sentry");
+    await within(sentry).findByText("Connected");
+    expect(
+      within(sentry).queryByRole("button", { name: "Sign out" }),
+    ).not.toBeInTheDocument();
+    first.unmount();
+
+    renderMcpSection({
+      config: configWith(true),
+      probe: connectedProbe,
+    });
+    sentry = await screen.findByTestId("mcp-server-sentry");
+    expect(
+      await within(sentry).findByRole("button", { name: "Sign out" }),
     ).toBeInTheDocument();
   });
 
