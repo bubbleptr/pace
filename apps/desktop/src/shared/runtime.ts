@@ -363,7 +363,8 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
             id: "openai",
             label: "OpenAI",
             supportsApiKey: true,
-            supportsOAuth: false,
+            // Pi 0.99 moved ChatGPT subscription OAuth onto `openai`.
+            supportsOAuth: true,
             mode: "api_key",
             configured: true,
             keyHint: "…dev1",

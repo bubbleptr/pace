@@ -765,6 +765,51 @@ describe("Settings — changelog", () => {
   });
 });
 
+describe("Settings — subscription providers", () => {
+  it("shows one ChatGPT login and keeps the legacy codex card only when signed in", async () => {
+    const authStatus = (codexSignedIn: boolean): typeof providerAuthStatus => ({
+      ...providerAuthStatus,
+      providers: [
+        {
+          id: "openai",
+          label: "OpenAI",
+          supportsApiKey: true,
+          supportsOAuth: true,
+          mode: "none",
+          configured: false,
+        },
+        {
+          id: "openai-codex",
+          label: "ChatGPT / Codex",
+          supportsApiKey: true,
+          supportsOAuth: true,
+          mode: codexSignedIn ? "oauth" : "none",
+          configured: codexSignedIn,
+        },
+        ...providerAuthStatus.providers,
+      ],
+    });
+
+    const first = renderSettings("/usage?settings=providers", disabledUpdateStatus, {
+      authStatus: authStatus(false),
+    });
+    expect(
+      await screen.findByTestId("provider-subscription-openai"),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId("provider-subscription-openai-codex"),
+    ).not.toBeInTheDocument();
+    first.unmount();
+
+    renderSettings("/usage?settings=providers", disabledUpdateStatus, {
+      authStatus: authStatus(true),
+    });
+    expect(
+      await screen.findByTestId("provider-subscription-openai-codex"),
+    ).toBeVisible();
+  });
+});
+
 describe("Settings — provider connection test", () => {
   it("offers Check only for configured providers and shows a single status line", async () => {
     const user = userEvent.setup();

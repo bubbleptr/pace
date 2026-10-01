@@ -32,11 +32,33 @@ export const PROVIDER_DISPLAY_OVERRIDES: Readonly<Record<string, string>> = {
   xai: "Grok (xAI)",
 };
 
-export const FEATURED_PROVIDER_ORDER: readonly string[] = [
+// Pi 0.99 moved ChatGPT subscription login onto `openai` ("Sign in with
+// ChatGPT") and marks `openai-codex` as legacy. The codex card only stays
+// for users already signed in through it; everyone else gets the `openai`
+// entry so the Subscription tab shows one ChatGPT login, not two.
+export const LEGACY_SUBSCRIPTION_PROVIDERS: ReadonlySet<string> = new Set([
   "openai-codex",
+]);
+
+/** Whether the Subscription tab offers this provider's OAuth login. */
+export function showsSubscriptionCard(
+  item: Pick<
+    ProviderAuthStatusItem,
+    "id" | "supportsOAuth" | "configured" | "mode"
+  >,
+): boolean {
+  return (
+    item.supportsOAuth &&
+    (!LEGACY_SUBSCRIPTION_PROVIDERS.has(item.id) ||
+      (item.configured && item.mode === "oauth"))
+  );
+}
+
+export const FEATURED_PROVIDER_ORDER: readonly string[] = [
+  "openai",
   "anthropic",
   "radius",
-  "openai",
+  "openai-codex",
   "deepseek",
   "xai",
   "google",

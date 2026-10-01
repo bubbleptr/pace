@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyProviderFailure,
   describeProviderFailure,
+  showsSubscriptionCard,
   sortProvidersForDisplay,
 } from "./provider-auth";
 
@@ -24,6 +25,42 @@ describe("sortProvidersForDisplay", () => {
       "cerebras",
       "together",
     ]);
+  });
+});
+
+describe("showsSubscriptionCard", () => {
+  const codex = { id: "openai-codex", supportsOAuth: true };
+
+  it("shows the legacy codex card only for an existing OAuth sign-in", () => {
+    expect(
+      showsSubscriptionCard({ ...codex, configured: false, mode: "none" }),
+    ).toBe(false);
+    expect(
+      showsSubscriptionCard({ ...codex, configured: true, mode: "oauth" }),
+    ).toBe(true);
+    // Signed in with an API key is not the subscription flow the card offers.
+    expect(
+      showsSubscriptionCard({ ...codex, configured: true, mode: "api_key" }),
+    ).toBe(false);
+  });
+
+  it("shows current OAuth providers regardless of sign-in state", () => {
+    expect(
+      showsSubscriptionCard({
+        id: "openai",
+        supportsOAuth: true,
+        configured: false,
+        mode: "none",
+      }),
+    ).toBe(true);
+    expect(
+      showsSubscriptionCard({
+        id: "deepseek",
+        supportsOAuth: false,
+        configured: false,
+        mode: "none",
+      }),
+    ).toBe(false);
   });
 });
 

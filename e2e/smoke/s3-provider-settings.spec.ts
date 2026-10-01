@@ -71,16 +71,18 @@ test.describe("S3: Provider Settings (DF-002)", () => {
         testApp.window.getByTestId("provider-api-key-openai-codex"),
       ).toHaveCount(0);
 
-      // Subscription tab: ChatGPT/Codex + Anthropic + Grok (xAI)
+      // Subscription tab: OpenAI (ChatGPT subscription since Pi 0.99) +
+      // Anthropic + Grok (xAI). The legacy openai-codex card only appears
+      // for an existing codex OAuth sign-in; nothing is seeded here.
       await settingsTab(testApp.window, "Subscription").click();
-      for (const provider of ["openai-codex", "anthropic", "xai"]) {
+      for (const provider of ["openai", "anthropic", "xai"]) {
         const card = testApp.window.getByTestId(`provider-subscription-${provider}`);
         await expect(card).toBeVisible();
         await expect(card.getByTestId(`provider-icon-${provider}`)).toBeVisible();
       }
-      // OpenAI API key and DeepSeek have no subscription card
+      // The legacy codex provider and DeepSeek have no subscription card
       await expect(
-        testApp.window.getByTestId("provider-subscription-openai"),
+        testApp.window.getByTestId("provider-subscription-openai-codex"),
       ).toHaveCount(0);
       await expect(
         testApp.window.getByTestId("provider-subscription-deepseek"),
