@@ -198,14 +198,13 @@ jobs:
         env:
           APPIMAGE_NAME: ${{ steps.preflight.outputs.appImage }}
           DEB_NAME: ${{ steps.preflight.outputs.deb }}
-        run: sha256sum "$APPIMAGE_NAME" "${APPIMAGE_NAME}.blockmap" latest-linux.yml "$DEB_NAME" > SHA256SUMS-linux.txt
+        run: sha256sum "$APPIMAGE_NAME" latest-linux.yml "$DEB_NAME" > SHA256SUMS-linux.txt
       - name: Upload verified release assets
         uses: actions/upload-artifact@v7
         with:
           name: linux-x64-release
           path: |
             dist/${{ steps.preflight.outputs.appImage }}
-            dist/${{ steps.preflight.outputs.appImage }}.blockmap
             dist/latest-linux.yml
             dist/${{ steps.preflight.outputs.deb }}
             dist/SHA256SUMS-linux.txt

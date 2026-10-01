@@ -7,10 +7,11 @@ Pace 的 Linux 发行版是 **x64 AppImage** 与 **deb**，与 macOS ARM64 打�
 | 文件 | 用途 |
 | --- | --- |
 | `Pace-<version>-x64.AppImage` | 首次安装，也是应用内更新的安装包 |
-| `Pace-<version>-x64.AppImage.blockmap` | AppImage 差分更新 |
 | `latest-linux.yml` | electron-updater 的 Linux feed。必须原样上传 |
 | `Pace-<version>-x64.deb` | Debian / Ubuntu 安装包。**不会**自动更新，升级需要重新安装 |
-| `SHA256SUMS-linux.txt` | 覆盖上面四个文件 |
+| `SHA256SUMS-linux.txt` | 覆盖上面三个文件 |
+
+AppImage 差分更新使用内嵌在 AppImage 尾部的 blockmap（`latest-linux.yml` 的 `blockMapSize` 指向它），electron-builder 不产出 `.blockmap` 旁车文件。
 
 deb 只负责安装。应用内更新只走 AppImage（ADR-0033）。
 
