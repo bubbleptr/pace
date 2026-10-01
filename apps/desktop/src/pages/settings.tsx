@@ -47,13 +47,14 @@ import { useUpdateStatus } from "@/entities/update/use-update-status";
 import { isModelVisible } from "@/entities/model/model-selector/model-selector-logic";
 import { invoke, revealProjectInFinder } from "@/shared/runtime";
 import type { UpdateStatus } from "@/shared/update-protocol";
-import type {
-  ProviderAuthId,
-  ProviderAuthStatusItem,
-  ProviderAuthStatusReport,
-  ProviderConnectionTestResult,
-  ProviderFailureKind,
-  RuntimeModelCapability,
+import {
+  showsSubscriptionCard,
+  type ProviderAuthId,
+  type ProviderAuthStatusItem,
+  type ProviderAuthStatusReport,
+  type ProviderConnectionTestResult,
+  type ProviderFailureKind,
+  type RuntimeModelCapability,
 } from "@pace/core";
 
 type AuthTab = "subscription" | "api_key";
@@ -942,7 +943,7 @@ function SettingsContent({
 
   const providers = statusQuery.data?.providers ?? [];
   const subscriptionProviders = useMemo(
-    () => providers.filter((provider) => provider.supportsOAuth),
+    () => providers.filter((provider) => showsSubscriptionCard(provider)),
     [providers],
   );
   const visibleApiKeyProviders = useMemo(() => {

@@ -36,9 +36,11 @@ export {
 
 export {
   FEATURED_PROVIDER_ORDER,
+  LEGACY_SUBSCRIPTION_PROVIDERS,
   PROVIDER_DISPLAY_OVERRIDES,
   classifyProviderFailure,
   describeProviderFailure,
+  showsSubscriptionCard,
   sortProvidersForDisplay,
   type ProviderAuthId,
   type ProviderAuthMode,
