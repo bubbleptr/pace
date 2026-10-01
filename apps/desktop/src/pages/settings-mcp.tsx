@@ -505,6 +505,7 @@ function AddMcpServerDialog({ onClose }: { onClose: () => void }) {
                 />
                 <SegmentedControl
                   label="Transport"
+                  layout="fill"
                   value={kind}
                   onChange={(value) => {
                     if (value === "stdio" || value === "http") setKind(value);
