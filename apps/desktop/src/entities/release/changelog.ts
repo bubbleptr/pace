@@ -53,6 +53,11 @@ export const changelogReleases: readonly ChangelogRelease[] = [
       },
       {
         kind: "improved",
+        title: "One ChatGPT subscription login",
+        description: "Pi 0.99 signs in with ChatGPT through the OpenAI provider and marks ChatGPT / Codex as legacy, so the Subscription tab now offers a single OpenAI entry. If you already signed in with ChatGPT / Codex, its card stays so you can keep using it or sign out.",
+      },
+      {
+        kind: "improved",
         title: "Continuous corners",
         description: "Rounded corners use a squircle shape with an adjusted radius scale, so the interface keeps the same overall softness while circular buttons stay round.",
       },
