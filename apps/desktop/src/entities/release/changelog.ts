@@ -15,6 +15,65 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.1.0",
+    date: "2026-10-01",
+    title: "MCP servers, nested tools and Linux",
+    summary: "Manage MCP servers from Settings, see the tool calls that codemode makes on your behalf, and install Pace on Linux. This release ships Pi 0.99.1 and is the first version numbered by semantic versioning: new features now raise the minor version.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.1.0",
+    changes: [
+      {
+        kind: "added",
+        title: "MCP settings",
+        description: "Settings has a new MCP section for the servers in Pi's global mcp.json. See each server's status and tools, enable or disable it, change its exposure, sign in or out with OAuth in your browser, and add or remove stdio and HTTP servers. Changes apply to new sessions; a sign-in reaches running sessions on their next turn.",
+      },
+      {
+        kind: "added",
+        title: "Bundled Pi 0.99.1 with codemode, tool search and MCP",
+        description: "Sessions load Pi's built-in codemode, tool_search and MCP extensions, so the model can script several tool calls at once, search for tools on demand and call tools from MCP servers.",
+      },
+      {
+        kind: "added",
+        title: "Nested tool executions",
+        description: "Tool calls that codemode and similar tools start on their own appear under their parent call, with a nested call count, a live label such as Running codemode › server/tool, and failures surfaced on the parent. Trajectory's inspector lists them too, and MCP tools are shown as server/tool.",
+      },
+      {
+        kind: "added",
+        title: "Linux x64 builds",
+        description: "Every release now ships a Linux x64 AppImage, which updates in place, and a deb package, which is reinstalled for each new version. Linux uses the system window title bar.",
+      },
+      {
+        kind: "added",
+        title: "Line counts for each edit",
+        description: "Tool step rows show the total +N -M for a batch of edits, and each edit shows its own additions and deletions when expanded.",
+      },
+      {
+        kind: "added",
+        title: "Open any file from chat",
+        description: "File links in answers open in Files at the linked line even when the file has not changed, and local links render as file chips. Paths written as inline code, such as src/foo.ts:12, become links when the file exists in the checkout.",
+      },
+      {
+        kind: "improved",
+        title: "Continuous corners",
+        description: "Rounded corners use a squircle shape with an adjusted radius scale, so the interface keeps the same overall softness while circular buttons stay round.",
+      },
+      {
+        kind: "improved",
+        title: "Calmer animated icons",
+        description: "Animated icons share one 800ms duration, play only when the pointer actually enters them, no longer replay after navigation and no longer shrink when pressed.",
+      },
+      {
+        kind: "fixed",
+        title: "Chat file links respond",
+        description: "Clicking a chat link to an unchanged file no longer does nothing.",
+      },
+      {
+        kind: "fixed",
+        title: "Smaller session records",
+        description: "The full bash output that Pi 0.99 attaches for scripts, up to 1 MiB per call, is no longer written to the session journal or sent between processes.",
+      },
+    ],
+  },
+  {
     version: "0.0.16",
     date: "2026-09-26",
     title: "Skills and files in your prompt",

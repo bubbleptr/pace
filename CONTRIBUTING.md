@@ -36,7 +36,7 @@ Pick up anything labeled `ready-for-human` or `good first issue`. Leave `ready-f
 ## Branches and pull requests
 
 - Work on a `feat/`, `fix/`, or `chore/` branch. Never push to `main`.
-- `main` is the only long-lived branch. Releases are tags (`vX.Y.Z`), not branches.
+- `main` is the only long-lived branch. Releases are tags (`vX.Y.Z`), not branches. How to pick the next version: [docs/release/macos.md](docs/release/macos.md#怎么选版本号).
 - Open a PR. Merges use a merge commit (`gh pr merge --merge`), matching existing history.
 - Dependent PRs use [`gh stack`](https://gh.io/stacks). Do not point one PR's base at another PR's branch by hand: deleting the lower branch after merge closes every PR based on it.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
