@@ -26,6 +26,12 @@ export {
 } from "./workspace/provider-auth";
 
 export {
+  createMcpServersService,
+  type McpServersService,
+  type McpServersServiceOptions,
+} from "./workspace/mcp-servers";
+
+export {
   createRuntimeGatewayService,
   type RuntimeGatewayDriverEvent,
   type CreateRuntimeSessionInput,

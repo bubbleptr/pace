@@ -4,8 +4,8 @@
 // persist to auth.json and the runtime snapshot stays in sync.
 
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { openUrlInBrowser } from "./open-url";
 import { readSettingsPreferredModel } from "./pi-settings";
 import {
   PROVIDER_DISPLAY_OVERRIDES,
@@ -73,21 +73,6 @@ function maskKey(key: string): string {
   }
 
   return `…${trimmed.slice(-4)}`;
-}
-
-function openUrlDefault(url: string) {
-  const platform = process.platform;
-  if (platform === "darwin") {
-    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
-    return;
-  }
-
-  if (platform === "win32") {
-    spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
-    return;
-  }
-
-  spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
 }
 
 function modeFromCredential(credential: StoredCredential): ProviderAuthMode {
@@ -268,7 +253,7 @@ export function createProviderAuthService(
   options: ProviderAuthServiceOptions,
 ): ProviderAuthService {
   const authPath = join(options.agentDir, "auth.json");
-  const openExternal = options.openExternalUrl ?? openUrlDefault;
+  const openExternal = options.openExternalUrl ?? openUrlInBrowser;
   const getRuntime = options.runtime;
 
   const listStatus = async (): Promise<ProviderAuthStatusReport> => {

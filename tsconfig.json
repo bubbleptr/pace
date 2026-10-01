@@ -19,6 +19,9 @@
     "paths": {
       "@pace/core": ["packages/core/src/index.ts"],
       "@pace/backend": ["packages/backend/src/index.ts"],
+      "@pace/pi-mcp/*": [
+        "packages/backend/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/*"
+      ],
       "@/*": ["apps/desktop/src/*"]
     }
   },

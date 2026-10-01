@@ -335,6 +335,42 @@ describe("backend service", () => {
     expect(modelCatalog.refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true });
   });
 
+  it("routes MCP server commands to the MCP servers service", async () => {
+    const report = {
+      configPath: "/tmp/agent/mcp.json",
+      servers: [],
+      errors: [],
+    };
+    const mcpServers = {
+      getConfig: vi.fn(async () => report),
+      probe: vi.fn(async () => ({ servers: [], errors: [] })),
+      login: vi.fn(async () => ({ ok: true, message: "" })),
+      logout: vi.fn(async () => ({ ok: true, message: "" })),
+      setEnabled: vi.fn(async () => report),
+      setExposure: vi.fn(async () => report),
+      add: vi.fn(async () => ({ ok: true, message: "" })),
+      remove: vi.fn(async () => ({ ok: true, message: "" })),
+    };
+    const service = createBackendService({
+      agentDir: fixtureAgentDir(),
+      mcpServers,
+      runtimeJournal: createInMemorySessionEventJournal(),
+      sessionProjectionStore: createInMemorySessionProjectionStore(),
+    });
+
+    await expect(
+      service.handleRequest({ id: "config", method: "get_mcp_config" }),
+    ).resolves.toEqual({ id: "config", result: report });
+    await expect(
+      service.handleRequest({
+        id: "exposure",
+        method: "set_mcp_server_exposure",
+        params: { name: "docs", exposure: "direct" },
+      }),
+    ).resolves.toEqual({ id: "exposure", result: report });
+    expect(mcpServers.setExposure).toHaveBeenCalledWith("docs", "direct");
+  });
+
   it("routes tool schema resolution through the Runtime Gateway", async () => {
     const bashSchema = {
       description: "Execute a shell command",

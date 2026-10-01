@@ -27,11 +27,13 @@ import {
   AnimatedInformationCircle,
   AnimatedKey,
   AnimatedMessage,
+  AnimatedPuzzle,
   AnimatedRobot,
   MoreHorizontal,
   RefreshCw,
 } from "@/shared/ui/icons";
 import { ChangelogSection } from "@/pages/settings-changelog";
+import { McpSettingsSection } from "@/pages/settings-mcp";
 import paceIcon from "../../../../build/icon-512.png";
 import { ProviderIcon } from "@/entities/provider/provider-icon";
 import { useModelCatalog } from "@/entities/model/use-model-catalog";
@@ -1165,6 +1167,11 @@ function SettingsContent({
             />
           </VStack>
           <VStack
+            style={{ display: section === "mcp" ? undefined : "none" }}
+          >
+            <McpSettingsSection enabled={section === "mcp"} />
+          </VStack>
+          <VStack
             style={{ display: section === "chats" ? undefined : "none" }}
           >
             <ChatsSettingsSection enabled={section === "chats"} />
@@ -1184,6 +1191,7 @@ function SettingsContent({
 const settingsSections = [
   { id: "providers", label: "Providers", icon: AnimatedKey },
   { id: "models", label: "Models", icon: AnimatedRobot },
+  { id: "mcp", label: "MCP", icon: AnimatedPuzzle },
   { id: "chats", label: "Chats", icon: AnimatedMessage },
   { id: "changelog", label: "Changelog", icon: AnimatedFile },
   { id: "about", label: "About & Updates", icon: AnimatedInformationCircle },

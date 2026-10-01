@@ -163,6 +163,7 @@ flowchart TB
 | Persistence and replay | [`packages/backend/src/persistence/`](packages/backend/src/persistence/) |
 | Packages page (sidebar): packages, resources, update checks and journal diagnostics | [`apps/desktop/src/pages/setup.tsx`](apps/desktop/src/pages/setup.tsx), [`packages/backend/src/workspace/resource-management.ts`](packages/backend/src/workspace/resource-management.ts), [`resource-diagnostics.ts`](packages/backend/src/workspace/resource-diagnostics.ts) ([ADR-0037](docs/adr/0037-resource-management.md)) |
 | Model availability (catalog, capability mapping, credential-driven refresh) | [`packages/backend/src/workspace/model-catalog.ts`](packages/backend/src/workspace/model-catalog.ts), mapping in [`packages/core/src/model-capabilities.ts`](packages/core/src/model-capabilities.ts) ([ADR-0043](docs/adr/0043-model-catalog-owns-model-availability.md)) |
+| MCP server management (global `mcp.json`, probes, OAuth sign-in) | [`packages/backend/src/workspace/mcp-servers.ts`](packages/backend/src/workspace/mcp-servers.ts), contracts in [`packages/core/src/mcp-servers.ts`](packages/core/src/mcp-servers.ts) |
 | Sessions on disk, git worktrees, config inventory | [`packages/backend/src/workspace/`](packages/backend/src/workspace/) |
 | Electron shell and transport | [`apps/desktop/electron/`](apps/desktop/electron/): `main.ts`, `preload.ts`, `backend.ts` |
 | Dock surfaces (Changes, Files, Terminal, Browser) | [`apps/desktop/src/shared/ui/session-dock/surface-registry.ts`](apps/desktop/src/shared/ui/session-dock/surface-registry.ts) |
