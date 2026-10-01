@@ -1,9 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServerConfigItem } from "@pace/core";
 import { createMcpServersService } from "./mcp-servers";
+import { handleMcpMessage } from "./fixtures/mcp-test-server.mjs";
 
 // Contract test against the real @earendil-works/pi-coding-agent package: it
 // must break when a Pi upgrade changes the mcp.json shape, the `pi mcp`
@@ -207,6 +210,107 @@ describe("mcp-servers service", () => {
     ).rejects.toThrow();
 
     expect(await readFile(join(agentDir, "mcp.json"), "utf8")).toBe(before);
+  });
+
+  it("probes a connected stdio server through a real MCP handshake", async () => {
+    await writeMcpJson(agentDir, {
+      mcpServers: {
+        "test-stdio": {
+          command: process.execPath,
+          args: [
+            join(
+              process.cwd(),
+              "packages/backend/src/workspace/fixtures/mcp-test-server.mjs",
+            ),
+          ],
+        },
+      },
+    });
+
+    const report = await createMcpServersService({ agentDir }).probe();
+
+    expect(report.errors).toEqual([]);
+    const server = report.servers.find((entry) => entry.name === "test-stdio");
+    expect(server?.state).toBe("connected");
+    expect(server?.tools).toEqual(expect.arrayContaining(["echo", "add"]));
+    expect(server?.error).toBeUndefined();
+  });
+
+  it("probes a connected HTTP server through a real MCP handshake", async () => {
+    const httpServer: Server = createServer(async (request, response) => {
+      if (request.method !== "POST") {
+        response.writeHead(405).end();
+        return;
+      }
+      let body = "";
+      for await (const chunk of request) {
+        body += chunk;
+      }
+      const reply = handleMcpMessage(JSON.parse(body));
+      // Notifications and client responses are acknowledged with 202.
+      if (reply === undefined) {
+        response.writeHead(202).end();
+        return;
+      }
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify(reply));
+    });
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const { port } = httpServer.address() as AddressInfo;
+      await writeMcpJson(agentDir, {
+        mcpServers: {
+          "test-http": { url: `http://127.0.0.1:${port}/mcp` },
+        },
+      });
+
+      const report = await createMcpServersService({ agentDir }).probe();
+
+      expect(report.errors).toEqual([]);
+      const server = report.servers.find((entry) => entry.name === "test-http");
+      expect(server?.state).toBe("connected");
+      expect(server?.tools).toEqual(expect.arrayContaining(["echo", "add"]));
+      expect(server?.error).toBeUndefined();
+    } finally {
+      await new Promise((resolve) => httpServer.close(resolve));
+    }
+  });
+
+  it("reports needs-auth for an HTTP server that answers 401", async () => {
+    const httpServer: Server = createServer((request, response) => {
+      response
+        .writeHead(401, { "www-authenticate": "Bearer" })
+        .end();
+    });
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const { port } = httpServer.address() as AddressInfo;
+      await writeMcpJson(agentDir, {
+        mcpServers: {
+          "test-oauth": { url: `http://127.0.0.1:${port}/mcp` },
+        },
+      });
+      const service = createMcpServersService({ agentDir });
+
+      // HTTP without an Authorization header is the OAuth shape.
+      const config = await service.getConfig();
+      expect(
+        config.servers.find((entry) => entry.name === "test-oauth")?.usesOAuth,
+      ).toBe(true);
+
+      const report = await service.probe();
+      const server = report.servers.find(
+        (entry) => entry.name === "test-oauth",
+      );
+      expect(server?.state).toBe("needs-auth");
+    } finally {
+      await new Promise((resolve) => httpServer.close(resolve));
+    }
   });
 
   it("fails logout for a server that does not use OAuth", async () => {
