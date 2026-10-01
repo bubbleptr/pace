@@ -180,6 +180,9 @@ jobs:
       - name: Test the unpacked package
         timeout-minutes: 15
         run: bun run test:e2e:packaged:linux --workers=1 --max-failures=1 --reporter=line
+      # Only the cold-start case: the unpacked package above already ran the whole
+      # suite. The empty-PATH case cannot launch an AppImage at all, because its
+      # AppRun is `#!/usr/bin/env bash` and a real desktop launcher always has PATH.
       - name: Test the AppImage opens
         timeout-minutes: 10
         env:
@@ -192,7 +195,7 @@ jobs:
             PACE_E2E_ELECTRON_ARGS=--ozone-platform=x11 \
             APPIMAGE_EXTRACT_AND_RUN=1 \
             xvfb-run -s "-screen 0 1920x1080x24" \
-            bunx playwright test --config e2e/playwright.config.ts e2e/smoke/m5-2-preflight.spec.ts --workers=1 --max-failures=1 --reporter=line
+            bunx playwright test --config e2e/playwright.config.ts e2e/smoke/m5-2-preflight.spec.ts --grep "cold start reaches preflight" --workers=1 --max-failures=1 --reporter=line
       - name: Generate SHA-256 checksums
         working-directory: dist
         env:
