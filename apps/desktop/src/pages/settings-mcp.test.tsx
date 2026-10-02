@@ -281,6 +281,26 @@ describe("Settings — MCP servers", () => {
     );
   });
 
+  it("describes exposures the way Pi 1.0 resolves them", async () => {
+    const user = userEvent.setup();
+    renderMcpSection();
+
+    const section = await findMcpSection();
+    await user.click(within(section).getByRole("button", { name: "Add server" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add server" });
+    await user.click(within(dialog).getByRole("combobox", { name: "Exposure" }));
+
+    const options = await screen.findAllByRole("option");
+    // Pi 1.0 reads "codemode-deferred" as an alias of "codemode" and no longer offers it.
+    expect(options.map((option) => option.textContent?.split(/(?=[A-Z])/)[0])).toEqual([
+      "codemode",
+      "deferred",
+      "direct",
+      "hidden",
+    ]);
+    expect(options[0]).toHaveTextContent("found with searchTools()");
+  });
+
   it("keeps the add dialog open on a failed result and splits arguments by line", async () => {
     const user = userEvent.setup();
     const add = vi.fn(async () => ({

@@ -1074,7 +1074,6 @@ function requiredBoolean(value: unknown, name: string) {
 
 const MCP_EXPOSURES: readonly McpExposure[] = [
   "codemode",
-  "codemode-deferred",
   "deferred",
   "direct",
   "hidden",

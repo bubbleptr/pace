@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServerConfigItem } from "@pace/core";
+import { McpOAuthCredentialStore } from "@pace/pi-mcp/oauth.js";
 import { createMcpServersService } from "./mcp-servers";
 import { handleMcpMessage } from "./fixtures/mcp-test-server.mjs";
 
@@ -344,6 +345,21 @@ describe("mcp-servers service", () => {
       after.servers.find((entry) => entry.name === "signed-in")
         ?.hasStoredCredentials,
     ).toBe(false);
+  });
+
+  it("tells apart servers that share a URL by the credentials Pi stored per name", async () => {
+    const url = "http://127.0.0.1:8998/mcp";
+    await writeMcpJson(agentDir, {
+      mcpServers: { work: { url }, personal: { url } },
+    });
+    await new McpOAuthCredentialStore()
+      .forServer("work", url)
+      .save({ serverUrl: String(new URL(url)), tokens: { access_token: "t", token_type: "Bearer" } });
+
+    const config = await createMcpServersService({ agentDir }).getConfig();
+    const servers = serversByName(config.servers);
+    expect(servers.get("work")?.hasStoredCredentials).toBe(true);
+    expect(servers.get("personal")?.hasStoredCredentials).toBe(false);
   });
 
   it("reports no stored credentials for stdio servers", async () => {

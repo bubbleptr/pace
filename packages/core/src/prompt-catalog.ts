@@ -31,7 +31,7 @@ export type WorkspaceFileSearchResult = {
 };
 
 /**
- * Verbatim copy of `autocompleteSeparatorRegex` from pi-tui 0.99.1
+ * Verbatim copy of `autocompleteSeparatorRegex` from pi-tui 1.0.0
  * `dist/utils.js` (it composes cjkPunctuationRegex there). A file reference
  * whose path matches must serialize as `@"<path>"` — the same rule the Pi
  * TUI's `buildCompletionValue` applies. Drift-guarded by
@@ -47,7 +47,7 @@ const PROMPT_COMMAND_KIND_ORDER: Record<PromptCommandKind, number> = {
 };
 
 /**
- * Names declared by Pi 0.99.1's `dist/core/slash-commands.js`. These are TUI
+ * Names declared by Pi 1.0.0's `dist/core/slash-commands.js`. These are TUI
  * commands — Pi's session prompt path never sees them, so Pace must not send
  * them as prompts (the composer blocks submit instead). Not publicly exported
  * by Pi; `packages/backend/src/workspace/pi-tui-builtins.test.ts` guards
