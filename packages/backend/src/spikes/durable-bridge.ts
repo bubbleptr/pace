@@ -69,7 +69,8 @@ export function createDurableSpikeBridge(options: {
     },
     send({ connectionId, data }) {
       const socket = sockets.get(connectionId);
-      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+      if (socket?.readyState !== WebSocket.OPEN) throw new Error("Durable host connection is not open");
+      socket.send(data);
     },
     disconnect({ connectionId }) {
       sockets.get(connectionId)?.close();

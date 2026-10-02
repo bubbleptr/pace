@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 import { openHost, type OpenedHost } from "../host/host.ts";
 import { chatItems } from "../presentation/chat.ts";
 import { isBusy, transcript } from "../protocol/transcript.ts";
-import { connectTo, freePort, startFauxHost, tempDir, useCleanups, waitForView } from "./support.ts";
+import { connectTo, freePort, startDemoHost, startFauxHost, tempDir, useCleanups, waitForView } from "./support.ts";
 
 const defer = useCleanups();
 const webConfig = fileURLToPath(new URL("../web/vite.config.ts", import.meta.url));
@@ -65,6 +65,33 @@ it("preserves an unsent follow-up and disables write controls while reconnecting
   expect(await page.getByRole("button", { name: "Compact", exact: true }).isDisabled()).toBe(true);
   expect(await page.getByRole("button", { name: "Fork", exact: true }).isDisabled()).toBe(true);
   expect(await composer.textContent()).toBe("keep this draft");
+});
+
+it("sends a typed steer from the button without stopping the pending tool, and still stops with empty input", async () => {
+  const webOrigin = await startWeb();
+  const { host } = await startDemoHost(defer, { browserOrigins: [webOrigin] });
+  const observer = await connectTo(defer, host);
+  const page = await openPage(host, 1280, webOrigin);
+  const composer = page.getByRole("textbox");
+  await composer.fill("roll back to v2.2");
+  await composer.press("Enter");
+  await waitForView(observer.view, (view) => view.approvals.length === 1);
+  await page.getByRole("button", { name: /stop/i, exact: true }).waitFor();
+
+  await composer.fill("keep eu-west drained until the fix ships");
+  const send = page.getByRole("button", { name: /send/i, exact: true });
+  expect(await send.count()).toBe(1);
+  await send.click();
+  await waitForView(observer.view, (view) => {
+    const inbox = view.conversation.docs["pi.inbox"] as { items?: { mode: string }[] } | undefined;
+    return inbox?.items?.some((item) => item.mode === "steer") === true;
+  });
+  expect(observer.view.current().approvals).toHaveLength(1);
+  expect(isBusy(observer.view.current().conversation)).toBe(true);
+  await expect.poll(() => composer.textContent()).toBe("");
+
+  await page.getByRole("button", { name: /stop/i, exact: true }).click();
+  await waitForView(observer.view, (view) => !isBusy(view.conversation) && view.approvals.length === 0);
 });
 
 it.each([

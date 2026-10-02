@@ -178,7 +178,10 @@ try {
   await ask(p, "also look at ap-south");
   const logsId = subagents().find((summary) => summary.title.startsWith("logs:")).id;
   await until("the logs subagent is running a tool", () => Object.values(seen().tasks?.tasks ?? {}).some((node) => node.kind === "pi.tool" && node.conversationId === logsId));
-  await ask(p, "focus on the connection pool limit");
+  await p.getByRole("textbox").first().fill("focus on the connection pool limit");
+  await p.getByRole("button", { name: "Send", exact: true }).waitFor();
+  await shoot("05-steer-ready", { pace: p });
+  await p.getByRole("button", { name: "Send", exact: true }).click();
   await until("Pace steers the running subagent", shows(p, "focus on the connection pool limit"));
   await until("the subagent answers Pace", async () => (await p.getByText("Found in search_logs").count()) >= 2);
   await shoot("05-pace-subagent", { pace: p });
