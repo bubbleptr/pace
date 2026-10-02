@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["host", "protocol", "cli", "test", "vitest.config.ts"]
+  "include": ["host", "protocol", "cli", "tui", "test", "vitest.config.ts"]
 }

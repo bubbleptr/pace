@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0 完成（见 §10），下一步 P1。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
+- 状态：P0、P1 完成（见 §10、§11），下一步 P2（Web UI）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 `feat/durable-multiview-tui`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -185,3 +185,25 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
 - **token 要持久化**（数据目录下 `token`，0600）。如果每次启动都重新生成，`kill -9` 重启后客户端就连不上了。鉴权失败时用关闭码 4401，这样浏览器也能读到原因（浏览器 WebSocket 拿不到 HTTP 状态码）。
 - **`submit` 带 `requestId`**（客户端生成 UUID），为「回复丢了再重发不重复提交」做准备；目前客户端还不会自动重发。
 - §3.1 里与 P4 相关的事实（`TaskOptions.background`、`HookApi` 的能力）本阶段没有复核，P4 用到时再核。
+
+## 11. P1 进展（2026-10-02）：TUI 远程客户端
+
+### 11.1 落地的内容
+
+- `tui/tui.ts`：上游 `tui.ts`（earendil-works/pi@7fbbd5f）的移植。保留上游的 tab 缩进，和上游 `diff` 时只显示真正的改动：导入来源、本地的 `agentOf`，以及连接状态提示（`reconnecting` / `closed`）。
+- `tui/pi-internals.ts`：**§8.3 的决定是按路径引用 dist，不拷贝。** 用相对路径 `../node_modules/@earendil-works/pi-coding-agent/dist/...` 引入，Node 和 TypeScript 都不会按 `exports` 检查相对路径；它经过的是和包根同一个符号链接，所以 `theme` 这类有状态的模块仍是单实例（已验证 `initTheme` 是同一个函数）。Pi 升级后路径变了，会在 typecheck 阶段报错。
+- 比交接文档 §3.2 的表多出两个需要走路径引入的符号：`theme`（根入口只导出了 `Theme` 类型和函数），以及 `KeybindingsManager`（根入口只以 `export type` 导出，值要从 `dist/core/keybindings.js` 拿）。
+- `tui/main.ts`：连上宿主后先 `toggleTasks()`，和上游一样默认打开任务面板。主题、快捷键、终端能力用本机的 `SettingsManager`，会话内容来自宿主。
+- `cli/host-address.ts`：观察器和 TUI 共用的 `--url` / `--token` / `--data-dir` 解析。
+
+### 11.2 验收
+
+- `test/controller.test.ts`：两个客户端，一端驱动、另一端 steer，两端都能看到队列和 steer 后的那一轮；abort 后片段保留为 aborted 条目；切到另一个会话并对它说话，另一端仍停在 main；切到不存在的会话时给出错误通知，当前会话不变。
+- `test/tui.test.ts`：在真实 pty（`@lydell/node-pty`，跑在 vitest 的 Node 上）里启动 TUI，输入的内容能被另一个客户端看到，答案渲染在屏幕上；宿主关闭后显示重连提示，Ctrl+D 以 0 退出。
+- 手动用 headless xterm 抓屏走了一遍：流式输出、任务面板、steer、`/agents`、Esc 中止、`kill -9` 后重连。崩溃那一幕的画面是：半句话 → `reconnecting...` → 宿主重启后半句变成 `Operation aborted`，同一个 `pi.generation` 任务重新流式输出 → 完整答案。
+
+### 11.3 新发现
+
+- 用测试 API 直接建的 ownerless 会话 `pi.agent` 是空的（没有模型），提交会得到 `no_model`。子代理会话从父会话复制 agent 配置，不受影响。P4 造演示会话时要带上 `agent`。
+- 崩溃的代价是重发一次请求：被打断那次的用量也计入 `pi.usage`（页脚从 `↑6 ↓29` 变成 `↑12 ↓58`）。剧本 §6 第 12 步讲用量时可以顺带提。
+- `/agents` 现在只有 main，因为宿主还没装子代理扩展（P4）。协议层的会话切换已在测试里覆盖。

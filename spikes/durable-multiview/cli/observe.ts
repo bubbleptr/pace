@@ -2,28 +2,16 @@
 // A line-mode client of a running host: prints the shown conversation as it
 // streams, and sends each typed line. Run several to watch one host from many terminals.
 //
-//   node cli/observe.ts [--data-dir DIR] [--url ws://127.0.0.1:7420]
+//   node cli/observe.ts [--data-dir DIR | --token T] [--url ws://127.0.0.1:7420]
 //   typed lines: text (prompt; follow-up while busy), /steer text, /abort, /tasks, /quit
-import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { parseArgs } from "node:util";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { connectRemoteDurable } from "../protocol/remote-durable.ts";
 import type { DurableView } from "../protocol/view.ts";
+import { hostAddress } from "./host-address.ts";
 import { initialPrinter, printIncrement } from "./printer.ts";
 
-const { values } = parseArgs({
-  options: {
-    "data-dir": { type: "string" },
-    url: { type: "string", default: "ws://127.0.0.1:7420" },
-    token: { type: "string" },
-  },
-});
-const dataDir = resolve(values["data-dir"] ?? join(getAgentDir(), "experimental", "durable-multiview", "default"));
-const token = values.token ?? (await readFile(join(dataDir, "token"), "utf8")).trim();
-
-const remote = await connectRemoteDurable({ url: values.url, token });
+const address = await hostAddress(process.argv.slice(2));
+const remote = await connectRemoteDurable(address);
 let printer = initialPrinter;
 let shown: DurableView | undefined;
 const render = (): void => {
@@ -42,7 +30,7 @@ const render = (): void => {
   process.stdout.write(step.output);
 };
 remote.view.subscribe(render);
-process.stdout.write(`[connected to ${values.url}, session ${remote.view.current().session.id}]\n`);
+process.stdout.write(`[connected to ${address.url}, session ${remote.view.current().session.id}]\n`);
 render();
 
 const input = createInterface({ input: process.stdin });

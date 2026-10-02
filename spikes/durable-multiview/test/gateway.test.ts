@@ -1,47 +1,15 @@
-import { createModels } from "@earendil-works/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { afterEach, describe, expect, it } from "vitest";
-import { openHost, type OpenedHost } from "../host/host.ts";
-import { connectRemoteDurable, type RemoteDurable } from "../protocol/remote-durable.ts";
+import { describe, expect, it } from "vitest";
+import type { RemoteDurable } from "../protocol/remote-durable.ts";
 import { streamingText, transcript } from "../protocol/transcript.ts";
-import { LONG_ANSWER, tempDir, waitForView } from "./support.ts";
+import { connectTo, LONG_ANSWER, startFauxHost, useCleanups, waitForView } from "./support.ts";
 
-const cleanups: (() => Promise<void> | void)[] = [];
-afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
-
-async function startFauxHost(): Promise<OpenedHost> {
-  const dir = await tempDir();
-  cleanups.push(dir.remove);
-  const faux = fauxProvider({ tokensPerSecond: 200 });
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(LONG_ANSWER)]);
-  const model = faux.getModel();
-  const host = await openHost({
-    dataDir: dir.path,
-    cwd: dir.path,
-    models,
-    modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
-    initialModel: { provider: model.provider, modelId: model.id },
-    port: 0,
-  });
-  cleanups.push(() => host.close());
-  return host;
-}
-
-async function connect(host: OpenedHost, token = host.token): Promise<RemoteDurable> {
-  const client = await connectRemoteDurable({ url: host.url, token });
-  cleanups.push(() => client.close());
-  return client;
-}
+const defer = useCleanups();
 
 describe("gateway", () => {
   it("shows one streamed answer to two clients, driven by either", async () => {
-    const host = await startFauxHost();
-    const a = await connect(host);
-    const b = await connect(host);
+    const host = await startFauxHost(defer);
+    const a = await connectTo(defer, host);
+    const b = await connectTo(defer, host);
     expect(b.view.current().conversation.conversation.id).toBe(a.view.current().conversation.conversation.id);
 
     const partialsSeenByB: string[] = [];
@@ -67,13 +35,13 @@ describe("gateway", () => {
   });
 
   it("rejects a client with the wrong token", async () => {
-    const host = await startFauxHost();
-    await expect(connect(host, "not-the-token")).rejects.toThrow(/unauthorized/i);
+    const host = await startFauxHost(defer);
+    await expect(connectTo(defer, host, "not-the-token")).rejects.toThrow(/unauthorized/i);
   });
 
   it("lists the conversations and opens the task graph on request", async () => {
-    const host = await startFauxHost();
-    const client = await connect(host);
+    const host = await startFauxHost(defer);
+    const client = await connectTo(defer, host);
     const rootId = client.view.current().conversation.conversation.id;
     expect(client.view.current().conversations.map((summary) => summary.id)).toEqual([rootId]);
 

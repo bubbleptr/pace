@@ -2,7 +2,55 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { afterEach } from "vitest";
+import { openHost, type OpenedHost } from "../host/host.ts";
+import { connectRemoteDurable, type RemoteDurable } from "../protocol/remote-durable.ts";
 import type { DurableViewSource } from "../protocol/view.ts";
+
+/** Cleanups registered during a test, run in reverse after it. */
+export function useCleanups(): (cleanup: () => Promise<void> | void) => void {
+  const cleanups: (() => Promise<void> | void)[] = [];
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  });
+  return (cleanup) => void cleanups.push(cleanup);
+}
+
+/** An in-process host on a temporary store whose faux model gives `answers` in order. */
+export async function startFauxHost(
+  defer: (cleanup: () => Promise<void> | void) => void,
+  { answers = [LONG_ANSWER], tokensPerSecond = 200 }: { answers?: string[]; tokensPerSecond?: number } = {},
+): Promise<OpenedHost> {
+  const dir = await tempDir();
+  defer(dir.remove);
+  const faux = fauxProvider({ tokensPerSecond, tokenSize: { min: 1, max: 1 } });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses(answers.map((answer) => fauxAssistantMessage(answer)));
+  const model = faux.getModel();
+  const host = await openHost({
+    dataDir: dir.path,
+    cwd: dir.path,
+    models,
+    modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
+    initialModel: { provider: model.provider, modelId: model.id },
+    port: 0,
+  });
+  defer(() => host.close());
+  return host;
+}
+
+export async function connectTo(
+  defer: (cleanup: () => Promise<void> | void) => void,
+  host: OpenedHost,
+  token = host.token,
+): Promise<RemoteDurable> {
+  const client = await connectRemoteDurable({ url: host.url, token });
+  defer(() => client.close());
+  return client;
+}
 
 export async function tempDir(): Promise<{ path: string; remove(): Promise<void> }> {
   const path = await mkdtemp(join(tmpdir(), "durable-multiview-"));

@@ -8,7 +8,8 @@
     "host": "node host/main.ts",
     "observe": "node cli/observe.ts",
     "test": "vitest run --config vitest.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "tui": "node tui/main.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.0.0",
@@ -17,10 +18,12 @@
     "@earendil-works/pi-durable": "1.0.0",
     "proper-lockfile": "4.1.2",
     "undici": "8.10.2",
-    "ws": "8.22.0"
+    "ws": "8.22.0",
+    "@earendil-works/pi-tui": "1.0.0"
   },
   "devDependencies": {
     "@types/proper-lockfile": "4.1.4",
-    "@types/ws": "8.18.2"
+    "@types/ws": "8.18.2",
+    "@lydell/node-pty": "^1.2.0-beta.15"
   }
 }
