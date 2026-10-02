@@ -65,8 +65,12 @@ export class ApprovalBoard {
     if (harness === undefined) throw new Error("Approvals are not attached to a Harness");
     const candidate: ApprovalDecision = { approved, by, at: Date.now() };
     const decision = await harness.commit(async (tx) => {
+      const pending = this.#waiters.get(id);
+      if (pending?.some((waiter) => waiter.request.conversationId !== conversationId)) {
+        throw new Error("Approval belongs to another conversation");
+      }
       const doc = await tx.doc(ApprovalsDoc, conversationId);
-      if (doc.decisions[id] === undefined && !this.#waiters.has(id)) throw new Error(`No pending approval ${id}`);
+      if (doc.decisions[id] === undefined && pending === undefined) throw new Error(`No pending approval ${id}`);
       doc.decisions[id] ??= { ...candidate };
       return { ...doc.decisions[id] } as ApprovalDecision;
     }, BACKGROUND_CONTEXT);

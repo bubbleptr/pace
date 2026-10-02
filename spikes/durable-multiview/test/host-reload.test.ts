@@ -37,9 +37,9 @@ it("reloads the investigation tools after consecutive atomic editor saves", asyn
   });
   let address: { url: string; token: string } | undefined;
   for await (const line of createInterface({ input: child.stdout! })) {
-    const event = JSON.parse(line) as { event: string; url: string; token: string };
+    const event = JSON.parse(line) as { event: string; url: string; tokenFile: string };
     if (event.event !== "ready") continue;
-    address = event;
+    address = { url: event.url, token: (await readFile(event.tokenFile, "utf8")).trim() };
     break;
   }
   if (address === undefined) throw new Error("host exited before it was ready");

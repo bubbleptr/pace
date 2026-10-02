@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "tui": "node tui/main.ts",
     "web": "vite --config web/vite.config.ts",
+    "web:link": "node cli/web-link.ts",
     "verify:three": "node scripts/three-clients.mjs",
     "verify:demo": "node scripts/demo-scenario.mjs"
   },

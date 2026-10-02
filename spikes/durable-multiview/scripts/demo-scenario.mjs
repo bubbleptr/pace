@@ -68,11 +68,14 @@ async function readyLine(child, predicate, label) {
 
 async function startHost() {
   const args = ["host/main.ts", "--faux-demo", "--data-dir", hostDir, "--cwd", T, "--port", String(PORT), "--lock-stale-ms", "2000"];
-  args.push("--faux-tps", "60", "--pace-ms", "300", "--step-ms", "1500", "--reminder-seconds", "8", "--investigation-module", investigation);
+  args.push("--browser-origin", `http://127.0.0.1:${webPort}`, "--faux-tps", "60", "--pace-ms", "300", "--step-ms", "1500", "--reminder-seconds", "8", "--investigation-module", investigation);
   const host = spawn(process.execPath, args, { cwd: spike, stdio: ["ignore", "pipe", "inherit"] });
   children.push(host);
   const ready = JSON.parse(await readyLine(host, (line) => line.startsWith("{") && JSON.parse(line).event === "ready", "host"));
-  return { host, ready };
+  const token = readFileSync(ready.tokenFile, "utf8").trim();
+  const web = new URL(ready.web);
+  web.hash = new URLSearchParams({ token, url: ready.url }).toString();
+  return { host, ready: { ...ready, token, web: web.href } };
 }
 async function until(what, predicate, timeout = 30000) {
   const deadline = Date.now() + timeout;

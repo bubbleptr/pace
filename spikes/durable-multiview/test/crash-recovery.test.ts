@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
@@ -30,8 +31,8 @@ async function spawnHost(dataDir: string, port: number, model: readonly string[]
   });
   const lines = createInterface({ input: child.stdout! });
   for await (const line of lines) {
-    const event = JSON.parse(line) as { event: string; url: string; token: string };
-    if (event.event === "ready") return { child, url: event.url, token: event.token };
+    const event = JSON.parse(line) as { event: string; url: string; tokenFile: string };
+    if (event.event === "ready") return { child, url: event.url, token: (await readFile(event.tokenFile, "utf8")).trim() };
   }
   throw new Error("host exited before it was ready");
 }

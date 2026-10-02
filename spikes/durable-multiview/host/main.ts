@@ -31,6 +31,7 @@ const { values } = parseArgs({
     "step-ms": { type: "string" },
     "reminder-seconds": { type: "string" },
     "investigation-module": { type: "string" },
+    "browser-origin": { type: "string", multiple: true },
   },
 });
 
@@ -49,6 +50,7 @@ const common = {
   dataDir,
   cwd,
   port: Number(values.port),
+  browserOrigins: values["browser-origin"] ?? ["http://127.0.0.1:5199"],
   ...(values["lock-stale-ms"] === undefined ? {} : { lockStaleMs: Number(values["lock-stale-ms"]) }),
   ...demo?.hostOptions,
 };
@@ -93,9 +95,9 @@ const options =
       : await piOptions();
 const host = await openHost(options);
 const model = options.initialModel === undefined ? null : `${options.initialModel.provider}/${options.initialModel.modelId}`;
-// The web client (`bun run web`) reads the host from the fragment, which never leaves the browser.
-const web = `http://127.0.0.1:5199/#token=${encodeURIComponent(host.token)}&url=${encodeURIComponent(host.url)}`;
-console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, dataDir, model, web, demo: demo !== undefined }));
+// Credentials stay in the local token file; generating a browser link is an explicit CLI action.
+const web = "http://127.0.0.1:5199/";
+console.log(JSON.stringify({ event: "ready", url: host.url, tokenFile: join(dataDir, "token"), dataDir, model, web, demo: demo !== undefined }));
 
 if (demo !== undefined) {
   // Editors save in bursts; reload once the burst settles.

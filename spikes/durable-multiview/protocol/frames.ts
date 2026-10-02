@@ -79,3 +79,46 @@ export type ClientFrame =
         readonly args: CallMethods[M]["args"];
       };
     }[CallMethod];
+
+/** JSON from a socket has no TypeScript guarantees; reject it before dispatch. */
+export function isClientFrame(value: unknown): value is ClientFrame {
+  if (!record(value)) return false;
+  if (value.type === "subscribe" || value.type === "unsubscribe") {
+    const stream = value.stream;
+    return (
+      typeof stream === "string"
+      && (stream === "tasks" || stream === "conversations" || stream === "approvals" || /^(?:conversation:|doc:.+:)[1-9]\d*$/.test(stream))
+    );
+  }
+  if (value.type !== "call" || !Number.isSafeInteger(value.id) || !record(value.args)) return false;
+  const args = value.args;
+  if (typeof args.conversationId !== "number" || !Number.isSafeInteger(args.conversationId) || args.conversationId < 1) return false;
+  switch (value.method) {
+    case "submit":
+      return typeof args.text === "string" && (args.whenBusy === "steer" || args.whenBusy === "followUp") && nonempty(args.requestId);
+    case "abort":
+    case "cycleThinking":
+      return true;
+    case "compact":
+      return args.instructions === undefined || typeof args.instructions === "string";
+    case "setModel":
+      return record(args.model) && nonempty(args.model.provider) && nonempty(args.model.modelId);
+    case "approve":
+      return nonempty(args.approvalId) && typeof args.approved === "boolean" && nonempty(args.by);
+    case "fork":
+      return (
+        typeof args.entryId === "string" && /^[1-9]\d*$/.test(args.entryId)
+        && (args.removeTools === undefined || (Array.isArray(args.removeTools) && args.removeTools.every(nonempty)))
+      );
+    default:
+      return false;
+  }
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonempty(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
