@@ -82,6 +82,7 @@ export async function startDemoHost(
     initialModel: { provider: model.provider, modelId: model.id },
     port,
     ...demo.hostOptions,
+    settings: demo.settings(),
   });
   defer(() => host.close());
   return { host, demo };

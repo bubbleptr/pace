@@ -1,6 +1,6 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createRegistry, type Extension, type Registry } from "@earendil-works/pi-durable";
+import { createRegistry, type Extension, type HarnessSettings, type Registry } from "@earendil-works/pi-durable";
 import type { OpenHostOptions } from "../host.ts";
 import { ApprovalBoard } from "./approvals.ts";
 import { AREAS, createOncall } from "./oncall.ts";
@@ -23,6 +23,8 @@ export interface Demo {
   readonly hostOptions: Pick<OpenHostOptions, "registry" | "approvals" | "docs" | "onOpen">;
   /** Reinstall the investigation tools from their module; returns the module's load count. */
   reload(): Promise<number>;
+  /** `base` with a short verbatim tail, so a manual compaction of a demo-sized transcript has something to summarize. */
+  settings(base?: HarnessSettings): HarnessSettings;
 }
 
 const defaultModule = fileURLToPath(new URL("./investigation.ts", import.meta.url));
@@ -58,6 +60,13 @@ export async function createDemo(options: DemoOptions = {}): Promise<Demo> {
     async reload() {
       registry.install(await load());
       return loads;
+    },
+    settings(base = {}) {
+      // Descriptors, not a spread: pi's settings are getters that read the settings file at each use.
+      return Object.defineProperties({}, {
+        ...Object.getOwnPropertyDescriptors(base),
+        compaction: { enumerable: true, get: () => ({ ...base.compaction, keepRecentTokens: 400 }) },
+      });
     },
   };
 }

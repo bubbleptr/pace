@@ -1,6 +1,6 @@
-import type { ConversationView, EntryRecord, TaskGraph } from "@earendil-works/pi-durable";
+import type { ConversationId, ConversationView, EntryRecord, TaskGraph } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { chatItems, queueItems, statusText, taskRows } from "../presentation/chat.ts";
+import { approvalText, chatItems, planItems, queueItems, statusText, taskRows, usageRows } from "../presentation/chat.ts";
 
 let nextId = 1;
 const entry = (kind: string, message: unknown): EntryRecord =>
@@ -93,5 +93,39 @@ describe("taskRows", () => {
       { id: 2, depth: 1, label: "pi.tool #2: running run owns conversation 5" },
       { id: 3, depth: 2, label: "pi.generation #3: running request [aborting]" },
     ]);
+  });
+});
+
+describe("demo presentation", () => {
+  it("keeps an answer's thinking apart from its text, also while streaming", () => {
+    const thinking = (value: string) => ({ type: "thinking", thinking: value });
+    expect(chatItems(view([assistant([thinking("pool sizes?"), text("rollback")])])).at(-1)).toMatchObject({ text: "rollback", thinking: "pool sizes?" });
+    expect(chatItems(view([assistant([text("plain")])])).at(-1)).not.toHaveProperty("thinking");
+    const live = { run: {}, generation: { attempt: 1, message: { role: "assistant", content: [thinking("che")] } } };
+    expect(chatItems(view([], live)).at(-1)).toMatchObject({ text: "", thinking: "che", streaming: true });
+  });
+
+  it("reads the plan, empty until the agent writes one", () => {
+    expect(planItems({})).toEqual([]);
+    expect(planItems({ "demo.plan": null })).toEqual([]);
+    expect(planItems({ "demo.plan": { items: [{ text: "Search the deploy logs", status: "done" }] } })).toEqual([
+      { text: "Search the deploy logs", status: "done" },
+    ]);
+  });
+
+  it("sums usage per model and tool", () => {
+    const usage = (input: number, output: number, cost: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, totalTokens: input + output, cost: { total: cost } });
+    const conversation = { ...view([]), docs: { "pi.usage": { models: { "faux/faux-1": usage(120, 30, 0.002) }, tools: { search_logs: usage(0, 0, 0) } } } };
+    expect(usageRows(conversation as unknown as ConversationView)).toEqual([
+      { key: "faux/faux-1", input: 120, output: 30, cost: 0.002 },
+      { key: "search_logs", input: 0, output: 0, cost: 0 },
+    ]);
+    expect(usageRows(view([]))).toEqual([]);
+  });
+
+  it("says where an approval is waiting", () => {
+    const approval = { id: "76", conversationId: 4 as ConversationId, tool: "rollback", summary: "Roll back to v2.2: pool regression", requestedAt: 0 };
+    expect(approvalText(approval, [{ id: 4 as ConversationId, label: "fork 4" }])).toBe("fork 4: Roll back to v2.2: pool regression");
+    expect(approvalText(approval, [])).toBe("conversation 4: Roll back to v2.2: pool regression");
   });
 });

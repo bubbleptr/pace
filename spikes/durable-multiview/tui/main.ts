@@ -9,7 +9,7 @@ import { hostAddress } from "../cli/host-address.ts";
 import { connectRemoteDurable } from "../protocol/remote-durable.ts";
 import { runDurableTui } from "./tui.ts";
 
-const remote = await connectRemoteDurable(await hostAddress(process.argv.slice(2)));
+const remote = await connectRemoteDurable({ ...(await hostAddress(process.argv.slice(2))), clientName: "tui" });
 // As in pi's durable TUI, the task panel starts open; /tasks hides it.
 await remote.controller.toggleTasks();
 try {

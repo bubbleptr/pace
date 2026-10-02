@@ -18,6 +18,7 @@ const lastText = (view: DurableView): string | undefined => transcript(view.conv
 const subagents = (view: DurableView) => view.conversations.filter((summary) => summary.label.startsWith("subagent"));
 const rollout = (view: DurableView) => view.docs["demo.rollout"] as RolloutState | null | undefined;
 const plan = (view: DurableView) => view.docs["demo.plan"] as PlanState | null | undefined;
+const queueItemsOf = (view: DurableView) => ((view.conversation.docs["pi.inbox"] ?? { items: [] }) as { items: { mode: string }[] }).items;
 
 describe("on-call demo", () => {
   it("plans, then delegates to three subagents in parallel; each child is a listed conversation", async () => {
@@ -134,6 +135,32 @@ describe("on-call demo", () => {
     expect(transcript(view.conversation).at(-2)).toEqual({ role: "user", text: "write the postmortem" });
   });
 
+  it("takes a steer sent while the rollback waits without losing its place", async () => {
+    const { host } = await startDemoHost(defer);
+    const web = await connectTo(defer, host, host.token, "web");
+    const tui = await connectTo(defer, host, host.token, "tui");
+    await web.controller.submit("roll back to v2.2", "followUp");
+    await waitForView(tui.view, (view) => view.approvals.length === 1);
+    await tui.controller.submit("keep eu-west drained until the fix ships", "steer");
+    await waitForView(web.view, (view) => queueItemsOf(view).some((item) => item.mode === "steer"));
+    await web.controller.approve(web.view.current().approvals[0]!, true);
+
+    await waitForView(web.view, (view) => idle(view) && /check scheduled/i.test(lastText(view) ?? ""));
+    expect(transcript(web.view.current().conversation).map((line) => line.text)).toContain("keep eu-west drained until the fix ships");
+  });
+
+  it("compacts on request; every client sees the summary marker", async () => {
+    const { host } = await startDemoHost(defer);
+    const pace = await connectTo(defer, host, host.token, "pace");
+    const web = await connectTo(defer, host, host.token, "web");
+    await pace.controller.submit("v2.3 release failed, find out why", "followUp");
+    await waitForView(pace.view, (view) => idle(view) && /recommend rolling back/i.test(lastText(view) ?? ""));
+
+    await pace.controller.compact(undefined);
+    await waitForView(web.view, (view) => view.conversation.entries.some((entry) => entry.kind === "pi.compaction"));
+    await waitForView(pace.view, (view) => view.notices.some((notice) => /compaction completed/i.test(notice.message)));
+  });
+
   it("hot-reloads the investigation tools; the next call uses the new code", async () => {
     const dir = join(spikeDir, ".tmp", `reload-${process.pid}-${Date.now()}`);
     await mkdir(dir, { recursive: true });
@@ -146,10 +173,9 @@ describe("on-call demo", () => {
     await writeFile(module, (await readFile(module, "utf8")).replace(`const FORMAT = "plain"`, `const FORMAT = "table"`));
     expect(await demo.reload()).toBe(2);
 
-    await client.controller.submit("v2.3 release failed, find out why", "followUp");
-    await waitForView(client.view, (view) => idle(view) && /recommend rolling back/i.test(lastText(view) ?? ""));
-    const logs = subagents(client.view.current()).find((summary) => summary.title?.startsWith("logs"))!;
-    const child = await host.harness.conversation(logs.id, context);
+    await client.controller.submit("check the metrics again", "followUp");
+    await waitForView(client.view, (view) => idle(view) && subagents(view).length === 1);
+    const child = await host.harness.conversation(subagents(client.view.current())[0]!.id, context);
     const { messages } = await child!.context(context);
     const output = messages.flatMap((message) => (message.role === "toolResult" ? message.content : []));
     expect(output.map((block) => (block.type === "text" ? block.text : "")).join("")).toMatch(/^\| /m);

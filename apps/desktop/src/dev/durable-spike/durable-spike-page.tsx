@@ -9,8 +9,8 @@ const transport = relayTransport(backendRelay({ invoke, onBackendEvent }), label
 /**
  * Dev-only third client of the Durable multiview spike (spikes/durable-multiview):
  * the web client's workbench, reached through Pace's backend instead of a
- * browser WebSocket. Start the host first (`bun run host` in the spike).
+ * browser WebSocket. Start the host first (`bun run host` or `bun run demo` in the spike).
  */
 export function DurableSpikePage() {
-  return <RemoteWorkbench options={{ transport }} connectionKey="pace-backend" label={label} />;
+  return <RemoteWorkbench options={{ transport, clientName: "pace" }} connectionKey="pace-backend" label={label} />;
 }

@@ -10,7 +10,10 @@ import type {
   TaskGraph,
   TaskGraphNode,
   TaskId,
+  UsageState,
 } from "@earendil-works/pi-durable";
+import type { PendingApproval, PlanItem, PlanState } from "../protocol/demo.ts";
+import type { DurableView } from "../protocol/view.ts";
 
 export interface ToolCallView {
   readonly callId: string;
@@ -29,6 +32,8 @@ export type ChatItem =
       readonly kind: "assistant";
       readonly id: string;
       readonly text: string;
+      /** The answer's thinking blocks, when the model showed any. */
+      readonly thinking?: string;
       /** Absent while streaming; `aborted` for a partial an interrupted attempt left behind. */
       readonly stopReason?: string;
       readonly streaming: boolean;
@@ -37,12 +42,24 @@ export type ChatItem =
   | { readonly kind: "compaction"; readonly id: string; readonly summary: string }
   | { readonly kind: "reset"; readonly id: string };
 
-type Block = { readonly type: string; readonly text?: string; readonly id?: string; readonly name?: string; readonly arguments?: unknown };
+type Block = {
+  readonly type: string;
+  readonly text?: string;
+  readonly thinking?: string;
+  readonly id?: string;
+  readonly name?: string;
+  readonly arguments?: unknown;
+};
 type Message = { readonly role: string; readonly content: string | readonly Block[]; readonly stopReason?: string; readonly toolCallId?: string; readonly isError?: boolean };
 
 function textOf(content: Message["content"]): string {
   if (typeof content === "string") return content;
   return content.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : [])).join("");
+}
+
+function thinkingOf(content: Message["content"]): string {
+  if (typeof content === "string") return "";
+  return content.flatMap((block) => (block.type === "thinking" && block.thinking !== undefined ? [block.thinking] : [])).join("\n\n");
 }
 
 function targetOf(args: unknown): string | undefined {
@@ -80,10 +97,12 @@ export function chatItems(view: ConversationView): ChatItem[] {
     const ran = streaming || message.stopReason === "toolUse";
     const tools = ran ? callsOf(message, "pending") : callsOf(message, "error", "Not run: the answer was interrupted.");
     tools.forEach((tool, index) => calls.set(tool.callId, { item: items.length, tool: index }));
+    const thinking = thinkingOf(message.content);
     items.push({
       kind: "assistant",
       id,
       text: textOf(message.content),
+      ...(thinking === "" ? {} : { thinking }),
       ...(streaming ? {} : { stopReason: message.stopReason ?? "stop" }),
       streaming,
       tools,
@@ -164,6 +183,37 @@ function describeTask(node: TaskGraphNode): string {
   const flags = [node.background ? "background" : "", node.abortRequested ? "aborting" : ""].filter(Boolean);
   const owned = node.conversations.length > 0 ? ` owns conversation ${node.conversations.join(", ")}` : "";
   return `${node.kind} #${node.id}: ${status}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}${owned}`;
+}
+
+/** The on-call demo's plan for the shown conversation. */
+export function planItems(docs: DurableView["docs"]): readonly PlanItem[] {
+  return (docs["demo.plan"] as PlanState | null | undefined)?.items ?? [];
+}
+
+export interface UsageRow {
+  /** `provider/model` of model responses, or a tool name. */
+  readonly key: string;
+  readonly input: number;
+  readonly output: number;
+  readonly cost: number;
+}
+
+/** Spend of the shown conversation, as `pi.usage` totals it; failed and aborted attempts count. */
+export function usageRows(view: ConversationView): UsageRow[] {
+  const usage = view.docs["pi.usage"] as UsageState | undefined;
+  if (usage === undefined) return [];
+  return [...Object.entries(usage.models), ...Object.entries(usage.tools)].map(([key, value]) => ({
+    key,
+    input: value.input,
+    output: value.output,
+    cost: value.cost.total,
+  }));
+}
+
+/** An approval prompt that says which conversation is waiting. */
+export function approvalText(approval: PendingApproval, conversations: DurableView["conversations"]): string {
+  const where = conversations.find((summary) => summary.id === approval.conversationId)?.label ?? `conversation ${approval.conversationId}`;
+  return `${where}: ${approval.summary}`;
 }
 
 /** Live tasks as an indented tree: owned work under its owner, a subagent's work under the call that owns its conversation. */

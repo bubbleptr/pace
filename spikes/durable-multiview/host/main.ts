@@ -7,7 +7,7 @@
 //   node host/main.ts --faux-demo             # the same demo driven by a scripted model, for tests and rehearsals
 //   node host/main.ts --faux "scripted answer" [--faux-tps 40]   # no real model, for tests
 import { watch } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { type FauxResponseStep, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
@@ -30,6 +30,7 @@ const { values } = parseArgs({
     "pace-ms": { type: "string" },
     "step-ms": { type: "string" },
     "reminder-seconds": { type: "string" },
+    "investigation-module": { type: "string" },
   },
 });
 
@@ -41,6 +42,7 @@ const demo: Demo | undefined =
     ? await createDemo({
         ...(values["pace-ms"] === undefined ? {} : { paceMs: Number(values["pace-ms"]) }),
         ...(values["step-ms"] === undefined ? {} : { stepMs: Number(values["step-ms"]) }),
+        ...(values["investigation-module"] === undefined ? {} : { investigationModule: resolve(values["investigation-module"]) }),
       })
     : undefined;
 const common = {
@@ -59,7 +61,13 @@ function fauxOptions(responses: () => FauxResponseStep): OpenHostOptions {
   faux.setResponses(Array.from({ length: 1000 }, responses));
   const model = faux.getModel();
   const summary = { provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow };
-  return { ...common, models, modelSummaries: () => [summary], initialModel: { provider: model.provider, modelId: model.id } };
+  return {
+    ...common,
+    models,
+    modelSummaries: () => [summary],
+    initialModel: { provider: model.provider, modelId: model.id },
+    ...(demo === undefined ? {} : { settings: demo.settings() }),
+  };
 }
 
 async function piOptions(): Promise<OpenHostOptions> {
@@ -71,7 +79,7 @@ async function piOptions(): Promise<OpenHostOptions> {
     ...common,
     models: modelRuntime,
     modelSummaries: () => modelSummaries(modelRuntime),
-    settings: createHarnessSettings(settingsManager),
+    settings: demo === undefined ? createHarnessSettings(settingsManager) : demo.settings(createHarnessSettings(settingsManager)),
     ...(initialModel === undefined ? {} : { initialModel }),
   };
 }
@@ -92,7 +100,9 @@ console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, d
 if (demo !== undefined) {
   // Editors save in bursts; reload once the burst settles.
   let timer: NodeJS.Timeout | undefined;
-  const watcher = watch(demo.investigationModule, () => {
+  // Watch the directory because an editor's atomic save replaces the file's inode.
+  const watcher = watch(dirname(demo.investigationModule), (_event, filename) => {
+    if (filename !== null && filename !== basename(demo.investigationModule)) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       demo.reload().then(

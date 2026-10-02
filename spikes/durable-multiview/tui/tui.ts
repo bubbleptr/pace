@@ -1,6 +1,7 @@
 // Ported from pi's packages/coding-agent/src/experimental/durable/tui.ts at
 // earendil-works/pi@7fbbd5f (MIT, Earendil Works). Kept in upstream's formatting so
-// a diff against it shows only the port: imports, and the host connection notice.
+// a diff against it shows only the port: imports, the host connection notice, and
+// the on-call demo's plan and approvals (`/approve`, `/deny`).
 import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
@@ -47,6 +48,8 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
+import { approvalText, planItems } from "../presentation/chat.ts";
+import type { PendingApproval, PlanItem } from "../protocol/demo.ts";
 import type { DurableController, DurableView, DurableViewSource } from "../protocol/view.ts";
 import {
 	createAllToolRenderers,
@@ -173,6 +176,7 @@ class DurableTui {
 	static readonly #renderers: Record<string, ToolRenderers> = createAllToolRenderers();
 	readonly #ui: TuiAltScreen;
 	readonly #chat = new Container();
+	readonly #plan = new Container();
 	readonly #tasks = new Container();
 	readonly #queue = new Container();
 	readonly #notices = new Container();
@@ -236,6 +240,7 @@ class DurableTui {
 		const transcript = new ScrollView(content, { follow: "end", primary: true, overscroll: "chain" });
 		this.#transcript = transcript;
 		const dock = new VStack([
+			{ component: this.#plan, shrink: 1, minSize: 0 },
 			{ component: this.#tasks, shrink: 1, minSize: 0 },
 			{ component: this.#queue, shrink: 1, minSize: 0 },
 			{ component: this.#notices, shrink: 1, minSize: 0 },
@@ -244,6 +249,7 @@ class DurableTui {
 		]);
 		for (const component of [
 			this.#chat,
+			this.#plan,
 			this.#tasks,
 			this.#queue,
 			this.#notices,
@@ -318,6 +324,7 @@ class DurableTui {
 				);
 			}
 		}
+		this.#syncPlan(planItems(view.docs));
 		this.#syncTasks(view.tasks);
 		this.#syncQueue((view.conversation.docs["pi.inbox"] ?? { items: [] }) as InboxState);
 		this.#syncNotices(view);
@@ -327,6 +334,16 @@ class DurableTui {
 		if (this.#rebuilt) this.#transcript.scrollToEnd();
 		this.#ui.requestRender(this.#rebuilt);
 		this.#rebuilt = false;
+	}
+
+	#syncPlan(items: readonly PlanItem[]): void {
+		this.#plan.clear();
+		if (items.length === 0) return;
+		this.#plan.addChild(new TruncatedText(theme.fg("accent", "Plan"), 1, 0));
+		for (const item of items) {
+			const mark = item.status === "done" ? "[x]" : item.status === "doing" ? "[~]" : "[ ]";
+			this.#plan.addChild(new TruncatedText(theme.fg("muted", `  ${mark} ${item.text}`), 1, 0));
+		}
 	}
 
 	#syncTasks(graph: TaskGraph | undefined): void {
@@ -368,6 +385,10 @@ class DurableTui {
 			this.#notices.addChild(new TruncatedText(theme.fg("warning", "Host connection lost; reconnecting..."), 1, 0));
 		} else if (view.connection === "closed") {
 			this.#notices.addChild(new TruncatedText(theme.fg("error", "Disconnected from the host."), 1, 0));
+		}
+		for (const approval of view.approvals) {
+			const text = `Approve ${approval.tool}? ${approvalText(approval, view.conversations)} (/approve or /deny)`;
+			this.#notices.addChild(new TruncatedText(theme.fg("warning", text), 1, 0));
 		}
 		for (const item of view.notices.slice(-4)) {
 			const color = item.level === "error" ? "error" : item.level === "warning" ? "warning" : "muted";
@@ -650,6 +671,12 @@ export async function runDurableTui(
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();
 			if (trimmed === "/agents") return selectConversation();
+			if (trimmed === "/approve" || trimmed === "/deny") {
+				// One typed after another client decided still goes to the host, which says who did.
+				const approval = source.current().approvals[0] ?? lastApproval;
+				if (approval !== undefined) void controller.approve(approval, trimmed === "/approve");
+				return;
+			}
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
@@ -669,7 +696,11 @@ export async function runDurableTui(
 		showError: (message) => console.error(message),
 		onChanged: () => view.ui.requestRender(),
 	});
-	const unsubscribe = source.subscribe(() => view.apply(source.current()));
+	let lastApproval: PendingApproval | undefined = source.current().approvals[0];
+	const unsubscribe = source.subscribe(() => {
+		lastApproval = source.current().approvals[0] ?? lastApproval;
+		view.apply(source.current());
+	});
 	view.start();
 	themes.applyFromSettings();
 	view.apply(source.current());

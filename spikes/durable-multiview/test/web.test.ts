@@ -3,7 +3,7 @@ import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 import { expect, it } from "vitest";
 import { transcript } from "../protocol/transcript.ts";
-import { connectTo, startFauxHost, useCleanups, waitForView } from "./support.ts";
+import { connectTo, freePort, startFauxHost, useCleanups, waitForView } from "./support.ts";
 import { startTui } from "./tui-harness.ts";
 
 const defer = useCleanups();
@@ -13,7 +13,7 @@ it("shows the same conversation in the web page and the TUI, driven from either"
   const host = await startFauxHost(defer, { answers: ["answer-for-the-web", "answer-for-the-tui"] });
   const observer = await connectTo(defer, host);
 
-  const vite = await createServer({ configFile: webConfig, server: { port: 0 }, logLevel: "error" });
+  const vite = await createServer({ configFile: webConfig, server: { port: await freePort() }, logLevel: "error" });
   await vite.listen();
   defer(() => vite.close());
   const browser = await chromium.launch();

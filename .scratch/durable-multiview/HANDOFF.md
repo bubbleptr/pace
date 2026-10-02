@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0–P3 完成（见 §10–§13），P4 拆成两段：P4a 宿主侧演示扩展与协议已完成（§14），下一步 P4b（三端界面与剧本验证）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 [#430](https://github.com/bubbleptr/pace/pull/430) ← P4a `feat/durable-multiview-demo`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
+- 状态：P0–P4 完成（见 §10–§15）；P5 结论文档另列栈顶 PR。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 [#430](https://github.com/bubbleptr/pace/pull/430) ← P4a [#431](https://github.com/bubbleptr/pace/pull/431) ← P4b `feat/durable-multiview-demo-ui`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -306,3 +306,53 @@ P4 拆成两个 PR：P4a 是宿主扩展、网关和客户端协议，三端界�
 - **`ConversationView.docs` 只有 4 个内置文档**，扩展文档要单独 `watchDoc`。`watchDoc` 不会创建文档，文档不存在时返回 `undefined`；网关先发 `null`，再等创建它的那次提交（`document` 或 fork 时的 `document.copy` 变更）到来后挂上 watch。
 - **钩子不能提交，所以「谁在等审批」不是持久状态。** 决定是持久的（文档 + memo），等待只在宿主内存里；宿主重启后钩子重跑，会重新登记。这一点对 Pace 有影响：待审批列表要么走 spike 这样的旁路流，要么改成 §8.1 的 b）方案，用工具加任务把审批变成持久状态。
 - `TaskQuery` 没有按 owner 过滤的字段，只能按 `conversationId` + `kind` 扫，再按 `owner` 过滤。
+
+## 15. P4b 完成（2026-10-02）：三端界面与完整剧本
+
+### 15.1 落地的内容
+
+- Web 与 Pace 共用审批横幅、待办、用量、思考块、fork 对话框；fork 在指定答案处分支并去掉 `rollback`。审批记录使用各端名字，TUI 支持 `/approve`、`/deny`，晚到操作会显示先前的决定。
+- 窄屏将会话导航放入抽屉、live state 放入对话框、控制项放入菜单；390px 下聊天输入仍可用，无横向溢出。Pace 根容器声明 Astryx 表面背景，避免透明窗口下正文落到黑底。
+- 失联时保留未发送草稿，禁用 Follow-up、审批、fork 和模型/压缩等写操作；恢复后仍从宿主快照续接。
+- 演示模型支持中途 steer、压缩与可调提醒时间。宿主可加载工具模块的临时副本，验收不改仓库中的演示工具。
+- `scripts/demo-scenario.mjs` / `bun run verify:demo` 驱动独立的宿主进程、Pace Electron dev 页面、Chromium 网页和 PTY TUI，保存截图及终端屏幕。数据目录、profile 和端口均独立；生成临时 Vite 配置并校验 CDP 页面的 URL，避免误连已有 Pace。
+
+### 15.2 本轮验收结果
+
+2026-10-02 实际运行输出：
+
+```text
+bun run typecheck                 exit 0（仓库根）
+bun run lint                      exit 0（仓库根）
+bun run test                      168 files / 1975 tests passed（仓库根）
+bun run build                     Exited with code 0（仓库根）
+bun run typecheck                 exit 0（spike）
+bun run test                      12 files / 46 tests passed（spike）
+bun run verify:demo <evidence>     DONE; exit 0（spike）
+```
+
+本机证据在 `output/durable-multiview-p4b-20261002/`（gitignored，不提交截图）：
+
+- `02-subagents-*`：三个子会话同时调查。
+- `03-host-lost-*`、`03-recovered-*`：SIGKILL 后三端断线、重启恢复且三个子会话 ID 不变。
+- `05-pace-subagent-*`：Pace 直接驱动子会话，并在工具运行时 steer。
+- `06-approval-and-queue-*`：三端审批、TUI steer、Web follow-up；Pace 先批准，TUI 再操作得到 Already approved by pace。
+- `07-rollback-running-*`、`08-reminder-*`：三个区域并行，一个失败、另两个 abort 补偿；Esc 后 background 提醒仍到达。
+- `09-fork-*`、`10-compacted-*`：Web fork；Pace 手动压缩，Web 和 TUI 同步看到 summary marker。TUI 的 marker 位于保留的近期消息之前，使用 Home 滚到顶部断言后再 End 返回底部。
+- `11-reloaded-*`、`12-usage-thinking-*`、`12-narrow-web.png`、`12-phone-*.png`：热替换改变下一次工具输出，用量、思考块、900px 状态弹窗、390px 手机聊天及导航。截图已经人工查看。
+
+完整三端剧本使用确定性 `--faux-demo`，没有把它称作真模型验收。历史真模型冒烟仍以 §10、§14 为准。复跑：
+
+```sh
+cd spikes/durable-multiview
+bun run verify:demo ../../output/durable-multiview-rerun
+```
+
+### 15.3 本轮修复与边界
+
+- TUI 连接时已存在审批，另一端先决定后，本端原先无法解释晚到 `/approve`；先失败测试，再从初始快照缓存审批。
+- 监听单文件 inode 会在编辑器连续原子保存后失效；先以真实宿主进程和两次 rename 保存复现，再改为监听父目录并过滤文件名。`test/host-reload.test.ts` 验证表格→纯文本的实际工具输出。
+- 两项浏览器回归保护手机宽度和断线草稿；Web 测试显式分配端口，避免 Vite 的 `port: 0` 回退默认端口造成并行碰撞。
+- 验收脚本原先因固定端口误连旧 CDP，真实运行复现后修正；脚本本身是验收工具，不再为脚本字面量另加单测。背景颜色属于样式，使用截图验收。
+- `failFast` 只中止仍在运行的兄弟任务。这里的恢复流量是演示自定义 abort 逻辑，不表示 Durable 会撤销已完成副作用。
+- 尚未生产化：纯思考且无正文的中断条目缺少 interrupted 标记；手机控件尚未按 44px 触控目标全面处理。P3 的旧 `verify:three` 使用固定端口，已有 dev 实例时可能冲突；本次完整验收使用独立端口的 `verify:demo`。
