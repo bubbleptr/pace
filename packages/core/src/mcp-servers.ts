@@ -4,7 +4,6 @@
 
 export type McpExposure =
   | "codemode"
-  | "codemode-deferred"
   | "deferred"
   | "direct"
   | "hidden";

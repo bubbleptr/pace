@@ -14,7 +14,7 @@ export type ResolveStaticPromptCommandsInput = {
   agentDir: string;
 };
 
-// Mirrors Pi 0.99.1's private loadTemplateFromFile (core/prompt-templates.js):
+// Mirrors Pi 1.0.0's private loadTemplateFromFile (core/prompt-templates.js):
 // the command name is the basename without ".md" and the description comes
 // from frontmatter, falling back to the first non-empty body line truncated
 // to 60 characters. Unreadable or unparseable files are skipped.
@@ -43,7 +43,7 @@ function readPromptTemplate(filePath: string): { name: string; description: stri
   return { name: basename(filePath).replace(/\.md$/, ""), description };
 }
 
-// Mirrors Pi 0.99.1's private loadTemplatesFromDir: non-recursive, ".md"
+// Mirrors Pi 1.0.0's private loadTemplatesFromDir: non-recursive, ".md"
 // only, and symlinks must resolve to a file.
 function promptTemplateFiles(resourcePath: string): string[] {
   let stats;
@@ -82,7 +82,7 @@ function promptTemplateFiles(resourcePath: string): string[] {
  * packageManager.resolve() with no onMissing, which installs any missing —
  * or merely version-mismatched — npm/git package. A read-only completion
  * query must never trigger an install, so this walks the resolved resource
- * list directly, replicating Pi 0.99.1's loading rules instead. Settings are
+ * list directly, replicating Pi 1.0.0's loading rules instead. Settings are
  * still read through the file-backed manager (verified read-only) so trust,
  * package filters and "!name" disables behave exactly as at runtime.
  * Extension code is never touched, so extension commands only exist on the

@@ -40,8 +40,7 @@ const MCP_CONFIG_KEY = ["mcp-config"] as const;
 const MCP_PROBE_KEY = ["mcp-probe"] as const;
 
 const EXPOSURE_OPTIONS: Array<{ value: McpExposure; description: string }> = [
-  { value: "codemode", description: "Called from codemode scripts, listed in its description" },
-  { value: "codemode-deferred", description: "Called from codemode scripts, found with searchTools()" },
+  { value: "codemode", description: "Called from codemode scripts, found with searchTools()" },
   { value: "deferred", description: "Loaded by tool_search, then called directly" },
   { value: "direct", description: "Declared to the model like built-in tools" },
   { value: "hidden", description: "Registered but unreachable" },

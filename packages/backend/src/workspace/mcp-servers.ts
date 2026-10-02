@@ -111,9 +111,9 @@ function toConfigItem(
       : [config.command, ...(config.args ?? [])].join(" "),
     usesOAuth,
     // Read through Pi's own store so "signed in" matches what `pi mcp
-    // logout` would remove; keyed by the normalized URL.
+    // logout` would remove; keyed by server name and normalized URL.
     hasStoredCredentials:
-      usesOAuth && credentials.tokens(config.url) !== undefined,
+      usesOAuth && credentials.tokens(entry.name, config.url) !== undefined,
   };
 }
 
