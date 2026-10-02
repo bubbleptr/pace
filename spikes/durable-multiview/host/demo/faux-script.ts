@@ -24,6 +24,17 @@ function offeredTools(messages: readonly Message[]): string[] {
   return [...tools];
 }
 
+function summarizeResults(messages: readonly Message[]): string {
+  const input = textOf(messages.findLast((message) => message.role === "user"));
+  const history = /<conversation>\n([\s\S]*)\n<\/conversation>/.exec(input)?.[1] ?? "";
+  // Keep the serialized result markers so another compaction can retain these same facts.
+  const results = history.match(/(?:^|\n)\[Tool result\]: [\s\S]*?(?=\n\n\[(?:User|Assistant(?: thinking| tool calls)?|Tool result)\]:|\n<\/summary>|$)/g) ?? [];
+  const excerpts = [...new Set(results.map((result) => result.trim()))];
+  return excerpts.length === 0
+    ? "No tool results were recorded in the summarized history."
+    : `Recorded tool results:\n\n${excerpts.join("\n\n")}`;
+}
+
 const PLAN = ["Search the deploy logs", "Compare error metrics", "Review the commits in v2.3"];
 /** Inputs that start something of their own; anything else arriving mid-run is a steer. */
 const COMMANDS = [/^Reminder:/, /postmortem/i, /roll ?back/i, /check the (logs|metrics|commits) again/i, /check again in \d+ seconds?/i];
@@ -35,8 +46,8 @@ export function oncallScript({ reminderSeconds = 60 }: { reminderSeconds?: numbe
       fauxToolCall(name, args, { id: `call-${state.callCount}-${index}` });
     const calls = (...blocks: ReturnType<typeof call>[]) => fauxAssistantMessage(blocks, { stopReason: "toolUse" });
     const tools = offeredTools(messages);
-    // A summarization request offers no tools; its input quotes the whole transcript.
-    if (tools.length === 0) return fauxAssistantMessage("Summary: v2.3 failed on a pg driver pool regression; a rollback was attempted.");
+    // A summarization request offers no tools; its input quotes the selected history prefix.
+    if (tools.length === 0) return fauxAssistantMessage(summarizeResults(messages));
     const userAt = messages.findLastIndex((message) => message.role === "user");
     const input = textOf(messages[userAt]);
     // A changed section, such as the plan after update_plan, lands as a system message after the results.

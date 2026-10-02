@@ -19,6 +19,7 @@ const subagents = (view: DurableView) => view.conversations.filter((summary) => 
 const rollout = (view: DurableView) => view.docs["demo.rollout"] as RolloutState | null | undefined;
 const plan = (view: DurableView) => view.docs["demo.plan"] as PlanState | null | undefined;
 const queueItemsOf = (view: DurableView) => ((view.conversation.docs["pi.inbox"] ?? { items: [] }) as { items: { mode: string }[] }).items;
+const summaryOf = (view: DurableView) => JSON.stringify(view.conversation.entries.findLast((entry) => entry.kind === "pi.compaction")?.model);
 
 describe("on-call demo", () => {
   it("plans, then delegates to three subagents in parallel; each child is a listed conversation", async () => {
@@ -149,7 +150,7 @@ describe("on-call demo", () => {
     expect(transcript(web.view.current().conversation).map((line) => line.text)).toContain("keep eu-west drained until the fix ships");
   });
 
-  it("compacts on request; every client sees the summary marker", async () => {
+  it("compacts the investigation without inventing a rollback; every client sees the summary marker", async () => {
     const { host } = await startDemoHost(defer);
     const pace = await connectTo(defer, host, host.token, "pace");
     const web = await connectTo(defer, host, host.token, "web");
@@ -159,6 +160,37 @@ describe("on-call demo", () => {
     await pace.controller.compact(undefined);
     await waitForView(web.view, (view) => view.conversation.entries.some((entry) => entry.kind === "pi.compaction"));
     await waitForView(pace.view, (view) => view.notices.some((notice) => /compaction completed/i.test(notice.message)));
+    expect(summaryOf(web.view.current())).not.toContain("a rollback was attempted");
+    // This first cut leaves the investigation results in the verbatim tail.
+    const main = (await host.harness.conversation(pace.view.current().conversation.conversation.id, context))!;
+    const { messages } = await main.context(context);
+    expect(JSON.stringify(messages)).not.toContain("a rollback was attempted");
+    expect(JSON.stringify(messages)).toContain("pg driver 8.11 -> 9.0 (pool default 100 -> 20)");
+  });
+
+  it.each([true, false])("preserves the actual rollback outcome across repeated compaction (approved: %s)", async (approved) => {
+    const { host } = await startDemoHost(defer);
+    const client = await connectTo(defer, host, host.token, "web");
+    await client.controller.submit("v2.3 release failed, find out why", "followUp");
+    await waitForView(client.view, (view) => idle(view) && /recommend rolling back/i.test(lastText(view) ?? ""));
+    await client.controller.submit("roll back to v2.2", "followUp");
+    await waitForView(client.view, (view) => view.approvals.length === 1);
+    await client.controller.approve(client.view.current().approvals[0]!, approved);
+    await waitForView(client.view, (view) => idle(view) && (approved ? /check scheduled/i : /did not run/i).test(lastText(view) ?? ""));
+
+    for (let pass = 0; pass < 2; pass++) {
+      // Keep a full user message after the outcome so it lies before the compaction's verbatim tail.
+      await client.controller.submit(`write the postmortem. ${"Preserve the incident timeline and the available evidence. ".repeat(40)}`, "followUp");
+      await waitForView(client.view, (view) => idle(view) && /Postmortem:/i.test(lastText(view) ?? ""));
+      const previous = client.view.current().conversation.entries.findLast((entry) => entry.kind === "pi.compaction")?.id;
+      await client.controller.compact(undefined);
+      await waitForView(client.view, (view) => view.conversation.entries.findLast((entry) => entry.kind === "pi.compaction")?.id !== previous);
+
+      const summary = summaryOf(client.view.current());
+      expect(summary).toContain("pg driver 8.11 -> 9.0 (pool default 100 -> 20)");
+      expect(summary).toContain(approved ? "Rollback to v2.2 failed; drained regions restored." : "Tool call blocked: Rollback denied by web.");
+      if (!approved) expect(summary).not.toMatch(/rollback was attempted|Rollback to v2.2 failed/);
+    }
   });
 
   it("hot-reloads the investigation tools; the next call uses the new code", async () => {

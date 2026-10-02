@@ -277,23 +277,23 @@ function ChatRow({ item, onFork, connected }: { item: ChatItem; onFork: (entryId
       // Only a settled answer is an entry a fork can start from.
       const forkable = !item.streaming && !interrupted;
       return (
-        <ChatMessage sender="assistant">
+        <ChatMessage
+          sender="assistant"
+          metadata={
+            interrupted ? (
+              <Token label="interrupted" color="orange" size="sm" />
+            ) : forkable ? (
+              <Button label="Fork" variant="ghost" size="sm" isDisabled={!connected} tooltip="Continue from here in a new conversation" onClick={() => onFork(item.id)} />
+            ) : undefined
+          }
+        >
           {item.thinking === undefined ? null : (
             <Collapsible trigger={<Text type="supporting">{item.streaming && item.text === "" ? "Thinking…" : "Thinking"}</Text>} defaultIsOpen={false}>
               <Markdown density="compact">{item.thinking}</Markdown>
             </Collapsible>
           )}
           {item.text === "" ? null : (
-            <ChatMessageBubble
-              variant="ghost"
-              metadata={
-                interrupted ? (
-                  <Token label="interrupted" color="orange" size="sm" />
-                ) : forkable ? (
-                  <Button label="Fork" variant="ghost" size="sm" isDisabled={!connected} tooltip="Continue from here in a new conversation" onClick={() => onFork(item.id)} />
-                ) : undefined
-              }
-            >
+            <ChatMessageBubble variant="ghost">
               <Markdown density="compact" isStreaming={item.streaming}>
                 {item.text}
               </Markdown>
