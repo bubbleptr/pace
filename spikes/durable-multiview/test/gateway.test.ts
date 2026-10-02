@@ -39,6 +39,21 @@ describe("gateway", () => {
     await expect(connectTo(defer, host, "not-the-token")).rejects.toThrow(/unauthorized/i);
   });
 
+  it("lists the same conversation titles before and after the host restarts", async () => {
+    const first = await startFauxHost(defer, { answers: ["done"] });
+    const before = await connectTo(defer, first);
+    await before.controller.submit("what broke v2.3?", "followUp");
+    await waitForView(before.view, (view) => view.conversations[0]?.title === "what broke v2.3?");
+    const dataDir = before.view.current().session.directory;
+    before.close();
+    await first.close();
+
+    const second = await startFauxHost(defer, { dataDir });
+    const after = await connectTo(defer, second);
+    expect(after.view.current().conversations).toEqual(before.view.current().conversations);
+    expect(after.view.current().conversations).toMatchObject([{ label: "main", title: "what broke v2.3?" }]);
+  });
+
   it("lists the conversations and opens the task graph on request", async () => {
     const host = await startFauxHost(defer);
     const client = await connectTo(defer, host);

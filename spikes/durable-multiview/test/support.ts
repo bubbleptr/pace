@@ -21,9 +21,13 @@ export function useCleanups(): (cleanup: () => Promise<void> | void) => void {
 /** An in-process host on a temporary store whose faux model gives `answers` in order. */
 export async function startFauxHost(
   defer: (cleanup: () => Promise<void> | void) => void,
-  { answers = [LONG_ANSWER], tokensPerSecond = 200 }: { answers?: string[]; tokensPerSecond?: number } = {},
+  {
+    answers = [LONG_ANSWER],
+    tokensPerSecond = 200,
+    dataDir,
+  }: { answers?: string[]; tokensPerSecond?: number; /** Reopen an earlier host's store. */ dataDir?: string } = {},
 ): Promise<OpenedHost> {
-  const dir = await tempDir();
+  const dir = dataDir === undefined ? await tempDir() : { path: dataDir, remove: () => {} };
   defer(dir.remove);
   const faux = fauxProvider({ tokensPerSecond, tokenSize: { min: 1, max: 1 } });
   const models = createModels();

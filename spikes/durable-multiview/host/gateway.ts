@@ -153,9 +153,11 @@ function titleOf(entry: EntryRecord | undefined): { title?: string } {
   return { title: text.replace(/\s+/g, " ").trim() };
 }
 
-/** A subagent's task: the oldest user message of its conversation. */
+/**
+ * The oldest user message of a conversation, a subagent's task. Unlike upstream, main gets
+ * one too: the commit listener titles it live, and a restarted host must list the same.
+ */
 async function firstInput(harness: Harness, id: ConversationId): Promise<{ title?: string }> {
-  if (id === ROOT_CONVERSATION_ID) return {};
   const conversation = (await harness.conversation(id, context))!;
   let first: EntryRecord | undefined;
   let cursor: Cursor | undefined;

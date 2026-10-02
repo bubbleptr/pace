@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "DOM"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowImportingTsExtensions": true,
@@ -10,7 +13,17 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["host", "protocol", "cli", "tui", "test", "vitest.config.ts"]
+  "include": [
+    "host",
+    "protocol",
+    "presentation",
+    "cli",
+    "tui",
+    "test",
+    "vitest.config.ts"
+  ]
 }

@@ -60,7 +60,9 @@ async function piOptions(): Promise<OpenHostOptions> {
 const options = values.faux === undefined ? await piOptions() : fauxOptions(values.faux);
 const host = await openHost(options);
 const model = options.initialModel === undefined ? null : `${options.initialModel.provider}/${options.initialModel.modelId}`;
-console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, dataDir, model }));
+// The web client (`bun run web`) reads the host from the fragment, which never leaves the browser.
+const web = `http://127.0.0.1:5199/#token=${encodeURIComponent(host.token)}&url=${encodeURIComponent(host.url)}`;
+console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, dataDir, model, web }));
 
 let stopping = false;
 const stop = (): void => {

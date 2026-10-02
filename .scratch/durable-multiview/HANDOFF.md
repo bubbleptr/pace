@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0、P1 完成（见 §10、§11），下一步 P2（Web UI）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 `feat/durable-multiview-tui`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
+- 状态：P0–P2 完成（见 §10–§12），下一步 P3（Pace dev 页面）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 `feat/durable-multiview-web`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -207,3 +207,30 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
 - 用测试 API 直接建的 ownerless 会话 `pi.agent` 是空的（没有模型），提交会得到 `no_model`。子代理会话从父会话复制 agent 配置，不受影响。P4 造演示会话时要带上 `agent`。
 - 崩溃的代价是重发一次请求：被打断那次的用量也计入 `pi.usage`（页脚从 `↑6 ↓29` 变成 `↑12 ↓58`）。剧本 §6 第 12 步讲用量时可以顺带提。
 - `/agents` 现在只有 main，因为宿主还没装子代理扩展（P4）。协议层的会话切换已在测试里覆盖。
+
+## 12. P2 进展（2026-10-02）：Web UI
+
+### 12.1 落地的内容
+
+- `presentation/chat.ts`：把 `ConversationView` 变成界面条目的纯函数，推导规则照搬上游 TUI，保证各端讲的是同一件事。包括 `chatItems`（消息、工具调用及其结果和运行中进度、子代理会话、aborted 片段、压缩、重置）、`statusText`、`queueItems`、`taskRows`（任务所有权树）。只用类型导入，浏览器可以直接用；**P3 的 Pace 页面可以复用它**。
+- `web/`：Vite + React + Astryx（neutral 主题，和 Pace 一致），`bun run web` 起在 `127.0.0.1:5199`。
+  - 左侧 `SideNav`：会话列表和连接状态点。
+  - 中间 `ChatLayout`：Enter 在空闲时是提问、忙碌时是 steer，和 TUI 一样；另有 Follow-up 按钮；忙碌时发送按钮变成停止；底部有模型下拉、思考档位、Compact。
+  - 右侧面板：任务树、队列、通知。
+  - 断线时顶部显示 `Banner`，输入框禁用。
+  - aborted 条目带橙色 `interrupted` 标签。
+- token 放在 URL 的 `#fragment` 里，不会发给 dev server。宿主的 ready 行里多了一个 `web` 字段，就是完整链接。
+- `web/tsconfig.json` 用 `Bundler` 解析：Astryx 的 `.d.ts` 是不带扩展名的相对再导出，`NodeNext` 下类型会全部退化。spike 的 `typecheck` 脚本两份配置都会检查。
+- Vite 配置照 Pace 的做法固定一份 `react`（bun 在 `@astryxdesign/core` 下面嵌了第二份）。
+
+### 12.2 验收
+
+- `test/web.test.ts`：同时起 Vite dev server、Playwright Chromium 和 pty 里的 TUI，连同一个假模型宿主。网页提问，TUI 显示问题和答案；TUI 提问，网页显示问题和答案；观察器的转录是这四条；宿主关闭后网页显示重连提示；全程没有页面错误。又连跑了 3 次。
+- `test/presentation.test.ts`：8 条，覆盖展示层推导。
+- 截图核对：空页面、流式中（`Working...`、任务面板、停止按钮）、Follow-up 入队、两轮答完、宿主丢失（Banner、状态点变黄、输入框禁用），以及 `kill -9` 后重启（`interrupted` 标签加完整答案）。
+
+### 12.3 新发现
+
+- **根会话的 ID 是 1，不是 0。** 用 `ROOT_CONVERSATION_ID`，不要写死。
+- **修复一个上游带过来的不一致**：网关启动时扫描会话列表照搬了上游的写法，不给 main 标题，但运行中提交监听器会给 main 补上标题。结果宿主重启后，main 在列表里的标题就没了。现在启动时 main 也取第一条用户消息作为标题；有测试覆盖重启前后列表一致。
+- Astryx 的 `ChatComposer` 在 `isStopShown` 时 Enter 照样调用 `onSubmit`，只有按钮变成停止，所以 Enter 在忙碌时就是 steer，不需要单独的 steer 按钮。
