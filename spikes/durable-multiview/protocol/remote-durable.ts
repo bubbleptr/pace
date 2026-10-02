@@ -9,6 +9,7 @@ import {
   type StreamName,
   UNAUTHORIZED_CLOSE_CODE,
 } from "./frames.ts";
+import { type FrameConnection, type FrameTransport, webSocketTransport } from "./transport.ts";
 import type {
   ConversationSummary,
   DurableController,
@@ -17,12 +18,14 @@ import type {
   Notice,
 } from "./view.ts";
 
-export interface RemoteDurableOptions {
-  /** `ws://127.0.0.1:<port>` of a host's gateway. */
-  readonly url: string;
-  readonly token: string;
-  readonly reconnectDelayMs?: { readonly min: number; readonly max: number };
-}
+export type RemoteDurableOptions = (
+  | {
+      /** `ws://127.0.0.1:<port>` of a host's gateway. */
+      readonly url: string;
+      readonly token: string;
+    }
+  | { readonly transport: FrameTransport }
+) & { readonly reconnectDelayMs?: { readonly min: number; readonly max: number } };
 
 export interface RemoteDurable {
   readonly view: DurableViewSource;
@@ -49,7 +52,8 @@ class RemoteClient {
   readonly #wanted = new Set<StreamName>(["conversations"]);
   readonly #snapshotWaiters = new Map<StreamName, { resolve(): void; reject(error: Error): void }[]>();
   readonly #pending = new Map<number, Pending>();
-  #socket: WebSocket | undefined;
+  readonly #transport: FrameTransport;
+  #connection: FrameConnection | undefined;
   #state: DurableView | undefined;
   #current: ConversationId | undefined;
   #nextCall = 1;
@@ -63,6 +67,7 @@ class RemoteClient {
 
   constructor(options: RemoteDurableOptions) {
     this.#options = options;
+    this.#transport = "transport" in options ? options.transport : webSocketTransport(options.url, options.token);
     this.ready = new Promise((resolve, reject) => {
       this.#resolveReady = resolve;
       this.#rejectReady = reject;
@@ -71,22 +76,27 @@ class RemoteClient {
   }
 
   #open(): void {
-    const url = new URL(this.#options.url);
-    url.searchParams.set("token", this.#options.token);
-    const socket = new WebSocket(url);
-    this.#socket = socket;
-    socket.onmessage = (event) => this.#receive(JSON.parse(String(event.data)) as ServerFrame);
-    socket.onclose = (event) => this.#lost(socket, event.code);
+    const connection: FrameConnection = this.#transport.open({
+      message: (data) => {
+        if (this.#connection === connection) this.#receive(JSON.parse(data) as ServerFrame);
+      },
+      closed: (code, reason) => this.#lost(connection, code, reason),
+    });
+    this.#connection = connection;
   }
 
-  #lost(socket: WebSocket, code: number): void {
-    if (this.#socket !== socket) return;
-    this.#socket = undefined;
+  #lost(connection: FrameConnection, code: number, reason: string | undefined): void {
+    if (this.#connection !== connection) return;
+    this.#connection = undefined;
     for (const pending of this.#pending.values()) pending.reject(new Error("Disconnected from host"));
     this.#pending.clear();
     if (this.#state === undefined) {
       this.#closed = true;
-      this.#rejectReady(new Error(code === UNAUTHORIZED_CLOSE_CODE ? "Unauthorized: wrong host token" : `Could not connect to ${this.#options.url}`));
+      this.#rejectReady(
+        new Error(
+          code === UNAUTHORIZED_CLOSE_CODE ? "Unauthorized: wrong host token" : (reason ?? `Could not connect to ${this.#transport.label}`),
+        ),
+      );
       return;
     }
     if (this.#closed) return;
@@ -105,7 +115,7 @@ class RemoteClient {
   }
 
   #send(frame: ClientFrame): void {
-    this.#socket?.send(JSON.stringify(frame));
+    this.#connection?.send(JSON.stringify(frame));
   }
 
   #receive(frame: ServerFrame): void {
@@ -205,7 +215,7 @@ class RemoteClient {
   }
 
   #call<M extends CallMethod>(method: M, args: CallMethods[M]["args"]): Promise<CallMethods[M]["result"]> {
-    if (this.#socket === undefined || this.#state?.connection !== "connected") {
+    if (this.#connection === undefined || this.#state?.connection !== "connected") {
       return Promise.reject(new Error("Not connected to the host"));
     }
     const id = this.#nextCall++;
@@ -288,6 +298,6 @@ class RemoteClient {
     if (this.#closed) return;
     this.#closed = true;
     this.#update({ connection: "closed" });
-    this.#socket?.close();
+    this.#connection?.close();
   }
 }

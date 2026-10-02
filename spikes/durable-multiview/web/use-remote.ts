@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { connectRemoteDurable, type RemoteDurable } from "../protocol/remote-durable.ts";
+import { connectRemoteDurable, type RemoteDurable, type RemoteDurableOptions } from "../protocol/remote-durable.ts";
 import type { DurableView } from "../protocol/view.ts";
 
 export type RemoteState =
@@ -7,13 +7,16 @@ export type RemoteState =
   | { readonly status: "failed"; readonly error: string }
   | { readonly status: "ready"; readonly remote: RemoteDurable };
 
-/** One connection per address for the component's lifetime; later losses are the view's `connection`, not this state. */
-export function useRemoteDurable(address: { url: string; token: string }): RemoteState {
+/**
+ * One connection per `key` for the component's lifetime; later losses are the
+ * view's `connection`, not this state. `options` is read when `key` changes.
+ */
+export function useRemoteDurable(options: RemoteDurableOptions, key: string): RemoteState {
   const [state, setState] = useState<RemoteState>({ status: "connecting" });
   useEffect(() => {
     let opened: RemoteDurable | undefined;
     let cancelled = false;
-    connectRemoteDurable({ ...address, reconnectDelayMs: { min: 200, max: 2000 } }).then(
+    connectRemoteDurable({ reconnectDelayMs: { min: 200, max: 2000 }, ...options }).then(
       (remote) => {
         if (cancelled) {
           remote.close();
@@ -33,7 +36,7 @@ export function useRemoteDurable(address: { url: string; token: string }): Remot
       cancelled = true;
       opened?.close();
     };
-  }, [address.url, address.token]);
+  }, [key]);
   return state;
 }
 

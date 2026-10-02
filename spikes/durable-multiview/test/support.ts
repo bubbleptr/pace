@@ -25,7 +25,15 @@ export async function startFauxHost(
     answers = [LONG_ANSWER],
     tokensPerSecond = 200,
     dataDir,
-  }: { answers?: string[]; tokensPerSecond?: number; /** Reopen an earlier host's store. */ dataDir?: string } = {},
+    port = 0,
+  }: {
+    answers?: string[];
+    tokensPerSecond?: number;
+    /** Reopen an earlier host's store. */
+    dataDir?: string;
+    /** Fixed, so clients reconnect to a restarted host. */
+    port?: number;
+  } = {},
 ): Promise<OpenedHost> {
   const dir = dataDir === undefined ? await tempDir() : { path: dataDir, remove: () => {} };
   defer(dir.remove);
@@ -40,7 +48,7 @@ export async function startFauxHost(
     models,
     modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
     initialModel: { provider: model.provider, modelId: model.id },
-    port: 0,
+    port,
   });
   defer(() => host.close());
   return host;

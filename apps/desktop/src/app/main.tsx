@@ -38,6 +38,7 @@ function isPreflightExemptPath(pathname: string) {
   return (
     pathname === "/preflight" ||
     pathname === "/design" ||
+    pathname === "/durable-spike" ||
     pathname === "/settings" ||
     pathname.startsWith("/settings/")
   );
@@ -224,6 +225,16 @@ const devOnlyRoutes = import.meta.env.DEV
         errorComponent: DevRouteError,
         component: React.lazy(async () => ({
           default: (await import("@/pages/design")).DesignPage,
+        })),
+      }),
+      // Durable multiview spike; removed with spikes/durable-multiview.
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/durable-spike",
+        wrapInSuspense: true,
+        errorComponent: DevRouteError,
+        component: React.lazy(async () => ({
+          default: (await import("@/dev/durable-spike/durable-spike-page")).DurableSpikePage,
         })),
       }),
     ]

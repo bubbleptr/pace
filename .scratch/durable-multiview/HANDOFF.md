@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0–P2 完成（见 §10–§12），下一步 P3（Pace dev 页面）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 `feat/durable-multiview-web`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
+- 状态：P0–P3 完成（见 §10–§13），下一步 P4（演示扩展与剧本）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 `feat/durable-multiview-pace`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -234,3 +234,36 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
 - **根会话的 ID 是 1，不是 0。** 用 `ROOT_CONVERSATION_ID`，不要写死。
 - **修复一个上游带过来的不一致**：网关启动时扫描会话列表照搬了上游的写法，不给 main 标题，但运行中提交监听器会给 main 补上标题。结果宿主重启后，main 在列表里的标题就没了。现在启动时 main 也取第一条用户消息作为标题；有测试覆盖重启前后列表一致。
 - Astryx 的 `ChatComposer` 在 `isStopShown` 时 Enter 照样调用 `onSubmit`，只有按钮变成停止，所以 Enter 在忙碌时就是 steer，不需要单独的 steer 按钮。
+
+## 13. P3 进展（2026-10-02）：Pace dev 页面（三端同屏）
+
+### 13.1 落地的内容（§3.3 选了 a）
+
+- **传输抽象**（`protocol/transport.ts`）：`RemoteDurable` 不再直接 new WebSocket，而是依赖 `FrameTransport`。实现有两种：`webSocketTransport`（TUI、网页、测试用）和 `relayTransport`（经注入的 `FrameRelay` 收发帧，Pace 用）。中继只搬运帧，ops 仍由客户端应用。
+- **后端中继** `packages/backend/src/spikes/durable-bridge.ts`：按 `connectionId` 持有到宿主的 WebSocket（Electron utilityProcess 自带全局 `WebSocket`），帧原样转成 `seq: 0` 的临时事件 `durable_spike.frame` / `durable_spike.closed`，不写 journal，不分配序号，和终端流一样。`service.ts` 新增 `durable_spike_connect` / `_send` / `_disconnect` 三个命令。
+  - token 从 `<agentDir>/experimental/durable-multiview/default/token` 读取，即宿主默认数据目录里的那个文件；没有 token 时报「先 `bun run host`」。
+  - **只接受回环地址**：token 等于宿主 Agent 的完全控制权，不能发到别的机器。
+  - 默认地址可以用 `PACE_DURABLE_SPIKE_URL` 覆盖，验证脚本靠它避开操作者自己的 7420。
+- **渲染进程**：`src/dev/durable-spike/` 不属于 FSD 的任何一层（同 `src/dev/ui-intent/`）。`backend-relay.ts` 把 `invoke` / `onBackendEvent` 适配成 `FrameRelay`。`durable-spike-page.tsx` 直接复用网页版的 `RemoteWorkbench`，**三端用的是同一份展示代码**，只有传输不同。路由 `#/durable-spike` 只在 `import.meta.env.DEV` 分支里懒加载注册，并加入了 preflight 豁免。
+- **`runtime-gateway-client.ts` 的临时事件忽略列表加入了两个新类型**。测试先失败过：不加的话，spike 帧会进入运行时状态和去重集合。
+- 根配置：`tsconfig.json` 加了 `allowImportingTsExtensions`（spike 在 Node 下运行的文件带 `.ts` 扩展名导入，根 `noEmit` 下无副作用）和路径别名 `@pace/durable-spike/*`；`vite.config.ts` 和 `electron.vite.config.ts` 的 renderer 也加了同名别名。
+- spike 和 `apps/desktop` 解析到同一份 Astryx、主题、StyleX、React，Pace 的 `<Theme>` 可以覆盖复用进来的组件（已核对符号链接）。
+
+### 13.2 验收
+
+- `test/relay.test.ts`（spike，5 条）：用**真实的后端中继**连假模型宿主。经中继的客户端和直连客户端看到并驱动同一个对话，最终视图相等；宿主重启后经中继自动重连；可配置默认地址；没有 token 和非回环地址都给出明确错误。
+- `service.test.ts`：三个命令转发给中继；中继事件变成 `seq: 0` 的 envelope；`dispose` 时关闭中继。
+- `runtime-gateway-client.test.ts`：两个新事件类型在运行时状态和去重之前就被丢弃。
+- `backend-relay.test.ts`：命令映射；事件按类型和字段过滤。
+- **三端同屏实证** `scripts/three-clients.mjs`（`bun run verify:three`）：假模型宿主 + 隔离的 `electron-vite dev` Pace（独立 `PACE_DATA_DIR`、`PI_CODING_AGENT_DIR`、`--user-data-dir`，加 `PACE_E2E=1`，通过 CDP 驱动）+ 网页 + pty TUI。Pace 提问，网页和 TUI 都看到；网页和 TUI 提问，Pace 都看到；流式中途 `kill -9`，Pace 显示断线，重启后自动续上，出现 `interrupted` 片段和完整答案。截图和 TUI 屏幕转储写入证据目录。结束时按 `--user-data-dir` 精确结束 Electron（electron-vite 拉起的 Electron 不在它的进程组里），并删除临时目录。
+- 生产构建的 renderer 里查不到 spike 页面。后端 bundle 里有中继代码，但不被调用就什么都不做。
+
+### 13.3 新发现（P5 结论文档要用）
+
+- **`electron-vite build` 总会去掉 DEV 分支**，`--mode development` 或 `NODE_ENV=development` 都不行。所以 verify-pace 的 Playwright 夹具（启动生产构建）够不着 dev-only 页面，要用 `electron-vite dev --remoteDebuggingPort` 加 CDP。
+- **Pace 接入 Durable 的最小改动面**：
+  - 后端：一个不解析帧的 WebSocket 中继，加三个命令。
+  - 核心协议：不需要改，复用 `seq: 0` 的临时 envelope。
+  - 渲染进程：一个传输适配器，加上把新事件类型列入忽略列表。
+  - 视图状态由渲染进程持有，ops 只应用一次，没有经过 Session Projection 和 Journal。这一点和 ADR-0044「渲染进程单写者投影」一致，但**和 ADR-0021 的双持久化轨道是并列的另一条路**：Durable 自己的 SQLite 才是真相，Pace 不再需要 Journal。结论文档要讨论这一点。
+- 后端只做透传，所以 Durable 的背压（`watch()` 积压 100 帧后折叠）在宿主到后端这一段生效。后端到渲染进程这一段的 IPC 没有背压：慢渲染进程会在 Electron IPC 队列里积压。spike 里看不到问题，但真实接入要考虑。

@@ -14,6 +14,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
@@ -22,7 +23,8 @@
       "@pace/pi-mcp/*": [
         "packages/backend/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/*"
       ],
-      "@/*": ["apps/desktop/src/*"]
+      "@/*": ["apps/desktop/src/*"],
+      "@pace/durable-spike/*": ["spikes/durable-multiview/*"]
     }
   },
   "include": ["apps", "packages"],

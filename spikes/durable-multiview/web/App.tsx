@@ -21,7 +21,7 @@ import { Token } from "@astryxdesign/core/Token";
 import type { AgentState } from "@earendil-works/pi-durable";
 import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
 import { type ChatItem, chatItems, queueItems, statusText, taskRows } from "../presentation/chat.ts";
-import type { RemoteDurable } from "../protocol/remote-durable.ts";
+import type { RemoteDurable, RemoteDurableOptions } from "../protocol/remote-durable.ts";
 import { isBusy } from "../protocol/transcript.ts";
 import type { DurableView } from "../protocol/view.ts";
 import { addressFromHash } from "./address.ts";
@@ -42,7 +42,7 @@ export function App() {
   return <Connected address={address} />;
 }
 
-function Centered({ children }: { children: ReactNode }) {
+export function Centered({ children }: { children: ReactNode }) {
   return (
     <VStack style={page} hAlign="center" vAlign="center" padding={6}>
       {children}
@@ -51,11 +51,16 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 function Connected({ address }: { address: { url: string; token: string } }) {
-  const state = useRemoteDurable(address);
+  return <RemoteWorkbench options={address} connectionKey={`${address.url} ${address.token}`} label={address.url} />;
+}
+
+/** Connects with `options` and shows the workbench, or why it cannot; shared by this page and Pace's dev page. */
+export function RemoteWorkbench({ options, connectionKey, label }: { options: RemoteDurableOptions; connectionKey: string; label: string }) {
+  const state = useRemoteDurable(options, connectionKey);
   if (state.status === "connecting") {
     return (
       <Centered>
-        <EmptyState title="Connecting" description={address.url} />
+        <EmptyState title="Connecting" description={label} />
       </Centered>
     );
   }

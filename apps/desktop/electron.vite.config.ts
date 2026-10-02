@@ -223,6 +223,8 @@ const reactPackage = dirname(requireFromRepo.resolve("react/package.json"));
 const reactDomPackage = dirname(requireFromRepo.resolve("react-dom/package.json"));
 const rendererReactAlias = {
   ...coreAlias,
+  // Dev-only Durable multiview spike page; removed with spikes/durable-multiview.
+  "@pace/durable-spike": resolve(__dirname, "../../spikes/durable-multiview"),
   react: reactPackage,
   "react-dom": reactDomPackage,
 };

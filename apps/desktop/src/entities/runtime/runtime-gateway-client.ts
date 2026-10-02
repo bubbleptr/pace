@@ -654,8 +654,15 @@ export function createRuntimeGatewayClient(
         return;
       }
 
-      // Ephemeral workspace and terminal signals never belong to runtime truth.
-      if (["workspace.invalidated", "model_catalog.invalidated", "terminal_output", "terminal_exit"].includes(event.event.type)) {
+      // Ephemeral workspace, terminal, and dev-spike signals never belong to runtime truth.
+      if ([
+        "workspace.invalidated",
+        "model_catalog.invalidated",
+        "terminal_output",
+        "terminal_exit",
+        "durable_spike.frame",
+        "durable_spike.closed",
+      ].includes(event.event.type)) {
         return;
       }
 
