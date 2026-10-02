@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "host": "node host/main.ts",
+    "demo": "node host/main.ts --demo",
+    "demo:faux": "node host/main.ts --faux-demo --faux-tps 30 --reminder-seconds 20",
     "observe": "node cli/observe.ts",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach } from "vitest";
+import { createDemo, type Demo } from "../host/demo/index.ts";
+import { oncallScript } from "../host/demo/faux-script.ts";
 import { openHost, type OpenedHost } from "../host/host.ts";
 import { connectRemoteDurable, type RemoteDurable } from "../protocol/remote-durable.ts";
 import type { DurableViewSource } from "../protocol/view.ts";
@@ -54,12 +56,49 @@ export async function startFauxHost(
   return host;
 }
 
+/** An in-process host with the on-call demo installed, driven by the scripted faux model. */
+export async function startDemoHost(
+  defer: (cleanup: () => Promise<void> | void) => void,
+  {
+    dataDir,
+    port = 0,
+    stepMs = 150,
+    investigationModule,
+  }: { dataDir?: string; port?: number; stepMs?: number; investigationModule?: string } = {},
+): Promise<{ host: OpenedHost; demo: Demo }> {
+  const dir = dataDir === undefined ? await tempDir() : { path: dataDir, remove: () => {} };
+  defer(dir.remove);
+  const faux = fauxProvider({ tokensPerSecond: 400, tokenSize: { min: 2, max: 4 } });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses(Array.from({ length: 200 }, () => oncallScript()));
+  const model = faux.getModel();
+  const demo = await createDemo({ paceMs: 10, stepMs, ...(investigationModule === undefined ? {} : { investigationModule }) });
+  const host = await openHost({
+    dataDir: dir.path,
+    cwd: dir.path,
+    models,
+    modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
+    initialModel: { provider: model.provider, modelId: model.id },
+    port,
+    ...demo.hostOptions,
+  });
+  defer(() => host.close());
+  return { host, demo };
+}
+
 export async function connectTo(
   defer: (cleanup: () => Promise<void> | void) => void,
   host: OpenedHost,
   token = host.token,
+  clientName?: string,
 ): Promise<RemoteDurable> {
-  const client = await connectRemoteDurable({ url: host.url, token });
+  const client = await connectRemoteDurable({
+    url: host.url,
+    token,
+    reconnectDelayMs: { min: 100, max: 500 },
+    ...(clientName === undefined ? {} : { clientName }),
+  });
   defer(() => client.close());
   return client;
 }

@@ -2,7 +2,8 @@
 // pi's packages/coding-agent/src/experimental/durable/runtime.ts (MIT, Earendil Works).
 // Kept structurally identical so the ported TUI renders a remote host unchanged;
 // `connection` is the one addition, since a remote view can lose its host.
-import type { ConversationId, ConversationView, ModelRef, TaskGraph } from "@earendil-works/pi-durable";
+import type { ConversationId, ConversationView, JsonObject, ModelRef, TaskGraph } from "@earendil-works/pi-durable";
+import type { PendingApproval } from "./demo.ts";
 
 export interface ModelSummary extends ModelRef {
   readonly name: string;
@@ -42,6 +43,10 @@ export interface DurableView {
   /** The live task graph while the task panel is open. */
   readonly tasks?: TaskGraph;
   readonly connection: ConnectionState;
+  /** The shown conversation's extension documents, by kind; `null` while one does not exist. */
+  readonly docs: Readonly<Record<string, JsonObject | null>>;
+  /** Tool calls of any conversation waiting for a human decision. */
+  readonly approvals: readonly PendingApproval[];
 }
 
 export interface DurableViewSource {
@@ -60,4 +65,8 @@ export interface DurableController {
   toggleTasks(): Promise<void>;
   /** Show and talk to another conversation. */
   switchConversation(id: ConversationId): Promise<void>;
+  /** Decide a pending approval as this client; a later decision than the first is reported, not applied. */
+  approve(approval: PendingApproval, approved: boolean): Promise<void>;
+  /** Fork the shown conversation at an entry, switch to the fork, and send it `prompt`. */
+  fork(entryId: string, prompt: string, removeTools?: readonly string[]): Promise<void>;
 }

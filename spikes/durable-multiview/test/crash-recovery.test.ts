@@ -19,10 +19,10 @@ interface HostProcess {
   readonly token: string;
 }
 
-async function spawnHost(dataDir: string, port: number): Promise<HostProcess> {
+async function spawnHost(dataDir: string, port: number, model: readonly string[] = ["--faux", LONG_ANSWER, "--faux-tps", "40"]): Promise<HostProcess> {
   const child = spawn(
     process.execPath,
-    ["host/main.ts", "--data-dir", dataDir, "--cwd", dataDir, "--port", String(port), "--faux", LONG_ANSWER, "--faux-tps", "40", "--lock-stale-ms", "2000"],
+    ["host/main.ts", "--data-dir", dataDir, "--cwd", dataDir, "--port", String(port), ...model, "--lock-stale-ms", "2000"],
     { cwd: spikeDir, stdio: ["ignore", "pipe", "inherit"] },
   );
   cleanups.push(() => {
@@ -79,4 +79,36 @@ it("resumes both clients after the host is killed mid-stream and restarted", asy
   expect(answer).toEqual({ role: "assistant", text: LONG_ANSWER, stopReason: "stop" });
   expect(rest).toEqual([]);
   expect(b.view.current().conversation).toEqual(a.view.current().conversation);
+});
+
+it("finds the same three subagents after the host is killed while they investigate", async () => {
+  const dir = await tempDir();
+  cleanups.push(dir.remove);
+  const port = await freePort();
+  const demo = ["--faux-demo", "--pace-ms", "150"];
+  const first = await spawnHost(dir.path, port, demo);
+  const client = await connectRemoteDurable({ url: first.url, token: first.token, reconnectDelayMs: { min: 100, max: 500 } });
+  cleanups.push(() => client.close());
+  const subagents = () => client.view.current().conversations.filter((summary) => summary.label.startsWith("subagent"));
+
+  await client.controller.toggleTasks();
+  await client.controller.submit("v2.3 release failed, find out why", "followUp");
+  // Kill once all three children run their investigation tools, before any finished.
+  await waitForView(client.view, (view) => {
+    const children = new Set(subagents().map((summary) => summary.id));
+    return Object.values(view.tasks?.tasks ?? {}).filter((node) => node.kind === "pi.tool" && children.has(node.conversationId)).length === 3;
+  });
+  const before = subagents().map((summary) => summary.id);
+  expect(before).toHaveLength(3);
+  first.child.kill("SIGKILL");
+  await once(first.child, "exit");
+  await waitForView(client.view, (view) => view.connection === "reconnecting");
+
+  await spawnHost(dir.path, port, demo);
+  await waitForView(
+    client.view,
+    (view) => view.connection === "connected" && !isBusy(view.conversation) && /recommend rolling back/i.test(transcript(view.conversation).at(-1)?.text ?? ""),
+    30_000,
+  );
+  expect(subagents().map((summary) => summary.id)).toEqual(before);
 });

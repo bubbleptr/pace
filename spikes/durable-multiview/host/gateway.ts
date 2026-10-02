@@ -8,14 +8,19 @@ import {
   AgentDoc,
   type AgentState,
   type Conversation,
+  type ConversationDocToken,
   type ConversationId,
+  type ConversationRecord,
   type Cursor,
+  type EntryId,
   type EntryRecord,
   type Harness,
+  type JsonObject,
   ROOT_CONVERSATION_ID,
   type WatchHandle,
 } from "@earendil-works/pi-durable";
 import { WebSocket, WebSocketServer } from "ws";
+import type { ApprovalDecision, PendingApproval } from "../protocol/demo.ts";
 import {
   type CallMethod,
   type CallMethods,
@@ -28,6 +33,13 @@ import type { ConversationSummary, ModelSummary, Notice, SessionInfo } from "../
 
 const context: Context = BACKGROUND_CONTEXT;
 
+/** Tool calls held for a human decision, and the way to decide them. */
+export interface ApprovalSource {
+  readonly value: readonly PendingApproval[];
+  subscribe(listener: (pending: readonly PendingApproval[]) => void): () => void;
+  decide(conversationId: ConversationId, id: string, approved: boolean, by: string): Promise<{ decision: ApprovalDecision; first: boolean }>;
+}
+
 export interface GatewayOptions {
   readonly harness: Harness;
   readonly models: Models;
@@ -35,6 +47,9 @@ export interface GatewayOptions {
   readonly session: SessionInfo;
   readonly token: string;
   readonly port: number;
+  readonly approvals?: ApprovalSource;
+  /** Conversation documents offered as `doc:<kind>:<conversationId>` streams. */
+  readonly docs?: readonly ConversationDocToken<JsonObject>[];
 }
 
 export interface Gateway {
@@ -96,7 +111,7 @@ class ConversationList {
     let cursor: Cursor | undefined;
     do {
       const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), context);
-      for (const { id } of page.items) summaries.push({ id, label: labelOf(id), ...(await firstInput(harness, id)) });
+      for (const record of page.items) summaries.push({ id: record.id, label: labelOf(record), ...(await firstInput(harness, record.id)) });
       cursor = page.next;
     } while (cursor !== undefined);
     const list = new ConversationList(summaries);
@@ -105,7 +120,7 @@ class ConversationList {
       let next = list.#list;
       for (const change of publication.changes) {
         if (change.type === "conversation") {
-          next = [...next, { id: change.value.id, label: labelOf(change.value.id) }];
+          next = [...next, { id: change.value.id, label: labelOf(change.value) }];
         } else if (change.type === "entry" && change.value.kind === "pi.user") {
           const id = change.value.conversationId;
           next = next.map((summary) => (summary.id === id && summary.title === undefined ? { ...summary, ...titleOf(change.value) } : summary));
@@ -141,7 +156,11 @@ class ConversationList {
   }
 }
 
-const labelOf = (id: ConversationId): string => (id === ROOT_CONVERSATION_ID ? "main" : `subagent ${id}`);
+function labelOf(record: ConversationRecord): string {
+  if (record.id === ROOT_CONVERSATION_ID) return "main";
+  if (record.owner !== undefined) return `subagent ${record.id}`;
+  return record.parent === undefined ? `conversation ${record.id}` : `fork ${record.id}`;
+}
 
 function titleOf(entry: EntryRecord | undefined): { title?: string } {
   const message = entry?.model?.[0];
@@ -156,6 +175,7 @@ function titleOf(entry: EntryRecord | undefined): { title?: string } {
 /**
  * The oldest user message of a conversation, a subagent's task. Unlike upstream, main gets
  * one too: the commit listener titles it live, and a restarted host must list the same.
+ * A fork's own first message, not one it inherits, as the listener sees it.
  */
 async function firstInput(harness: Harness, id: ConversationId): Promise<{ title?: string }> {
   const conversation = (await harness.conversation(id, context))!;
@@ -163,7 +183,7 @@ async function firstInput(harness: Harness, id: ConversationId): Promise<{ title
   let cursor: Cursor | undefined;
   do {
     const page = await conversation.entries({}, 256, cursor, context);
-    first = page.items.findLast((entry) => entry.kind === "pi.user") ?? first;
+    first = page.items.findLast((entry) => entry.kind === "pi.user" && entry.conversationId === id) ?? first;
     cursor = page.next;
   } while (cursor !== undefined);
   return titleOf(first);
@@ -188,6 +208,7 @@ class GatewayClient {
       session: options.session,
       root: ROOT_CONVERSATION_ID,
       models: options.modelSummaries(),
+      docs: (options.docs ?? []).map((token) => token.definition.kind),
     });
   }
 
@@ -229,9 +250,54 @@ class GatewayClient {
       const unsubscribe = this.#conversations.subscribe((value) => void this.send({ type: "snapshot", stream, value }));
       return { stop: unsubscribe };
     }
+    if (stream === "approvals") {
+      const approvals = this.#options.approvals;
+      void this.send({ type: "snapshot", stream, value: approvals?.value ?? [] });
+      const unsubscribe = approvals?.subscribe((value) => void this.send({ type: "snapshot", stream, value })) ?? (() => {});
+      return { stop: unsubscribe };
+    }
     if (stream === "tasks") return this.#forward(stream, await this.#options.harness.watchTaskGraph(context));
+    if (stream.startsWith("doc:")) {
+      const at = stream.lastIndexOf(":");
+      return this.#openDoc(stream, stream.slice("doc:".length, at), Number(stream.slice(at + 1)) as ConversationId);
+    }
     const conversation = await this.#conversation(Number(stream.slice("conversation:".length)) as ConversationId);
     return this.#forward(stream, await conversation.watch(context));
+  }
+
+  /** A document that does not exist yet streams `null`, then its value from the commit that creates it. */
+  async #openDoc(stream: StreamName, kind: string, id: ConversationId): Promise<Subscription> {
+    const token = this.#options.docs?.find((candidate) => candidate.definition.kind === kind);
+    if (token === undefined) throw new Error(`Unknown document ${kind}`);
+    await this.#conversation(id);
+    const { harness } = this.#options;
+    const existing = await harness.watchDoc(token, id, context);
+    if (existing !== undefined) return this.#forward(stream, existing);
+    await this.send({ type: "snapshot", stream, value: null });
+    let inner: Subscription | undefined;
+    let stopped = false;
+    const unsubscribe = harness.subscribeCommits((publication) => {
+      const created = publication.changes.some(
+        (change) => (change.type === "document" || change.type === "document.copy") && change.record.kind === kind && change.conversationId === id,
+      );
+      if (!created) return;
+      unsubscribe();
+      // A commit listener must not call Session APIs; attach after it returns.
+      setImmediate(() => {
+        void harness.watchDoc(token, id, context).then(async (watch) => {
+          if (watch === undefined) return;
+          if (stopped) await watch.stop();
+          else inner = await this.#forward(stream, watch);
+        });
+      });
+    });
+    return {
+      stop: async () => {
+        stopped = true;
+        unsubscribe();
+        await inner?.stop();
+      },
+    };
   }
 
   async #forward<T>(stream: StreamName, watch: WatchHandle<T>): Promise<Subscription> {
@@ -306,6 +372,22 @@ class GatewayClient {
         const level = agent.thinkingLevel ?? "off";
         await conversation.configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, context);
         return null;
+      }
+      case "approve": {
+        const { approvalId, approved, by } = args as CallMethods["approve"]["args"];
+        if (this.#options.approvals === undefined) throw new Error("This host has no approvals");
+        return this.#options.approvals.decide(conversation.id, approvalId, approved, by);
+      }
+      case "fork": {
+        const { entryId, removeTools = [] } = args as CallMethods["fork"]["args"];
+        // Tools are stored by name; the fork's agent drops these from what its parent offered.
+        const remove = (await conversation.agent(context)).tools.filter((tool) => removeTools.includes(tool.name));
+        const fork = await conversation.fork(
+          Number(entryId) as EntryId,
+          { ownership: { kind: "ownerless" }, ...(remove.length === 0 ? {} : { agent: { tools: { remove } } }) },
+          context,
+        );
+        return { conversationId: fork.id };
       }
     }
   }

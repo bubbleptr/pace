@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai/models";
 import {
+  type Conversation,
   createRegistry,
   Harness,
   type HarnessSettings,
@@ -13,8 +14,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
-import type { ModelSummary } from "../protocol/view.ts";
-import { startGateway } from "./gateway.ts";
+import type { ModelSummary, Notice } from "../protocol/view.ts";
+import { type GatewayOptions, startGateway } from "./gateway.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -32,12 +33,20 @@ export interface OpenHostOptions {
   readonly port: number;
   /** How long a lock left by a killed host blocks the next one. proper-lockfile's minimum is 2000. */
   readonly lockStaleMs?: number;
+  /** Tool calls held for a human decision, offered to every client. */
+  readonly approvals?: GatewayOptions["approvals"];
+  /** Conversation documents clients may subscribe to besides the built-in ones. */
+  readonly docs?: GatewayOptions["docs"];
+  /** Runs after the root exists and before recovered work resumes. */
+  readonly onOpen?: (harness: Harness, root: Conversation) => Promise<void>;
 }
 
 export interface OpenedHost {
   readonly url: string;
   readonly token: string;
   readonly harness: Harness;
+  /** Tell every connected client. */
+  notify(level: Notice["level"], message: string): void;
   close(): Promise<void>;
 }
 
@@ -83,13 +92,14 @@ export async function openHost(options: OpenHostOptions): Promise<OpenedHost> {
       context,
     );
     const { initialModel } = options;
-    await harness.root(context, {
+    const root = await harness.root(context, {
       agent: {
         cwd: options.cwd,
         ...(initialModel === undefined ? {} : { model: { provider: initialModel.provider, modelId: initialModel.modelId } }),
         ...(initialModel?.thinkingLevel === undefined ? {} : { thinkingLevel: initialModel.thinkingLevel }),
       },
     });
+    await options.onOpen?.(harness, root);
     const gateway = await startGateway({
       harness,
       models: options.models,
@@ -97,6 +107,8 @@ export async function openHost(options: OpenHostOptions): Promise<OpenedHost> {
       session: { id: basename(options.dataDir), directory: options.dataDir, cwd: options.cwd },
       token,
       port: options.port,
+      ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
+      ...(options.docs === undefined ? {} : { docs: options.docs }),
     });
     report = (error) => gateway.broadcast("warning", error instanceof Error ? error.message : String(error));
     for (const error of reports.splice(0)) report(error);
@@ -109,6 +121,7 @@ export async function openHost(options: OpenHostOptions): Promise<OpenedHost> {
       url: gateway.url,
       token,
       harness,
+      notify: (level, message) => gateway.broadcast(level, message),
       close() {
         closing ??= (async () => {
           try {

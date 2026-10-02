@@ -3,12 +3,17 @@
 // is a gateway client. Run on Node, not Bun (node:sqlite, pi-durable's engines).
 //
 //   node host/main.ts [--data-dir DIR] [--port 7420] [--cwd DIR]
+//   node host/main.ts --demo                  # the on-call demo on the real model; edits to host/demo/investigation.ts reload live
+//   node host/main.ts --faux-demo             # the same demo driven by a scripted model, for tests and rehearsals
 //   node host/main.ts --faux "scripted answer" [--faux-tps 40]   # no real model, for tests
+import { watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { type FauxResponseStep, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { getAgentDir, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { oncallScript } from "./demo/faux-script.ts";
+import { createDemo, type Demo } from "./demo/index.ts";
 import { type OpenHostOptions, openHost } from "./host.ts";
 import { configureHarnessHttp, createHarnessSettings, defaultModel, modelSummaries } from "./pi-setup.ts";
 
@@ -20,24 +25,38 @@ const { values } = parseArgs({
     faux: { type: "string" },
     "faux-tps": { type: "string", default: "40" },
     "lock-stale-ms": { type: "string" },
+    demo: { type: "boolean", default: false },
+    "faux-demo": { type: "boolean", default: false },
+    "pace-ms": { type: "string" },
+    "step-ms": { type: "string" },
+    "reminder-seconds": { type: "string" },
   },
 });
 
+const number = (value: string | undefined): number | undefined => (value === undefined ? undefined : Number(value));
 const cwd = resolve(values.cwd ?? process.cwd());
 const dataDir = resolve(values["data-dir"] ?? join(getAgentDir(), "experimental", "durable-multiview", "default"));
+const demo: Demo | undefined =
+  values.demo || values["faux-demo"]
+    ? await createDemo({
+        ...(values["pace-ms"] === undefined ? {} : { paceMs: Number(values["pace-ms"]) }),
+        ...(values["step-ms"] === undefined ? {} : { stepMs: Number(values["step-ms"]) }),
+      })
+    : undefined;
 const common = {
   dataDir,
   cwd,
   port: Number(values.port),
   ...(values["lock-stale-ms"] === undefined ? {} : { lockStaleMs: Number(values["lock-stale-ms"]) }),
+  ...demo?.hostOptions,
 };
 
-function fauxOptions(answer: string): OpenHostOptions {
+function fauxOptions(responses: () => FauxResponseStep): OpenHostOptions {
   const faux = fauxProvider({ tokensPerSecond: Number(values["faux-tps"]), tokenSize: { min: 1, max: 1 } });
   const models = createModels();
   models.setProvider(faux.provider);
-  // Every request gets the same answer, so a request rerun after a crash streams it again.
-  faux.setResponses(Array.from({ length: 100 }, () => () => fauxAssistantMessage(answer)));
+  // Every request gets a fresh step, so a request rerun after a crash streams it again.
+  faux.setResponses(Array.from({ length: 1000 }, responses));
   const model = faux.getModel();
   const summary = { provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow };
   return { ...common, models, modelSummaries: () => [summary], initialModel: { provider: model.provider, modelId: model.id } };
@@ -57,12 +76,33 @@ async function piOptions(): Promise<OpenHostOptions> {
   };
 }
 
-const options = values.faux === undefined ? await piOptions() : fauxOptions(values.faux);
+const reminderSeconds = number(values["reminder-seconds"]);
+const options =
+  values["faux-demo"]
+    ? fauxOptions(() => oncallScript(reminderSeconds === undefined ? {} : { reminderSeconds }))
+    : values.faux !== undefined
+      ? fauxOptions(() => () => fauxAssistantMessage(values.faux!))
+      : await piOptions();
 const host = await openHost(options);
 const model = options.initialModel === undefined ? null : `${options.initialModel.provider}/${options.initialModel.modelId}`;
 // The web client (`bun run web`) reads the host from the fragment, which never leaves the browser.
 const web = `http://127.0.0.1:5199/#token=${encodeURIComponent(host.token)}&url=${encodeURIComponent(host.url)}`;
-console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, dataDir, model, web }));
+console.log(JSON.stringify({ event: "ready", url: host.url, token: host.token, dataDir, model, web, demo: demo !== undefined }));
+
+if (demo !== undefined) {
+  // Editors save in bursts; reload once the burst settles.
+  let timer: NodeJS.Timeout | undefined;
+  const watcher = watch(demo.investigationModule, () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      demo.reload().then(
+        (loads) => host.notify("info", `Reloaded the investigation tools (load ${loads}).`),
+        (error: unknown) => host.notify("error", `Reload failed: ${error instanceof Error ? error.message : String(error)}`),
+      );
+    }, 200);
+  });
+  process.once("exit", () => watcher.close());
+}
 
 let stopping = false;
 const stop = (): void => {

@@ -1,10 +1,12 @@
 import { applyImmutable } from "@earendil-works/chord/delta";
-import type { ConversationId, ConversationView, TaskGraph } from "@earendil-works/pi-durable";
+import type { ConversationId, ConversationView, JsonObject, TaskGraph } from "@earendil-works/pi-durable";
+import type { PendingApproval } from "./demo.ts";
 import {
   type CallMethod,
   type CallMethods,
   type ClientFrame,
   conversationStream,
+  docStream,
   type ServerFrame,
   type StreamName,
   UNAUTHORIZED_CLOSE_CODE,
@@ -25,7 +27,11 @@ export type RemoteDurableOptions = (
       readonly token: string;
     }
   | { readonly transport: FrameTransport }
-) & { readonly reconnectDelayMs?: { readonly min: number; readonly max: number } };
+) & {
+  readonly reconnectDelayMs?: { readonly min: number; readonly max: number };
+  /** Who this client is in approval decisions, such as "web" or "tui". */
+  readonly clientName?: string;
+};
 
 export interface RemoteDurable {
   readonly view: DurableViewSource;
@@ -49,7 +55,8 @@ class RemoteClient {
   readonly #options: RemoteDurableOptions;
   readonly #listeners = new Set<() => void>();
   readonly #values = new Map<StreamName, unknown>();
-  readonly #wanted = new Set<StreamName>(["conversations"]);
+  readonly #wanted = new Set<StreamName>(["conversations", "approvals"]);
+  #docKinds: readonly string[] = [];
   readonly #snapshotWaiters = new Map<StreamName, { resolve(): void; reject(error: Error): void }[]>();
   readonly #pending = new Map<number, Pending>();
   readonly #transport: FrameTransport;
@@ -123,7 +130,8 @@ class RemoteClient {
       case "hello": {
         this.#attempt = 0;
         this.#current ??= frame.root;
-        this.#wanted.add(conversationStream(this.#current));
+        this.#docKinds = frame.docs;
+        for (const stream of this.#conversationStreams(this.#current)) this.#wanted.add(stream);
         for (const stream of this.#wanted) this.#send({ type: "subscribe", stream });
         if (this.#state !== undefined) this.#update({ session: frame.session, models: frame.models, connection: "connected" });
         else this.#awaitFirstView(frame);
@@ -171,7 +179,10 @@ class RemoteClient {
         models: hello.models,
         notices: [],
         connection: "connected",
+        docs: {},
+        approvals: [],
       };
+      this.#refresh();
       this.#resolveReady({ view: this.#viewSource(), controller: this.#controller(), close: () => this.#close() });
     });
   }
@@ -185,15 +196,30 @@ class RemoteClient {
     });
   }
 
+  /** The streams that show one conversation: its view and its documents. */
+  #conversationStreams(id: ConversationId): StreamName[] {
+    return [conversationStream(id), ...this.#docKinds.map((kind) => docStream(kind, id))];
+  }
+
   #refresh(): void {
     if (this.#state === undefined || this.#current === undefined) return;
-    const conversation = this.#values.get(conversationStream(this.#current)) as ConversationView | undefined;
+    const current = this.#current;
+    const conversation = this.#values.get(conversationStream(current)) as ConversationView | undefined;
     const conversations = this.#values.get("conversations") as ConversationSummary[] | undefined;
+    const approvals = this.#values.get("approvals") as PendingApproval[] | undefined;
     const tasks = this.#wanted.has("tasks") ? (this.#values.get("tasks") as TaskGraph | undefined) : undefined;
+    const docs = Object.fromEntries(
+      this.#docKinds.flatMap((kind) => {
+        const stream = docStream(kind, current);
+        return this.#values.has(stream) ? [[kind, this.#values.get(stream) as JsonObject | null]] : [];
+      }),
+    );
     this.#update({
       ...(conversation === undefined ? {} : { conversation }),
       ...(conversations === undefined ? {} : { conversations }),
+      ...(approvals === undefined ? {} : { approvals }),
       tasks,
+      docs,
     });
   }
 
@@ -276,22 +302,44 @@ class RemoteClient {
           this.#send({ type: "subscribe", stream: "tasks" });
           await shown;
         }),
-      switchConversation: (id) =>
+      switchConversation: (id) => this.#command(() => this.#switch(id)),
+      approve: (approval, approved) =>
         this.#command(async () => {
-          const next = conversationStream(id);
-          const previous = conversationStream(conversationId());
-          if (next === previous) return;
-          this.#wanted.add(next);
-          const shown = this.#snapshot(next);
-          this.#send({ type: "subscribe", stream: next });
-          await shown;
-          this.#current = id;
-          this.#wanted.delete(previous);
-          this.#values.delete(previous);
-          this.#send({ type: "unsubscribe", stream: previous });
-          this.#refresh();
+          const by = this.#options.clientName ?? "client";
+          const args = { conversationId: approval.conversationId, approvalId: approval.id, approved, by };
+          const { decision, first } = await this.#call("approve", args);
+          const verdict = decision.approved ? "approved" : "denied";
+          this.#notice("info", first ? `You ${verdict} the ${approval.tool}.` : `Already ${verdict} by ${decision.by}.`);
+        }),
+      fork: (entryId, prompt, removeTools) =>
+        this.#command(async () => {
+          const { conversationId: forked } = await this.#call("fork", {
+            conversationId: conversationId(),
+            entryId,
+            ...(removeTools === undefined ? {} : { removeTools }),
+          });
+          // The fork is listed once its creating commit reaches the conversation list; switching does not need that.
+          await this.#switch(forked);
+          await this.#call("submit", { conversationId: forked, text: prompt, whenBusy: "followUp", requestId: crypto.randomUUID() });
         }),
     };
+  }
+
+  async #switch(id: ConversationId): Promise<void> {
+    const previous = this.#current!;
+    if (id === previous) return;
+    const next = this.#conversationStreams(id);
+    for (const stream of next) this.#wanted.add(stream);
+    const shown = Promise.all(next.map((stream) => this.#snapshot(stream)));
+    for (const stream of next) this.#send({ type: "subscribe", stream });
+    await shown;
+    this.#current = id;
+    for (const stream of this.#conversationStreams(previous)) {
+      this.#wanted.delete(stream);
+      this.#values.delete(stream);
+      this.#send({ type: "unsubscribe", stream });
+    }
+    this.#refresh();
   }
 
   #close(): void {

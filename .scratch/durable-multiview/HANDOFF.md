@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0–P3 完成（见 §10–§13），下一步 P4（演示扩展与剧本）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 `feat/durable-multiview-pace`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
+- 状态：P0–P3 完成（见 §10–§13），P4 拆成两段：P4a 宿主侧演示扩展与协议已完成（§14），下一步 P4b（三端界面与剧本验证）。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 [#430](https://github.com/bubbleptr/pace/pull/430) ← P4a `feat/durable-multiview-demo`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -267,3 +267,42 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
   - 渲染进程：一个传输适配器，加上把新事件类型列入忽略列表。
   - 视图状态由渲染进程持有，ops 只应用一次，没有经过 Session Projection 和 Journal。这一点和 ADR-0044「渲染进程单写者投影」一致，但**和 ADR-0021 的双持久化轨道是并列的另一条路**：Durable 自己的 SQLite 才是真相，Pace 不再需要 Journal。结论文档要讨论这一点。
 - 后端只做透传，所以 Durable 的背压（`watch()` 积压 100 帧后折叠）在宿主到后端这一段生效。后端到渲染进程这一段的 IPC 没有背压：慢渲染进程会在 Electron IPC 队列里积压。spike 里看不到问题，但真实接入要考虑。
+
+## 14. P4a 进展（2026-10-02）：宿主侧演示扩展与协议
+
+P4 拆成两个 PR：P4a 是宿主扩展、网关和客户端协议，三端界面暂时不变；P4b 做三端界面（审批、待办、fork、思考块、窄屏、用量）和完整剧本的验证脚本。
+
+### 14.1 落地的内容
+
+- `host/demo/`（`node host/main.ts --demo` 走真模型，`--faux-demo` 走剧本模型；`bun run demo` / `bun run demo:faux`）：
+  - `oncall.ts`：只给 main 和它的 fork 用的扩展。`playbook` section 把 §6 的流程写死给模型；`plan` section 把待办渲染进系统提示。工具有 `update_plan`（写 `demo.plan` 文档）、`subagent`（照示例 22，`replay: "safe"`，按 `area` 只给子会话对应的那一个调查工具，并去掉 `oncall` 扩展）、`rollback`、`schedule_check`。
+  - **审批（§8.1 选了 a）**：`beforeTool` 钩子只拦 `rollback`。先读 memo，再读 `demo.approvals` 文档，都没有才去内存里的 `ApprovalBoard` 登记等待；拿到决定后写 memo。客户端点「批准」走网关的 `approve`，宿主在一次提交里 `decisions[id] ??= 决定`，先写者胜，后点的人收到「已被 X 批准」。等待随钩子的 `context` 取消（Esc）。
+  - `tasks.ts`：`demo.rollback` 一次建 3 个区域子任务，`waiting` + `failFast`。`eu-west` 的健康检查必失败，另外两个区域正在切换时被中止，在 abort 处理里「恢复流量」作为补偿（自下而上，补偿完才落 `aborted`）。进度写进 `demo.rollout` 文档，`rollback` 工具轮询它作为运行中输出。`rollback` 也是 `replay: "safe"`：在同一次提交里先按 kind 扫描任务、按 `owner` 过滤，找到就复用，所以崩溃后不会再建第二个回滚。
+  - `demo.reminder`：`schedule_check` 建的 background 任务，`until` 是绝对时间存在输入里，`runtime.sleep` 到点后以 `requestId: reminder:<taskId>` 发 follow-up。
+  - `investigation.ts`：三个模拟调查工具，逐行慢速 `api.output`。按路径加载，`Demo.reload()` 用带 `?v=N` 的 URL 重新 import，`registry.install` 同名替换。`main.ts` 在 `--demo` 下监听这个文件，保存后自动热替换并通知三端。改 `const FORMAT = "plain"` 为 `"table"` 就能看到下一次输出变成表格。
+  - `faux-script.ts`：剧本模型。主会话和三个并行子会话的请求交错到达，所以每次都只按请求本身决定下一步：请求里提供了哪些工具，以及最新一条用户输入之后的消息。
+- 网关与协议：
+  - 新流 `approvals`（待审批列表）和 `doc:<kind>:<conversationId>`（`hello.docs` 列出可订阅的文档 kind）。
+  - 新调用 `approve`、`fork`（`removeTools` 按名字从父会话当前提供的工具里去掉）。
+  - 会话标签区分 `subagent N` / `fork N`。fork 的标题取它自己的第一条用户消息，不取继承来的。
+  - `DurableView` 多了 `docs`（当前会话的扩展文档）和 `approvals`；`DurableController` 多了 `approve(approval, approved)`、`fork(entryId, prompt, removeTools?)`。客户端有 `clientName`，审批记录里的 `by` 就是它。
+- `openHost` 多了 `approvals`、`docs`、`onOpen`，返回值多了 `notify`。演示的 `onOpen` 给 main 去掉三个调查工具，逼它委派给子代理。
+
+### 14.2 验收
+
+- `test/demo.test.ts`（6 条，剧本模型 + 进程内宿主）：
+  - 待办同步；3 个子代理同时在跑（任务图里 3 个调用同时挂着子会话）；子会话只提供自己那个工具。
+  - 两端同时看到审批；A 批准、B 拒绝，B 收到「已被 web 批准」；回滚结果是 `eu-west` 失败、另外两个区域补偿。
+  - 批准后、回滚进行中关掉宿主再开：不再弹审批，也只有一次回滚。
+  - `schedule_check` 之后 Esc，再重启宿主：提醒照样以 follow-up 到达，只到一次。
+  - 在答案处 fork 并去掉 `rollback`：会话列表出现 `fork N`，fork 里的待办是 fork 那一刻的（`asOf`），工具里没有 `rollback`。
+  - 热替换后，下一次子代理的工具输出变成表格。
+- `test/crash-recovery.test.ts` 新增一条：宿主作为子进程，3 个子代理都在跑调查工具时 `kill -9`，重启后会话列表里仍是同样的 3 个子会话，调查完成并给出建议。
+- 真模型冒烟（`radius/deepseek-v4.1-flash`，`--demo`）：模型按 playbook 写了待办，一次派出 3 个子代理（任务图里同时 3 个），汇总后建议回滚到 v2.2。说「回滚」后弹出审批，脚本批准；`eu-west` 失败，另外两个区域补偿。第一次跑时模型因为回滚失败没有安排复查，playbook 已改成「不论成败都 `schedule_check`」。
+
+### 14.3 新发现
+
+- **section 的变化会以 system 消息插在工具结果后面。** `update_plan` 改了待办，下一次请求里，`toolResult` 之后会多一条只带 `sections` 的 system 消息。剧本模型取「最后一条消息」时要跳过它；Pace 渲染转录时也要决定这类 `pi.system` 条目显示不显示。
+- **`ConversationView.docs` 只有 4 个内置文档**，扩展文档要单独 `watchDoc`。`watchDoc` 不会创建文档，文档不存在时返回 `undefined`；网关先发 `null`，再等创建它的那次提交（`document` 或 fork 时的 `document.copy` 变更）到来后挂上 watch。
+- **钩子不能提交，所以「谁在等审批」不是持久状态。** 决定是持久的（文档 + memo），等待只在宿主内存里；宿主重启后钩子重跑，会重新登记。这一点对 Pace 有影响：待审批列表要么走 spike 这样的旁路流，要么改成 §8.1 的 b）方案，用工具加任务把审批变成持久状态。
+- `TaskQuery` 没有按 owner 过滤的字段，只能按 `conversationId` + `kind` 扫，再按 `owner` 过滤。
