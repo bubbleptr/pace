@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：设计已定，未动手。前置的 Pi 1.0 升级在 [PR #425](https://github.com/bubbleptr/pace/pull/425)，合入后从 `origin/main` 开 `feat/durable-multiview-spike`。
+- 状态：P0 完成（见 §10），下一步 P1。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入，分支 `feat/durable-multiview-spike` 从 `origin/main` 开出。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -160,3 +160,28 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
 3. 只把本文件提交进该分支。`docs/research/` 下的 `pi-durable-analysis.md`、`pi-durable-evidence.md`、`pi-durable-visual-guide.md` 是用户写文章的素材，留在工作区、**不提交**，`git add` 时不要用 `-A` 或 `.`。
 4. 读上游 `runtime.ts`、`tui.ts`、`harness-setup.ts`、示例 22/23（链接见 §3.2）。本机有 1.0.0 的 tarball 解包可直接对照：`/private/tmp/pi1/`（`pi-durable`、`pi-coding-agent`、`chord`）。
 5. 按 §7 从 P0 开始，先定 workspace / vitest / tsconfig 的接入方式（§3.3）。
+
+## 10. P0 进展（2026-10-02）
+
+### 10.1 落地的内容
+
+- `spikes/durable-multiview/` 是 bun workspace 包 `@pace/durable-multiview-spike`，依赖锁精确版本（pi-durable / chord / pi-ai / pi-coding-agent 均为 1.0.0，`ws`、`proper-lockfile`、`undici`）。根 `package.json` 的 workspaces 加了 `spikes/*`，根 vitest `exclude` 加了 `spikes/**`；spike 有自己的 `tsconfig.json`（NodeNext、`allowImportingTsExtensions`、`erasableSyntaxOnly`）和 `vitest.config.ts`（node 环境）。源码直接用 Node 25 的类型剥离运行，不需要构建。
+- `host/`：`host.ts`（`openHost`：锁、持久 token、SQLite、Harness、网关、`resume()`）、`gateway.ts`（WebSocket 网关）、`main.ts`（入口，`--faux` 用假模型，否则走 `ModelRuntime` 与 `~/.pi/agent`）、`pi-setup.ts`（上游 `harness-setup.ts` 的设置读取）、`http-dispatcher.ts`（从 Pi 拷贝，注明出处）。
+- `protocol/`：`frames.ts`（帧类型）、`view.ts`（与上游 `DurableView` / `DurableController` 结构一致，只多一个 `connection` 字段）、`remote-durable.ts`（`connectRemoteDurable`）、`transcript.ts`（转录与流式文本提取）。
+- `cli/observe.ts`：命令行观察器，能看也能发（普通行为提问或 follow-up，`/steer`、`/abort`、`/tasks`）。
+- 运行：`node host/main.ts` 起宿主（默认端口 7420，数据目录 `~/.pi/agent/experimental/durable-multiview/default`），另开终端 `node cli/observe.ts`。spike 测试：在 spike 目录下 `bun run test`。
+
+### 10.2 验收
+
+- `test/gateway.test.ts`：宿主在测试进程内，两个远程客户端看到同一段流式输出（B 端收到的每个片段都是最终答案的前缀），最终视图逐字段相等；错误 token 被拒；会话列表与任务图订阅可用。
+- `test/crash-recovery.test.ts`：宿主作为子进程，流式到一半 `kill -9`，两端进入 `reconnecting`，同端口重启后两端自动续上，转录一致。连跑 5 次稳定。
+- 真模型冒烟：`radius/deepseek-v4.1-flash`（读自 `settings.json`）经宿主答复正常。
+
+### 10.3 新发现（P1 之后要用）
+
+- **崩溃后转录里会多一条 aborted 助手消息。** 规格 §8.1 / §8.3：被打断的已提交片段会变成一条 `stopReason: "aborted"` 的 `pi.assistant` 条目，留在转录里但不进入模型上下文，然后用同样的上下文重发请求。所以崩溃后的转录是「用户 → aborted 片段 → 完整答案」。三端 UI 都要把 aborted 条目区分渲染（观察器标 `[aborted]`），剧本 §6 第 3 步的讲解要提这一点。
+- **`ConversationId` 是带品牌的 number**，不是字符串。流名 `conversation:<id>` 解析时要 `Number(...)`。
+- **`watch()` 与 `viewState()` 的区别**：上游 TUI 用的是进程内的 `viewState()`（Chord 已挂载状态，只给值）；网关用 `watch()`，它给 `ops`，并且 listener 返回的 Promise 起背压作用。网关在 socket 写入回调后才 resolve，慢客户端的积压由 `watch()` 自己折叠。
+- **token 要持久化**（数据目录下 `token`，0600）。如果每次启动都重新生成，`kill -9` 重启后客户端就连不上了。鉴权失败时用关闭码 4401，这样浏览器也能读到原因（浏览器 WebSocket 拿不到 HTTP 状态码）。
+- **`submit` 带 `requestId`**（客户端生成 UUID），为「回复丢了再重发不重复提交」做准备；目前客户端还不会自动重发。
+- §3.1 里与 P4 相关的事实（`TaskOptions.background`、`HookApi` 的能力）本阶段没有复核，P4 用到时再核。

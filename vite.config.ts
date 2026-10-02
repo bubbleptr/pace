@@ -33,6 +33,8 @@ export default defineConfig({
       "**/.claude/worktrees/**",
       // Playwright drive scripts, not Vitest suites.
       ".cursor/**",
+      // Spikes run their own Node-environment suites.
+      "spikes/**",
     ],
     pool: "forks",
     // @lobehub/icons ships extensionless directory imports that Node's ESM
