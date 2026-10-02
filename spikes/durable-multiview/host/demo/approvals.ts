@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import type { ConversationId, Harness, TaskId } from "@earendil-works/pi-durable";
 import type { ApprovalDecision, PendingApproval } from "../../protocol/demo.ts";
 import { ApprovalsDoc } from "./state.ts";
 
@@ -65,10 +65,15 @@ export class ApprovalBoard {
     if (harness === undefined) throw new Error("Approvals are not attached to a Harness");
     const candidate: ApprovalDecision = { approved, by, at: Date.now() };
     const decision = await harness.commit(async (tx) => {
-      const pending = this.#waiters.get(id);
-      if (pending?.some((waiter) => waiter.request.conversationId !== conversationId)) {
+      const taskId = Number(id);
+      if (!Number.isSafeInteger(taskId) || taskId < 1 || String(taskId) !== id) {
+        throw new Error("Invalid approval task ID");
+      }
+      const task = await tx.task(taskId as TaskId);
+      if (task === undefined || task.conversationId !== conversationId) {
         throw new Error("Approval belongs to another conversation");
       }
+      const pending = this.#waiters.get(id);
       const doc = await tx.doc(ApprovalsDoc, conversationId);
       if (doc.decisions[id] === undefined && pending === undefined) throw new Error(`No pending approval ${id}`);
       doc.decisions[id] ??= { ...candidate };
