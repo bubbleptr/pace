@@ -1,7 +1,7 @@
 # Handoff：Pi Durable 多端同屏 spike
 
 - 日期：2026-10-02
-- 状态：P0–P4 完成（见 §10–§15）；P5 结论文档另列栈顶 PR。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 [#430](https://github.com/bubbleptr/pace/pull/430) ← P4a [#431](https://github.com/bubbleptr/pace/pull/431) ← P4b `feat/durable-multiview-demo-ui`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入。
+- 状态：P0–P5 完成（见 §10–§16），待 PR 栈审阅。PR 栈：P0 [#426](https://github.com/bubbleptr/pace/pull/426) ← P1 [#427](https://github.com/bubbleptr/pace/pull/427) ← P2 [#429](https://github.com/bubbleptr/pace/pull/429) ← P3 [#430](https://github.com/bubbleptr/pace/pull/430) ← P4a [#431](https://github.com/bubbleptr/pace/pull/431) ← P4b `feat/durable-multiview-demo-ui` ← P5 `feat/durable-multiview-conclusion`。前置的 Pi 1.0 升级 [PR #425](https://github.com/bubbleptr/pace/pull/425) 已合入。
 - 关联：[docs/research/pi-durable-analysis.md](../../docs/research/pi-durable-analysis.md)（框架分析，用户的写作素材，只在本地工作区，不提交）、[ADR-0040](../../docs/adr/0040-root-session-process-isolation.md)、[ADR-0042](../../docs/adr/0042-pace-as-chord-presentation-host.md)、[ADR-0044](../../docs/adr/0044-single-writer-session-projection-in-renderer.md)
 - 目的：把上一个会话里已核实的事实、已定的决策和待决问题交给新会话，避免重查。
 
@@ -363,3 +363,11 @@ bun run verify:demo ../../output/durable-multiview-rerun
 - Fork 和 interrupted 标记移到 assistant 消息级 metadata，不再依赖正文气泡。纯思考、纯工具条目可从真实持久 ID 创建分支；流式和中断条目仍没有 Fork，纯思考中断也有标记。浏览器回归覆盖实际分支创建与中断行为。
 - 上述行为先观察到失败测试再修复。根 typecheck、lint、1975 项测试及 build 通过；完整三端剧本再次通过，本机证据在 `output/durable-multiview-pr432-fixes-20261002/`。无正文消息的桌面与 390px 截图在 `output/durable-multiview-review-fork-20261002/`，已人工检查。
 - 复验期间旧 `web.test.ts` 出现页面未加载导致 textbox 超时；单独 Web 测试和加入临时诊断后的完整 51 项测试均通过。共享 Vite 缓存的假设尚未复现同样故障，未据此修改运行配置，也未增加超时；这是尚未定位的测试启动不稳定性。移除全部诊断后，最后一次原始 `bun run test` 为 12 文件 / 51 项全部通过（15.10s），spike typecheck 也通过。
+
+## 16. P5 完成（2026-10-02）：接入结论
+
+[正式结论文档](../../docs/research/durable-multiview-conclusion.md) 已完成并核对源码，回答传输、投影、子代理呈现、进程模型四个接缝，以及 ADR-0040/0042/0044/0021 的一致原则与冲突。
+
+结论是三端可作为普通客户端共享一个 Durable 宿主，Pace 可复用 backend IPC 且保持 CSP。生产接入仍需要会话/工作区身份、宿主生命周期、端到端背压、重连多流一致性和命令结果不确定性等设计；本次没有批准或实施生产迁移。ADR-0042 的 B0 判别字段待办已落后于当前 `type: request | response | event` 代码，文档明确指出这一点。
+
+`docs/research/pi-durable-{analysis,evidence,visual-guide,product-tradeoffs}.md` 仍是用户的本地写作材料，本轮没有修改或提交。
