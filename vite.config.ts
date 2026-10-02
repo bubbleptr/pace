@@ -17,6 +17,8 @@ export default defineConfig({
         "packages/backend/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp",
       ),
       "@": resolve(__dirname, "apps/desktop/src"),
+      // Dev-only Durable multiview spike page; removed with spikes/durable-multiview.
+      "@pace/durable-spike": resolve(__dirname, "spikes/durable-multiview"),
     },
   },
   server: {
@@ -33,6 +35,8 @@ export default defineConfig({
       "**/.claude/worktrees/**",
       // Playwright drive scripts, not Vitest suites.
       ".cursor/**",
+      // Spikes run their own Node-environment suites.
+      "spikes/**",
     ],
     pool: "forks",
     // @lobehub/icons ships extensionless directory imports that Node's ESM

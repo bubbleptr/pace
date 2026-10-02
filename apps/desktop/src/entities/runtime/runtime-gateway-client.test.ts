@@ -1141,7 +1141,7 @@ describe("Runtime Gateway client", () => {
     ]);
   });
 
-  it.each(["workspace.invalidated", "model_catalog.invalidated", "terminal_output", "terminal_exit"])("ignores ephemeral %s before runtime state and deduplication", async (type) => {
+  it.each(["workspace.invalidated", "model_catalog.invalidated", "terminal_output", "terminal_exit", "durable_spike.frame", "durable_spike.closed"])("ignores ephemeral %s before runtime state and deduplication", async (type) => {
     let receive: ((event: BackendRpcEvent) => void) | undefined;
     const snapshot: RuntimeGatewaySnapshot = { sessionId: "session-1", runtimeId: "pi-sdk:session-1", piSessionId: "pi-session-1", projectId: "pig", cwd: "/repo", status: "idle", events: [], updatedAt: "2026-09-05T00:00:00.000Z" };
     const client = createRuntimeGatewayClient({

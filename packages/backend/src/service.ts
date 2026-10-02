@@ -102,6 +102,7 @@ import {
   type SessionIndexCache,
 } from "./workspace/sessions";
 import { resolveChatWorkspaceRoot } from "./workspace/chat-workspace";
+import { createDurableSpikeBridge, type DurableSpikeBridge } from "./spikes/durable-bridge";
 
 export type BackendRpcRequest = {
   id: string;
@@ -149,6 +150,7 @@ export type BackendServiceOptions = {
   mcpServers?: McpServersService;
   modelCatalog?: ModelCatalog;
   terminalManager?: TerminalManager;
+  durableSpikeBridge?: DurableSpikeBridge;
   /** Fetch the signed-in accounts' model lists once at startup (the app sets this; tests do not). */
   refreshAccountModelsOnStart?: boolean;
 };
@@ -344,6 +346,31 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     }
   });
 
+  // Dev-only Durable spike relay; like terminal streams, neither journaled nor sequenced.
+  // Inert until the dev page connects. Deleted with spikes/durable-multiview.
+  const durableSpikeBridge =
+    options.durableSpikeBridge ??
+    createDurableSpikeBridge({ agentDir, ...(process.env.PACE_DURABLE_SPIKE_URL ? { defaultUrl: process.env.PACE_DURABLE_SPIKE_URL } : {}) });
+  durableSpikeBridge.onEvent((event) => {
+    for (const listener of listeners) {
+      listener({
+        type: "event",
+        event: {
+          id: `evt-${crypto.randomUUID()}`,
+          seq: 0,
+          sessionId: "",
+          piSessionId: "",
+          type: event.kind === "frame" ? "durable_spike.frame" : "durable_spike.closed",
+          ts: new Date().toISOString(),
+          payload:
+            event.kind === "frame"
+              ? { connectionId: event.connectionId, data: event.data }
+              : { connectionId: event.connectionId, code: event.code, ...(event.reason ? { reason: event.reason } : {}) },
+        },
+      });
+    }
+  });
+
   let disposal: Promise<void> | undefined;
   let closing = false;
   return {
@@ -356,6 +383,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
           await runtimeGateway.flush();
           await runtimeJournal.flush?.();
           terminalManager.disposeAll();
+          durableSpikeBridge.dispose();
           gitWatchers.dispose();
           unsubscribeModelCatalog();
           invalidation.dispose();
@@ -392,6 +420,7 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             terminalManager,
             invalidation,
             dataDir,
+            durableSpikeBridge,
           }),
         };
       } catch (error) {
@@ -434,6 +463,7 @@ async function dispatchRequest(input: {
   terminalManager: TerminalManager;
   invalidation: ReturnType<typeof createWorkspaceInvalidation>;
   dataDir: string;
+  durableSpikeBridge: DurableSpikeBridge;
 }) {
   const params = paramsRecord(input.request.params);
 
@@ -694,6 +724,24 @@ async function dispatchRequest(input: {
       return null;
     case "close_terminal":
       input.terminalManager.close(requiredString(params.terminalId, "terminalId"));
+      return null;
+    case "durable_spike_connect": {
+      const url = optionalString(params.url);
+      const token = optionalString(params.token);
+      await input.durableSpikeBridge.connect({
+        connectionId: requiredString(params.connectionId, "connectionId"),
+        ...(url ? { url } : {}),
+        ...(token ? { token } : {}),
+      });
+      return null;
+    }
+    case "durable_spike_send": {
+      if (typeof params.data !== "string") throw new Error("data is required");
+      input.durableSpikeBridge.send({ connectionId: requiredString(params.connectionId, "connectionId"), data: params.data });
+      return null;
+    }
+    case "durable_spike_disconnect":
+      input.durableSpikeBridge.disconnect({ connectionId: requiredString(params.connectionId, "connectionId") });
       return null;
     default:
       throw new Error(`Unknown backend RPC method "${input.request.method}".`);

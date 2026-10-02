@@ -12,6 +12,7 @@ import {
 import { createInMemorySessionProjectionStore } from "./persistence/session-projection-store";
 import type { SessionSummary } from "@pace/core";
 import type { PiRuntimeDriver } from "./gateway/runtime-gateway";
+import type { DurableSpikeBridge, DurableSpikeBridgeEvent } from "./spikes/durable-bridge";
 import type {
   TerminalManager,
   TerminalManagerEvent,
@@ -2242,4 +2243,48 @@ it("delivers external Git changes to linked checkout siblings without a runtime 
     }
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("relays the Durable spike's frames between the renderer and the bridge as unsequenced events", async () => {
+  const bridgeListeners = new Set<(event: DurableSpikeBridgeEvent) => void>();
+  const bridge = {
+    connect: vi.fn(async () => {}),
+    send: vi.fn(),
+    disconnect: vi.fn(),
+    onEvent: vi.fn((listener: (event: DurableSpikeBridgeEvent) => void) => {
+      bridgeListeners.add(listener);
+      return () => bridgeListeners.delete(listener);
+    }),
+    dispose: vi.fn(),
+  } satisfies DurableSpikeBridge;
+  const service = createBackendService({
+    agentDir: fixtureAgentDir(),
+    sessionProjectionStore: createInMemorySessionProjectionStore(),
+    runtimeJournal: createInMemorySessionEventJournal(),
+    runtimeDriver: { onEvent: () => () => {} } as unknown as PiRuntimeDriver,
+    durableSpikeBridge: bridge,
+  });
+  const events: import("./service").BackendRpcEvent[] = [];
+  service.onEvent((event) => events.push(event));
+
+  const connect = { connectionId: "c1", url: "ws://127.0.0.1:7420" };
+  await expect(service.handleRequest({ id: "r1", method: "durable_spike_connect", params: connect })).resolves.toEqual({ id: "r1", result: null });
+  await service.handleRequest({ id: "r2", method: "durable_spike_send", params: { connectionId: "c1", data: "{\"type\":\"subscribe\"}" } });
+  await service.handleRequest({ id: "r3", method: "durable_spike_disconnect", params: { connectionId: "c1" } });
+  expect(bridge.connect).toHaveBeenCalledWith(connect);
+  expect(bridge.send).toHaveBeenCalledWith({ connectionId: "c1", data: "{\"type\":\"subscribe\"}" });
+  expect(bridge.disconnect).toHaveBeenCalledWith({ connectionId: "c1" });
+
+  for (const listener of bridgeListeners) {
+    listener({ kind: "frame", connectionId: "c1", data: "{\"type\":\"hello\"}" });
+    listener({ kind: "closed", connectionId: "c1", code: 4401, reason: "unauthorized" });
+  }
+  const envelope = { id: expect.stringMatching(/^evt-/), seq: 0, sessionId: "", piSessionId: "", ts: expect.any(String) };
+  expect(events).toEqual([
+    { type: "event", event: { ...envelope, type: "durable_spike.frame", payload: { connectionId: "c1", data: "{\"type\":\"hello\"}" } } },
+    { type: "event", event: { ...envelope, type: "durable_spike.closed", payload: { connectionId: "c1", code: 4401, reason: "unauthorized" } } },
+  ]);
+
+  await service.dispose();
+  expect(bridge.dispose).toHaveBeenCalled();
 });
