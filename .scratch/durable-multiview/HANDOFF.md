@@ -219,7 +219,7 @@ Pace 页面放在 `apps/desktop/src/pages/` 下的 dev-only 路由，backend 侧
   - 右侧面板：任务树、队列、通知。
   - 断线时顶部显示 `Banner`，输入框禁用。
   - aborted 条目带橙色 `interrupted` 标签。
-- token 放在 URL 的 `#fragment` 里，不会发给 dev server。宿主的 ready 行里多了一个 `web` 字段，就是完整链接。
+- token 放在 URL 的 `#fragment` 里，不会发给 dev server。宿主 ready 行的 `web` 字段只有无凭证地址；显式运行 `bun run web:link` 获取完整链接，原生客户端从本地 token 文件读取。浏览器来源必须匹配宿主的 Origin 允许列表，见 [检视修复与运行说明](../../docs/research/durable-multiview-review-fixes.md)。
 - `web/tsconfig.json` 用 `Bundler` 解析：Astryx 的 `.d.ts` 是不带扩展名的相对再导出，`NodeNext` 下类型会全部退化。spike 的 `typecheck` 脚本两份配置都会检查。
 - Vite 配置照 Pace 的做法固定一份 `react`（bun 在 `@astryxdesign/core` 下面嵌了第二份）。
 

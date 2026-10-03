@@ -68,11 +68,14 @@ async function readyLine(child, predicate, label) {
 
 async function startHost() {
   const args = ["host/main.ts", "--faux-demo", "--data-dir", hostDir, "--cwd", T, "--port", String(PORT), "--lock-stale-ms", "2000"];
-  args.push("--faux-tps", "60", "--pace-ms", "300", "--step-ms", "1500", "--reminder-seconds", "8", "--investigation-module", investigation);
+  args.push("--browser-origin", `http://127.0.0.1:${webPort}`, "--faux-tps", "60", "--pace-ms", "300", "--step-ms", "1500", "--reminder-seconds", "8", "--investigation-module", investigation);
   const host = spawn(process.execPath, args, { cwd: spike, stdio: ["ignore", "pipe", "inherit"] });
   children.push(host);
   const ready = JSON.parse(await readyLine(host, (line) => line.startsWith("{") && JSON.parse(line).event === "ready", "host"));
-  return { host, ready };
+  const token = readFileSync(ready.tokenFile, "utf8").trim();
+  const web = new URL(ready.web);
+  web.hash = new URLSearchParams({ token, url: ready.url }).toString();
+  return { host, ready: { ...ready, token, web: web.href } };
 }
 async function until(what, predicate, timeout = 30000) {
   const deadline = Date.now() + timeout;
@@ -175,7 +178,10 @@ try {
   await ask(p, "also look at ap-south");
   const logsId = subagents().find((summary) => summary.title.startsWith("logs:")).id;
   await until("the logs subagent is running a tool", () => Object.values(seen().tasks?.tasks ?? {}).some((node) => node.kind === "pi.tool" && node.conversationId === logsId));
-  await ask(p, "focus on the connection pool limit");
+  await p.getByRole("textbox").first().fill("focus on the connection pool limit");
+  await p.getByRole("button", { name: "Send", exact: true }).waitFor();
+  await shoot("05-steer-ready", { pace: p });
+  await p.getByRole("button", { name: "Send", exact: true }).click();
   await until("Pace steers the running subagent", shows(p, "focus on the connection pool limit"));
   await until("the subagent answers Pace", async () => (await p.getByText("Found in search_logs").count()) >= 2);
   await shoot("05-pace-subagent", { pace: p });

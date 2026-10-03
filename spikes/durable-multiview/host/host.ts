@@ -31,6 +31,8 @@ export interface OpenHostOptions {
   readonly initialModel?: ModelRef & { readonly thinkingLevel?: ModelThinkingLevel };
   /** 0 picks a free port. A fixed port lets clients reconnect to a restarted host. */
   readonly port: number;
+  /** Exact browser origins allowed to use the gateway; native clients send no Origin. */
+  readonly browserOrigins?: readonly string[];
   /** How long a lock left by a killed host blocks the next one. proper-lockfile's minimum is 2000. */
   readonly lockStaleMs?: number;
   /** Tool calls held for a human decision, offered to every client. */
@@ -107,6 +109,7 @@ export async function openHost(options: OpenHostOptions): Promise<OpenedHost> {
       session: { id: basename(options.dataDir), directory: options.dataDir, cwd: options.cwd },
       token,
       port: options.port,
+      ...(options.browserOrigins === undefined ? {} : { browserOrigins: options.browserOrigins }),
       ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
       ...(options.docs === undefined ? {} : { docs: options.docs }),
     });

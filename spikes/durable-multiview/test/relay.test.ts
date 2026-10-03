@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { backendRelay } from "../../../apps/desktop/src/dev/durable-spike/backend-relay.ts";
 import { describe, expect, it } from "vitest";
 // Pace's backend relay, the hop between a host and Pace's renderer.
 import { createDurableSpikeBridge, type DurableSpikeBridge } from "../../../packages/backend/src/spikes/durable-bridge.ts";
@@ -9,6 +10,10 @@ import { type FrameRelay, relayTransport } from "../protocol/transport.ts";
 import { connectTo, freePort, startFauxHost, tempDir, useCleanups, waitForView } from "./support.ts";
 
 const defer = useCleanups();
+
+function envelope(type: string, payload: Record<string, unknown>) {
+  return { type: "event" as const, event: { id: "evt-1", seq: 0, sessionId: "", piSessionId: "", type, ts: "2026-10-02T00:00:00Z", payload } };
+}
 
 /** An agent dir holding a host token where the bridge looks for it. */
 async function agentDirWithToken(token: string): Promise<string> {
@@ -36,6 +41,69 @@ async function connectThroughBridge(bridge: DurableSpikeBridge, url: string): Pr
 }
 
 describe("Pace backend relay", () => {
+  it.each(["lifecycle event", "lost socket"])("recovers a live client after a backend restart (%s) and delivers its next command", async (failure) => {
+    const host = await startFauxHost(defer, { answers: ["after-restart-answer"] });
+    const listeners = new Set<(event: ReturnType<typeof envelope>) => void>();
+    const emit = (event: ReturnType<typeof envelope>) => {
+      for (const listener of listeners) listener(event);
+    };
+    const startBackend = () => {
+      const bridge = createDurableSpikeBridge({ agentDir: "/unused", defaultUrl: host.url });
+      const detach = bridge.onEvent((event) => emit(envelope(`durable_spike.${event.kind}`, event)));
+      defer(() => bridge.dispose());
+      return { bridge, detach };
+    };
+    let backend: ReturnType<typeof startBackend> | undefined = startBackend();
+    const invoke = (async (command: string, args: Record<string, unknown> = {}) => {
+      if (backend === undefined) throw new Error("Pace backend is not connected");
+      const connectionId = args.connectionId as string;
+      if (command === "durable_spike_connect") await backend.bridge.connect({ connectionId, token: host.token });
+      else if (command === "durable_spike_send") backend.bridge.send({ connectionId, data: args.data as string });
+      else if (command === "durable_spike_disconnect") backend.bridge.disconnect({ connectionId });
+      else throw new Error(`Unexpected command: ${command}`);
+      return null;
+    }) as <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+    const relay = backendRelay({ invoke, onBackendEvent: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    } });
+    const client = await connectRemoteDurable({ transport: relayTransport(relay, "pace"), reconnectDelayMs: { min: 1, max: 5 } });
+    defer(() => client.close());
+
+    // A crashed process cannot forward the sockets' close events.
+    backend.detach();
+    backend.bridge.dispose();
+    backend = undefined;
+    if (failure === "lifecycle event") {
+      const disconnected = envelope("error", { lifecycle: "disconnected", generation: 1 });
+      disconnected.event.sessionId = "__backend__";
+      emit(disconnected);
+      expect(client.view.current().connection).toBe("reconnecting");
+    } else {
+      backend = startBackend();
+    }
+    await client.controller.submit("offline-command", "followUp");
+    expect(client.view.current().connection).toBe("reconnecting");
+    expect(client.view.current().notices.at(-1)?.message).toMatch(/not connected|disconnected/i);
+
+    backend ??= startBackend();
+    const connected = envelope("status", { lifecycle: "connected", generation: 2 });
+    connected.event.sessionId = "__backend__";
+    emit(connected);
+    await waitForView(client.view, (view) => view.connection === "connected");
+    await client.controller.submit("after-restart-command", "followUp");
+    await waitForView(client.view, (view) => transcript(view.conversation).at(-1)?.text === "after-restart-answer");
+    expect(transcript(client.view.current().conversation).map((item) => item.text)).toEqual([
+      "after-restart-command", "after-restart-answer",
+    ]);
+  });
+
+  it("rejects a command for a connection the restarted backend no longer owns", () => {
+    const bridge = createDurableSpikeBridge({ agentDir: "/unused" });
+    defer(() => bridge.dispose());
+    expect(() => bridge.send({ connectionId: "before-restart", data: "command" })).toThrow(/connection.*not open/i);
+  });
+
   it("carries a client that sees and drives the same conversation as a direct one", async () => {
     const host = await startFauxHost(defer, { answers: ["answer-through-the-relay"] });
     const bridge = createDurableSpikeBridge({ agentDir: await agentDirWithToken(host.token) });

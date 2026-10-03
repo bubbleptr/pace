@@ -25,6 +25,7 @@ import {
   type CallMethod,
   type CallMethods,
   type ClientFrame,
+  isClientFrame,
   type ServerFrame,
   type StreamName,
   UNAUTHORIZED_CLOSE_CODE,
@@ -47,6 +48,8 @@ export interface GatewayOptions {
   readonly session: SessionInfo;
   readonly token: string;
   readonly port: number;
+  /** Exact browser origins permitted to connect. Native clients send no Origin. */
+  readonly browserOrigins?: readonly string[];
   readonly approvals?: ApprovalSource;
   /** Conversation documents offered as `doc:<kind>:<conversationId>` streams. */
   readonly docs?: readonly ConversationDocToken<JsonObject>[];
@@ -68,8 +71,10 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
   });
   const clients = new Set<GatewayClient>();
   server.on("connection", (socket: WebSocket, request: IncomingMessage) => {
+    socket.on("error", () => socket.terminate());
     const token = new URL(request.url ?? "/", "ws://127.0.0.1").searchParams.get("token");
-    if (token !== options.token) {
+    const origin = request.headers.origin;
+    if (token !== options.token || (origin !== undefined && !options.browserOrigins?.includes(origin))) {
       socket.close(UNAUTHORIZED_CLOSE_CODE, "unauthorized");
       return;
     }
@@ -190,19 +195,34 @@ async function firstInput(harness: Harness, id: ConversationId): Promise<{ title
 }
 
 type Subscription = { stop(): Promise<unknown> | void };
+type SubscriptionState = { subscription?: Subscription };
+type SendFrame = (frame: ServerFrame) => Promise<void>;
 
 class GatewayClient {
   readonly #socket: WebSocket;
   readonly #options: GatewayOptions;
   readonly #conversations: ConversationList;
-  readonly #subscriptions = new Map<StreamName, Subscription | "pending">();
+  readonly #subscriptions = new Map<StreamName, SubscriptionState>();
   #disposed = false;
 
   constructor(socket: WebSocket, options: GatewayOptions, conversations: ConversationList) {
     this.#socket = socket;
     this.#options = options;
     this.#conversations = conversations;
-    socket.on("message", (data) => void this.#receive(JSON.parse(String(data)) as ClientFrame));
+    socket.on("message", (data) => {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(String(data));
+      } catch {
+        socket.close(1008, "Invalid client frame");
+        return;
+      }
+      if (!isClientFrame(frame)) {
+        socket.close(1008, "Invalid client frame");
+        return;
+      }
+      void this.#receive(frame).catch(() => socket.close(1011, "Gateway request failed"));
+    });
     this.send({
       type: "hello",
       session: options.session,
@@ -225,91 +245,120 @@ class GatewayClient {
   }
 
   async #subscribe(stream: StreamName): Promise<void> {
-    // A resubscribe restarts the stream from a fresh snapshot.
-    await this.#unsubscribe(stream);
-    this.#subscriptions.set(stream, "pending");
-    let subscription: Subscription | undefined;
+    const previous = this.#subscriptions.get(stream);
+    const state: SubscriptionState = {};
+    this.#subscriptions.set(stream, state);
+    const current = () => !this.#disposed && this.#subscriptions.get(stream) === state;
+    const send: SendFrame = (frame) => (current() ? this.send(frame) : Promise.resolve());
+    let subscription: Subscription;
     try {
-      subscription = await this.#open(stream);
+      await previous?.subscription?.stop();
+      if (!current()) return;
+      subscription = await this.#open(stream, send);
     } catch (error) {
-      this.#subscriptions.delete(stream);
-      await this.send({ type: "ended", stream, reason: error instanceof Error ? error.message : String(error) });
+      if (current()) {
+        await send({ type: "ended", stream, reason: error instanceof Error ? error.message : String(error) });
+        if (current()) this.#subscriptions.delete(stream);
+      }
       return;
     }
-    // Unsubscribed, or the socket went away, while the watch was being acquired.
-    if (this.#disposed || this.#subscriptions.get(stream) !== "pending") {
+    // An obsolete watch can finish acquiring after its replacement has already opened.
+    if (!current()) {
       await subscription.stop();
       return;
     }
-    this.#subscriptions.set(stream, subscription);
+    state.subscription = subscription;
   }
 
-  async #open(stream: StreamName): Promise<Subscription> {
+  async #open(stream: StreamName, send: SendFrame): Promise<Subscription> {
     if (stream === "conversations") {
-      void this.send({ type: "snapshot", stream, value: this.#conversations.value });
-      const unsubscribe = this.#conversations.subscribe((value) => void this.send({ type: "snapshot", stream, value }));
+      void send({ type: "snapshot", stream, value: this.#conversations.value });
+      const unsubscribe = this.#conversations.subscribe((value) => void send({ type: "snapshot", stream, value }));
       return { stop: unsubscribe };
     }
     if (stream === "approvals") {
       const approvals = this.#options.approvals;
-      void this.send({ type: "snapshot", stream, value: approvals?.value ?? [] });
-      const unsubscribe = approvals?.subscribe((value) => void this.send({ type: "snapshot", stream, value })) ?? (() => {});
+      void send({ type: "snapshot", stream, value: approvals?.value ?? [] });
+      const unsubscribe = approvals?.subscribe((value) => void send({ type: "snapshot", stream, value })) ?? (() => {});
       return { stop: unsubscribe };
     }
-    if (stream === "tasks") return this.#forward(stream, await this.#options.harness.watchTaskGraph(context));
+    if (stream === "tasks") return this.#forward(stream, await this.#options.harness.watchTaskGraph(context), send);
     if (stream.startsWith("doc:")) {
       const at = stream.lastIndexOf(":");
-      return this.#openDoc(stream, stream.slice("doc:".length, at), Number(stream.slice(at + 1)) as ConversationId);
+      return this.#openDoc(stream, stream.slice("doc:".length, at), Number(stream.slice(at + 1)) as ConversationId, send);
     }
     const conversation = await this.#conversation(Number(stream.slice("conversation:".length)) as ConversationId);
-    return this.#forward(stream, await conversation.watch(context));
+    return this.#forward(stream, await conversation.watch(context), send);
   }
 
   /** A document that does not exist yet streams `null`, then its value from the commit that creates it. */
-  async #openDoc(stream: StreamName, kind: string, id: ConversationId): Promise<Subscription> {
+  async #openDoc(stream: StreamName, kind: string, id: ConversationId, send: SendFrame): Promise<Subscription> {
     const token = this.#options.docs?.find((candidate) => candidate.definition.kind === kind);
     if (token === undefined) throw new Error(`Unknown document ${kind}`);
     await this.#conversation(id);
     const { harness } = this.#options;
-    const existing = await harness.watchDoc(token, id, context);
-    if (existing !== undefined) return this.#forward(stream, existing);
-    await this.send({ type: "snapshot", stream, value: null });
+    let signalCreation!: () => void;
+    const created = new Promise<void>((resolve) => {
+      signalCreation = resolve;
+    });
     let inner: Subscription | undefined;
     let stopped = false;
+    // Observe creation before probing absence, so a commit cannot fall between the two.
     const unsubscribe = harness.subscribeCommits((publication) => {
-      const created = publication.changes.some(
+      const matches = publication.changes.some(
         (change) => (change.type === "document" || change.type === "document.copy") && change.record.kind === kind && change.conversationId === id,
       );
-      if (!created) return;
+      if (!matches) return;
       unsubscribe();
       // A commit listener must not call Session APIs; attach after it returns.
-      setImmediate(() => {
-        void harness.watchDoc(token, id, context).then(async (watch) => {
-          if (watch === undefined) return;
-          if (stopped) await watch.stop();
-          else inner = await this.#forward(stream, watch);
-        });
-      });
+      setImmediate(() => signalCreation());
     });
+    try {
+      const existing = await harness.watchDoc(token, id, context);
+      if (existing !== undefined) {
+        unsubscribe();
+        return this.#forward(stream, existing, send);
+      }
+      await send({ type: "snapshot", stream, value: null });
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
+    void created
+      .then(async () => {
+        if (stopped) return;
+        const watch = await harness.watchDoc(token, id, context);
+        if (watch === undefined) return;
+        if (stopped) await watch.stop();
+        else {
+          inner = await this.#forward(stream, watch, send);
+          if (stopped) await inner.stop();
+        }
+      })
+      .catch((error: unknown) => {
+        unsubscribe();
+        return send({ type: "ended", stream, reason: error instanceof Error ? error.message : String(error) });
+      });
     return {
       stop: async () => {
         stopped = true;
         unsubscribe();
+        signalCreation();
         await inner?.stop();
       },
     };
   }
 
-  async #forward<T>(stream: StreamName, watch: WatchHandle<T>): Promise<Subscription> {
-    await this.send({ type: "snapshot", stream, value: watch.value });
-    watch.start((_value, ops) => this.send({ type: "ops", stream, ops }));
+  async #forward<T>(stream: StreamName, watch: WatchHandle<T>, send: SendFrame): Promise<Subscription> {
+    await send({ type: "snapshot", stream, value: watch.value });
+    watch.start((_value, ops) => send({ type: "ops", stream, ops }));
     return watch;
   }
 
   async #unsubscribe(stream: StreamName): Promise<void> {
     const subscription = this.#subscriptions.get(stream);
     this.#subscriptions.delete(stream);
-    if (subscription !== undefined && subscription !== "pending") await subscription.stop();
+    await subscription?.subscription?.stop();
   }
 
   async #conversation(id: ConversationId): Promise<Conversation> {
@@ -401,6 +450,6 @@ class GatewayClient {
     this.#disposed = true;
     const subscriptions = [...this.#subscriptions.values()];
     this.#subscriptions.clear();
-    for (const subscription of subscriptions) if (subscription !== "pending") await subscription.stop();
+    for (const state of subscriptions) await state.subscription?.stop();
   }
 }

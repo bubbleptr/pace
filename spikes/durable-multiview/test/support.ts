@@ -28,6 +28,7 @@ export async function startFauxHost(
     tokensPerSecond = 200,
     dataDir,
     port = 0,
+    browserOrigins,
   }: {
     answers?: string[];
     tokensPerSecond?: number;
@@ -35,6 +36,7 @@ export async function startFauxHost(
     dataDir?: string;
     /** Fixed, so clients reconnect to a restarted host. */
     port?: number;
+    browserOrigins?: readonly string[];
   } = {},
 ): Promise<OpenedHost> {
   const dir = dataDir === undefined ? await tempDir() : { path: dataDir, remove: () => {} };
@@ -51,6 +53,7 @@ export async function startFauxHost(
     modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
     initialModel: { provider: model.provider, modelId: model.id },
     port,
+    ...(browserOrigins === undefined ? {} : { browserOrigins }),
   });
   defer(() => host.close());
   return host;
@@ -62,9 +65,10 @@ export async function startDemoHost(
   {
     dataDir,
     port = 0,
+    browserOrigins,
     stepMs = 150,
     investigationModule,
-  }: { dataDir?: string; port?: number; stepMs?: number; investigationModule?: string } = {},
+  }: { dataDir?: string; port?: number; browserOrigins?: readonly string[]; stepMs?: number; investigationModule?: string } = {},
 ): Promise<{ host: OpenedHost; demo: Demo }> {
   const dir = dataDir === undefined ? await tempDir() : { path: dataDir, remove: () => {} };
   defer(dir.remove);
@@ -81,6 +85,7 @@ export async function startDemoHost(
     modelSummaries: () => [{ provider: model.provider, modelId: model.id, name: model.name, contextWindow: model.contextWindow }],
     initialModel: { provider: model.provider, modelId: model.id },
     port,
+    ...(browserOrigins === undefined ? {} : { browserOrigins }),
     ...demo.hostOptions,
     settings: demo.settings(),
   });

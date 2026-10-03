@@ -10,12 +10,13 @@ const defer = useCleanups();
 const webConfig = fileURLToPath(new URL("../web/vite.config.ts", import.meta.url));
 
 it("shows the same conversation in the web page and the TUI, driven from either", async () => {
-  const host = await startFauxHost(defer, { answers: ["answer-for-the-web", "answer-for-the-tui"] });
-  const observer = await connectTo(defer, host);
-
   const vite = await createServer({ configFile: webConfig, server: { port: await freePort() }, logLevel: "error" });
   await vite.listen();
   defer(() => vite.close());
+  const webOrigin = new URL(vite.resolvedUrls!.local[0]!).origin;
+  const host = await startFauxHost(defer, { answers: ["answer-for-the-web", "answer-for-the-tui"], browserOrigins: [webOrigin] });
+  const observer = await connectTo(defer, host);
+
   const browser = await chromium.launch();
   defer(() => browser.close());
   const page = await browser.newPage();

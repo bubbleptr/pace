@@ -5,7 +5,7 @@
 //
 //   node scripts/three-clients.mjs [evidence-dir]    # default: a new temp dir, printed at the end
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,10 +29,13 @@ let paceLog = "";
 const answer = "Root cause: the v2.3 migration locks the orders table for 40 s; deploys time out at 30 s. Fix: run the backfill in batches.";
 
 async function startHost() {
-  const host = spawn(process.execPath, ["host/main.ts", "--data-dir", hostDir, "--cwd", T, "--port", String(PORT), "--faux", answer, "--faux-tps", "5", "--lock-stale-ms", "2000"], { cwd: spike, stdio: ["ignore", "pipe", "inherit"] });
+  const host = spawn(process.execPath, ["host/main.ts", "--data-dir", hostDir, "--cwd", T, "--port", String(PORT), "--browser-origin", "http://127.0.0.1:5299", "--faux", answer, "--faux-tps", "5", "--lock-stale-ms", "2000"], { cwd: spike, stdio: ["ignore", "pipe", "inherit"] });
   children.push(host);
   const ready = await new Promise((resolve) => host.stdout.on("data", (d) => { const s = String(d); if (s.includes("ready")) resolve(JSON.parse(s)); }));
-  return { host, ready };
+  const token = readFileSync(ready.tokenFile, "utf8").trim();
+  const web = new URL(ready.web);
+  web.hash = new URLSearchParams({ token, url: ready.url }).toString();
+  return { host, ready: { ...ready, token, web: web.href } };
 }
 async function until(what, predicate, timeout = 30000) {
   const deadline = Date.now() + timeout;

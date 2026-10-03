@@ -353,7 +353,7 @@ function Composer({
       onChange={setValue}
       // Enter prompts when idle and steers when busy, as in the TUI.
       onSubmit={(text) => void remote.controller.submit(text, "steer")}
-      isStopShown={busy}
+      isStopShown={busy && value.trim() === ""}
       onStop={() => void remote.controller.abort()}
       isDisabled={disconnected}
       placeholder={busy ? "Steer the running turn…" : "Ask the agent…"}
