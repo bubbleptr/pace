@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pace-durable-cloudflare-spike",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "SESSIONS", "class_name": "SessionObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionObject"] }]
+}
