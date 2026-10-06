@@ -100,6 +100,17 @@ const require = __cjs_mod__.createRequire(import.meta.url);
 const QUICKJS_WASM_REQUIRE =
   'createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm")';
 
+// Pi 1.0.4 spawns the codemode worker from an in-memory data: URL so a package
+// update cannot swap the file mid-run (upstream #10439); upstream's own bundle
+// build keeps that worker free of relative imports, which our chunk splitting
+// does not preserve — protocol code is shared with the backend chunk. The
+// packaged app's copy lives inside app.asar and can never change under a
+// running process, so loading the emitted file by URL is the stronger
+// guarantee here and keeps its relative chunk imports resolvable. The two-line
+// block must match exactly once so upstream drift fails loudly.
+const CODEMODE_WORKER_DATA_URL_BLOCK = `    codemodeWorkerDataUrl ??= new URL(\`data:text/javascript;base64,\${readFileSync(specifier).toString("base64")}\`);
+    return codemodeWorkerDataUrl;`;
+
 function rewritePiQuickJsWasmResolution(): Plugin {
   return {
     name: "pigui-pi-quickjs-wasm-path",
@@ -114,13 +125,21 @@ function rewritePiQuickJsWasmResolution(): Plugin {
           `Expected exactly one "${QUICKJS_WASM_REQUIRE}" in ${id}, found ${occurrences}.`,
         );
       }
+      const dataUrlBlocks = code.split(CODEMODE_WORKER_DATA_URL_BLOCK).length - 1;
+      if (dataUrlBlocks !== 1) {
+        throw new Error(
+          `Expected exactly one codemode worker data: URL block in ${id}, found ${dataUrlBlocks}.`,
+        );
+      }
       return {
         code:
           'import { fileURLToPath as __paceFileURLToPath } from "node:url";\n' +
-          code.replace(
-            QUICKJS_WASM_REQUIRE,
-            '__paceFileURLToPath(new URL("./quickjs.wasm", import.meta.url))',
-          ),
+          code
+            .replace(
+              QUICKJS_WASM_REQUIRE,
+              '__paceFileURLToPath(new URL("./quickjs.wasm", import.meta.url))',
+            )
+            .replace(CODEMODE_WORKER_DATA_URL_BLOCK, "    return specifier;"),
         map: null,
       };
     },
