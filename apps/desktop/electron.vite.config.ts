@@ -152,6 +152,110 @@ function assertPiConfigChunkLocation(): Plugin {
   };
 }
 
+// bun's isolated install keeps one real directory per peer-hash combination,
+// so "@earendil-works/pi-ai" can resolve to different physical copies
+// depending on which importer asks. Module-scope singletons then split: Pace's
+// registerBunOAuthFlows() populates pi-ai's bundled OAuth flow loaders on one
+// copy while pi-coding-agent drives loadRadiusOAuth() on the other, whose
+// `bundledLoaders` stays empty and falls back to a variable-specifier
+// import() that cannot resolve inside the packaged app. Re-resolve every
+// @earendil-works import as if pi-coding-agent — the engine everything else
+// embeds — made it, so the whole graph shares one realpath per package.
+// Resolving through pi-coding-agent's own package.json keeps "exports"
+// subpath mapping working (e.g. pi-ai/bun-oauth); a package it does not
+// depend on falls back to the importer's own resolution.
+const piScopeSpecifier = /^@earendil-works\/[^/]+(?:\/|$)/;
+const piPackageJsonPath = join(piPackageDirectory, "package.json");
+
+function dedupePiPackages(): Plugin {
+  return {
+    name: "pigui-dedupe-pi-packages",
+    apply: "build",
+    enforce: "pre",
+    resolveId(source, _importer, options) {
+      if (!piScopeSpecifier.test(source)) {
+        return null;
+      }
+      return this.resolve(source, piPackageJsonPath, { ...options, skipSelf: true });
+    },
+  };
+}
+
+// Build-time backstop for the duplication dedupePiPackages prevents (see
+// above): fail if any @earendil-works package ends up under more than one real
+// directory in the bundle, and require the OAuth loader exactly once — its
+// `bundledLoaders` registry is the module state that must not split.
+const piScopePattern = /\/node_modules\/@earendil-works\/([^/]+)\//g;
+
+// Emitted-code markers for a live OAuth loader registry. moduleIds cannot see
+// the shipped v0.1.0 failure: the second pi-ai copy's registration wrote a
+// variable nothing else read, so rollup dropped its whole graph and exactly
+// one load.js remained — a count of module ids passes while the registry is
+// dead. These three identifiers cover each link: the registry variable, the
+// function that populates it, and the entry-point call that must reach it.
+const requiredOAuthRegistryMarkers = [
+  "bundledLoaders",
+  "registerBundledOAuthFlowLoaders",
+  "registerBunOAuthFlows",
+];
+
+function assertSinglePiPackageCopy(): Plugin {
+  return {
+    name: "pigui-single-pi-package-copy",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const roots = new Map<string, Set<string>>();
+      const oauthLoaders = new Set<string>();
+      let emitted = "";
+      for (const output of Object.values(bundle)) {
+        if (output.type !== "chunk") {
+          continue;
+        }
+        emitted += output.code;
+        for (const id of output.moduleIds) {
+          piScopePattern.lastIndex = 0;
+          let match: RegExpExecArray | null;
+          while ((match = piScopePattern.exec(id))) {
+            const name = match[1];
+            // The innermost occurrence owns the module when packages nest.
+            const root = id.slice(0, match.index + match[0].length - 1);
+            let set = roots.get(name);
+            if (!set) {
+              roots.set(name, (set = new Set()));
+            }
+            set.add(root);
+            if (id.endsWith("pi-ai/dist/auth/oauth/load.js")) {
+              oauthLoaders.add(id);
+            }
+          }
+        }
+      }
+      const duplicated = [...roots.entries()].filter(([, dirs]) => dirs.size > 1);
+      if (duplicated.length > 0) {
+        throw new Error(
+          "Multiple copies of @earendil-works packages in the main bundle:\n" +
+            duplicated
+              .map(([name, dirs]) => `  ${name}:\n${[...dirs].map((d) => `    ${d}`).join("\n")}`)
+              .join("\n"),
+        );
+      }
+      if (oauthLoaders.size !== 1) {
+        throw new Error(
+          `Expected exactly one bundled pi-ai/dist/auth/oauth/load.js, found ${oauthLoaders.size}` +
+            (oauthLoaders.size > 0 ? `: ${[...oauthLoaders].join(", ")}` : "."),
+        );
+      }
+      const missing = requiredOAuthRegistryMarkers.filter((marker) => !emitted.includes(marker));
+      if (missing.length > 0) {
+        throw new Error(
+          `Bundled OAuth flow registration was tree-shaken out of the main bundle (missing: ${missing.join(", ")}); ` +
+            "expired OAuth credentials would fall back to a runtime import() that cannot resolve inside the packaged app.",
+        );
+      }
+    },
+  };
+}
+
 function hoistCommonJsShim(): Plugin {
   return {
     name: "pigui-hoist-cjs-shim",
@@ -240,9 +344,11 @@ export default defineConfig({
     },
     plugins: [
       externalizeDepsPlugin({ exclude: [...internalPackages, "electron-updater"] }),
+      dedupePiPackages(),
       copyMainRuntimeAssets(),
       rewritePiQuickJsWasmResolution(),
       assertPiConfigChunkLocation(),
+      assertSinglePiPackageCopy(),
       hoistCommonJsShim(),
     ],
     build: mainBuild as any,
