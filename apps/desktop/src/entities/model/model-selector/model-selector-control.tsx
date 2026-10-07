@@ -3,8 +3,9 @@
 // (vertical Reasoning levels + Fast Mode switch). Fast siblings are separate
 // catalog entries merged into one family row here. Hover intent uses a
 // safe-triangle (menu-aim): while the pointer travels toward the open flyout
-// it is never stolen by rows on the way. Decision record:
-// .scratch/model-selector/PRD.md
+// it is never stolen by rows on the way, and the open row is dropped the
+// moment the pointer settles on the panel's chrome instead of a row.
+// Decision record: .scratch/model-selector/PRD.md
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Button } from "@astryxdesign/core/Button";
@@ -99,6 +100,21 @@ function useModelFlyout() {
     clearTimer(closeTimerRef);
   };
 
+  /** Ends the hover at once, without the panel-exit grace period. */
+  const closeFlyoutNow = () => {
+    clearTimer(closeTimerRef);
+    clearTimer(switchTimerRef);
+    activeKeyRef.current = null;
+    setActiveKey(null);
+  };
+
+  /**
+   * Every pointer move inside the panel: records the trail the safe triangle
+   * reads, and drops the open row as soon as the pointer has settled on the
+   * panel's chrome (search field, Add Models row) instead of a row. Leaving
+   * the panel keeps closeFlyout's 300ms grace instead, which a pointer
+   * crossing the gap toward the flyout depends on.
+   */
   const trackPointer = (event: React.PointerEvent) => {
     const trail = pointerTrailRef.current;
     const now = Date.now();
@@ -106,6 +122,13 @@ function useModelFlyout() {
 
     while (trail.length > 1 && now - (trail[0]?.time ?? now) > POINTER_TRAIL_MS) {
       trail.shift();
+    }
+
+    if (
+      activeKeyRef.current !== null &&
+      !anchorRef.current?.contains(event.target as Node)
+    ) {
+      closeFlyoutNow();
     }
   };
 

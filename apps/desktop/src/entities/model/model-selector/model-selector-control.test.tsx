@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeModelControls } from "@pace/core";
@@ -128,6 +128,41 @@ describe("ModelSelectorControl visibility", () => {
     await user.click(screen.getByText("Add Models"));
 
     expect(onManageModels).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ModelSelectorControl hover intent", () => {
+  it("drops the active row when the pointer leaves the list for Add Models", async () => {
+    render(
+      <ModelSelectorControl
+        controls={controls}
+        isDisabled={false}
+        onChange={() => {}}
+        onManageModels={() => {}}
+      />,
+    );
+
+    const { user, list } = await openSelector();
+    const rows = within(list).getAllByRole("listitem");
+    const lastRow = rows[rows.length - 1] as HTMLElement;
+
+    await user.hover(lastRow);
+
+    expect(
+      screen.getByRole("group", { name: "Kimi K3 options" }),
+    ).toBeInTheDocument();
+    expect(lastRow).toHaveAttribute("aria-current", "true");
+
+    await user.hover(screen.getByText("Add Models"));
+
+    // The row highlight and its flyout belong to the row under the pointer;
+    // the panel chrome below the list must not keep the last row lit.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("group", { name: "Kimi K3 options" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(lastRow).not.toHaveAttribute("aria-current");
   });
 });
 
