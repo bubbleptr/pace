@@ -1245,30 +1245,31 @@ export function AppFrame({
     });
   };
 
+  // The whole projections array gets a new identity on every store commit —
+  // keying the effect on it cost one pending update per Session event (React error #185).
+  // Only the selected Session's project can change what this effect does.
+  const selectedProjectId = effectiveSelectedSessionId
+    ? effectiveSessionProjections.find(
+        (projection) => projection.id === effectiveSelectedSessionId,
+      )?.projectId
+    : undefined;
+
   useEffect(() => {
-    if (!effectiveSelectedSessionId) {
-      return;
-    }
-
-    const selectedProjection = effectiveSessionProjections.find(
-      (projection) => projection.id === effectiveSelectedSessionId,
-    );
-
-    if (!selectedProjection) {
+    if (!selectedProjectId) {
       return;
     }
 
     updateExpandedProjects((currentExpandedProjects) => {
-      if (currentExpandedProjects[selectedProjection.projectId] === true) {
+      if (currentExpandedProjects[selectedProjectId] === true) {
         return currentExpandedProjects;
       }
 
       return {
         ...currentExpandedProjects,
-        [selectedProjection.projectId]: true,
+        [selectedProjectId]: true,
       };
     });
-  }, [effectiveSelectedSessionId, effectiveSessionProjections]);
+  }, [selectedProjectId]);
 
   useLayoutEffect(() => {
     const root = layoutRef.current;

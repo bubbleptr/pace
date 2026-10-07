@@ -51,7 +51,10 @@ import { type SessionChangesView } from "@/entities/session/use-session-changes"
 import { saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { useVisibleModels } from "@/entities/model/visible-models";
 import { usePromptCommands } from "@/entities/prompt-command";
-import { useLiveSession } from "@/entities/session/use-session-projections";
+import {
+  useLiveSession,
+  useViewedSession,
+} from "@/entities/session/use-session-projections";
 import { type SessionProjectionsStore } from "@/entities/session/session-projections-store";
 import {
   isAssistantAnswerMessage,
@@ -189,6 +192,9 @@ export function LiveSessionColumn({
     apply,
     retryHistory,
   } = useLiveSession(showDraft ? creatingSessionId : sessionId);
+  // The store reads a viewed Session's results as they land (same commit),
+  // where a passive-effect write-back cost one extra commit per event (React error #185).
+  useViewedSession(showDraft ? null : sessionId);
   const promptCommands = usePromptCommands(
     liveProjection ? { sessionId: liveProjection.id } : null,
   );
@@ -283,12 +289,6 @@ export function LiveSessionColumn({
 
     return () => clearTimeout(timer);
   }, [draftHandoff]);
-
-  useEffect(() => {
-    if (!showDraft && liveProjection?.unreadResult) {
-      apply({ type: "latest-message-rendered", occurredAt: new Date().toISOString() });
-    }
-  }, [apply, liveProjection?.unreadResult, showDraft]);
 
   const handleDraftChange = (prompt: string) => {
     setSessionDraft(saveSessionDraft(sessionDraft?.projectId ?? null, prompt));

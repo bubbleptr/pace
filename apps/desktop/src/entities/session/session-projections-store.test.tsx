@@ -1,4 +1,5 @@
 import { act, render } from "@testing-library/react";
+import { Profiler } from "react";
 import { describe, expect, it } from "vitest";
 import type {
   AgentRuntimeEventEntry,
@@ -13,11 +14,15 @@ import {
   createSessionProjection,
   type SessionProjection,
 } from "@/entities/session/session-projection";
-import { createSessionProjectionsStore } from "@/entities/session/session-projections-store";
+import {
+  createSessionProjectionsStore,
+  type SessionProjectionsStore,
+} from "@/entities/session/session-projections-store";
 import {
   SessionProjectionsProvider,
   useLiveSession,
   useSessionProjections,
+  useViewedSession,
 } from "@/entities/session/use-session-projections";
 
 type Listener<T extends unknown[]> = (...args: T) => void;
@@ -551,5 +556,118 @@ describe("Session Projections store", () => {
       store.remove("historical");
       expect(fake.listenerCounts("pi:historical")).toEqual({ legacy: 0, agent: 0, modelControls: 0 });
     });
+  });
+});
+
+function assistantMessage(id: string, piSessionId: string, seq: number): PiRuntimeEvent {
+  return {
+    id,
+    piSessionId,
+    kind: "message",
+    role: "assistant",
+    body: `Reply ${seq}`,
+    timestamp: `2026-09-24T10:00:0${seq}.000Z`,
+  };
+}
+
+describe("viewed Sessions", () => {
+  it("reads results as they land on a viewed Session and keeps them unread once it is released", () => {
+    const fake = createFakeBridge();
+    const store = createStore(fake);
+    store.insert(createSessionProjection({
+      id: "viewed",
+      projectId: "pig",
+      initialPrompt: "Prompt",
+      createdAt: "2026-09-24T09:00:00.000Z",
+    }));
+    store.apply("viewed", {
+      type: "runtime-bound",
+      stage: "starting runtime",
+      runtimeId: "runtime:viewed",
+      piSessionId: "pi:viewed",
+      occurredAt: "2026-09-24T09:00:01.000Z",
+    });
+
+    const notifies: string[] = [];
+    store.subscribe(() => notifies.push("notify"));
+    const release = store.view("viewed");
+
+    fake.emitLegacy(assistantMessage("m1", "pi:viewed", 1));
+
+    // The unread write lands inside the event's own commit, not after it.
+    expect(store.get("viewed")?.unreadResult).toBe(false);
+    expect(notifies).toHaveLength(1);
+
+    release();
+    fake.emitLegacy(assistantMessage("m2", "pi:viewed", 2));
+
+    expect(store.get("viewed")?.unreadResult).toBe(true);
+    expect(notifies).toHaveLength(2);
+  });
+
+  it("viewing an unread Session reads it once", () => {
+    const fake = createFakeBridge();
+    const store = createStore(fake);
+    store.insert({ ...boundSession("unread"), unreadResult: true });
+
+    const notifies: string[] = [];
+    store.subscribe(() => notifies.push("notify"));
+    store.view("unread");
+
+    expect(store.get("unread")?.unreadResult).toBe(false);
+    expect(notifies).toHaveLength(1);
+  });
+
+  it("commits once per assistant event while the Session is on screen", () => {
+    const fake = createFakeBridge();
+    let store!: SessionProjectionsStore;
+    let commits = 0;
+
+    function LiveView() {
+      const { projection } = useLiveSession("onscreen");
+      useViewedSession("onscreen");
+      return <span data-testid="unread">{String(projection?.unreadResult)}</span>;
+    }
+    function StoreProbe() {
+      store = useSessionProjections().store;
+      return null;
+    }
+
+    render(
+      <SessionProjectionsProvider bridge={fake.bridge}>
+        <StoreProbe />
+        <Profiler id="live" onRender={() => { commits += 1; }}>
+          <LiveView />
+        </Profiler>
+      </SessionProjectionsProvider>,
+    );
+
+    act(() => {
+      store.insert(createSessionProjection({
+        id: "onscreen",
+        projectId: "pig",
+        initialPrompt: "Prompt",
+        createdAt: "2026-09-24T09:00:00.000Z",
+      }));
+      store.apply("onscreen", {
+        type: "runtime-bound",
+        stage: "starting runtime",
+        runtimeId: "runtime:onscreen",
+        piSessionId: "pi:onscreen",
+        occurredAt: "2026-09-24T09:00:01.000Z",
+      });
+    });
+    commits = 0;
+
+    for (let seq = 1; seq <= 5; seq += 1) {
+      act(() => {
+        fake.emitLegacy(assistantMessage(`m${seq}`, "pi:onscreen", seq));
+      });
+    }
+
+    // One commit per event: the old pattern added a second commit per event
+    // from a passive effect writing "read" back after each render.
+    expect(commits).toBe(5);
+    expect(store.get("onscreen")?.unreadResult).toBe(false);
   });
 });

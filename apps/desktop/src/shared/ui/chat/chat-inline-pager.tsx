@@ -53,10 +53,10 @@ export function ChatInlinePager({
     latestRef.current = { key: pageKey, node: children };
 
     // Same page, new content (streaming args, a ticking duration): land it in
-    // place rather than turning the page on itself.
+    // place rather than turning the page on itself. Rendered straight from
+    // children below, so a parent re-render costs no extra commit.
     if (pageKey === shownRef.current.key) {
       shownRef.current = latestRef.current;
-      setShown(latestRef.current);
       return;
     }
 
@@ -122,7 +122,7 @@ export function ChatInlinePager({
             }
           }}
         >
-          {shown.node}
+          {pageKey === shown.key ? children : shown.node}
         </span>
       </span>
     </span>

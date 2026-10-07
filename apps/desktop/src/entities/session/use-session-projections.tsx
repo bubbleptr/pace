@@ -304,3 +304,18 @@ export function useLiveSession(sessionId: string | null) {
 
   return { projection, history, apply, retryHistory };
 }
+
+/** Keeps a Session read while it is on screen (SessionProjectionsStore.view). */
+export function useViewedSession(sessionId: string | null) {
+  const context = useContext(SessionProjectionsStoreContext);
+
+  if (!context) {
+    throw new Error("useViewedSession requires SessionProjectionsProvider");
+  }
+
+  const { store } = context;
+  useEffect(
+    () => (sessionId ? store.view(sessionId) : undefined),
+    [sessionId, store],
+  );
+}

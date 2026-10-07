@@ -34,6 +34,12 @@ export type SessionProjectionsStore = {
   remove(sessionId: string): void;
   rehydrate(): Promise<void>;
   subscribe(listener: () => void): () => void;
+  /**
+   * Marks a Session as on screen until the returned release runs. Its results
+   * are read as they land, in the same store commit, so a view never writes
+   * "read" back after rendering (which cost one extra commit per event).
+   */
+  view(sessionId: string): () => void;
 };
 
 // A projection this process has advanced past its persisted record. Replacing
@@ -63,10 +69,22 @@ export function createSessionProjectionsStore(options: {
   let projections: SessionProjection[] = [];
   const listeners = new Set<() => void>();
   const subscriptions = new Map<string, { piSessionId: string; release: () => void }>();
+  // Sessions currently on screen, ref-counted per `view()` caller. Their
+  // results are already consumed by definition, so `seen` folds the read
+  // marker into the same projection write instead of a second apply later.
+  const viewed = new Map<string, number>();
   const history = new Map<
     string,
     { key: string; piSessionId: string; state: Exclude<SessionHistoryState, "idle"> }
   >();
+
+  const seen = (projection: SessionProjection) =>
+    viewed.has(projection.id) && projection.unreadResult
+      ? applySessionProjectionEvent(projection, {
+          type: "latest-message-rendered",
+          occurredAt: new Date().toISOString(),
+        })
+      : projection;
 
   const notify = () => {
     for (const listener of listeners) listener();
@@ -119,7 +137,7 @@ export function createSessionProjectionsStore(options: {
 
     // The reducer throws on events it cannot place (an unknown queued id);
     // that propagates before anything is stored.
-    const next = applySessionProjectionEvent(current, event);
+    const next = seen(applySessionProjectionEvent(current, event));
     replace(next);
 
     if (event.type === "runtime-bound") {
@@ -162,7 +180,7 @@ export function createSessionProjectionsStore(options: {
           }
         }
         history.set(sessionId, { key, piSessionId, state: "loaded" });
-        replace(next);
+        replace(seen(next));
       })
       .catch((error: unknown) => {
         if (!current()) return;
@@ -245,6 +263,31 @@ export function createSessionProjectionsStore(options: {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+      };
+    },
+    view(sessionId) {
+      viewed.set(sessionId, (viewed.get(sessionId) ?? 0) + 1);
+      // An already-unread Session is caught up now: one notify, only on view
+      // start — nothing writes "read" back while events land afterwards.
+      const current = get(sessionId);
+      if (current) {
+        const next = seen(current);
+        if (next !== current) {
+          replace(next);
+        }
+      }
+      let released = false;
+      return () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        const count = (viewed.get(sessionId) ?? 0) - 1;
+        if (count <= 0) {
+          viewed.delete(sessionId);
+        } else {
+          viewed.set(sessionId, count);
+        }
       };
     },
   };

@@ -1,3 +1,4 @@
+import { Profiler } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatInlinePager } from "@/shared/ui/chat/chat-inline-pager";
@@ -102,6 +103,30 @@ describe("ChatInlinePager", () => {
 
     expect(container.querySelector("[data-motion]")).not.toBeInTheDocument();
     expect(screen.getByText("Running bash script…")).toBeInTheDocument();
+  });
+
+  // A parent re-render with the same page key used to cost a second commit
+  // from the pager's passive effect — under dense Session events that extra
+  // commit per event is what let React's nested-update counter overflow (React error #185).
+  it("lands same-page content without an extra commit", () => {
+    let commits = 0;
+    const { rerender } = render(
+      <Profiler id="pager" onRender={() => { commits += 1; }}>
+        <ChatInlinePager pageKey="running:1">Running bash…</ChatInlinePager>
+      </Profiler>,
+    );
+
+    commits = 0;
+    for (const label of ["Running bash script…", "Running bash -lc…", "Running test…"]) {
+      rerender(
+        <Profiler id="pager" onRender={() => { commits += 1; }}>
+          <ChatInlinePager pageKey="running:1">{label}</ChatInlinePager>
+        </Profiler>,
+      );
+    }
+
+    expect(commits).toBe(3);
+    expect(screen.getByText("Running test…")).toBeInTheDocument();
   });
 
   it("swaps pages without motion when reduced motion is preferred", () => {
