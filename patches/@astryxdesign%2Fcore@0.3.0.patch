@@ -1,0 +1,66 @@
+diff --git a/dist/Heading/Heading.js b/dist/Heading/Heading.js
+index b10c5c13134234791b3653078c1bd943675d45c2..832bb50cf5985935b2c61d8530f5de4d461088d1 100644
+--- a/dist/Heading/Heading.js
++++ b/dist/Heading/Heading.js
+@@ -16,7 +16,7 @@
+  * - /packages/cli/assets/templates/blocks/components/Heading/ (showcase blocks)
+  * - /packages/cli/assets/templates/blocks/components/Text/ (showcase blocks)
+  */
+-import { lazy, Suspense, useRef } from 'react';
++import { lazy, Suspense, useMemo, useRef } from 'react';
+ import * as stylex from '@stylexjs/stylex';
+ import { colorStyles, sizeByLevelStyles, sizeByTypeStyles, defaultWeightByTypeStyles, displayStyles, justifyStyles, truncationStyles, wordBreakStyles, textWrapStyles, capsizeStyles, decorationStyles, truncationTooltipStyles } from "../Text/text.stylex.js";
+ import { useTruncation } from "../Text/useTruncation.js";
+@@ -107,13 +107,18 @@ export function Heading({
+   // Ref for the heading element (used as tooltip anchor)
+   const headingRef = useRef(null);
+ 
++  // Pace patch: keep the merged ref stable across renders so React does not
++  // detach/reattach it (and re-run useTruncation's ref) on every commit.
++  // Upstream fixed this in 0.6.x with useMergedRefs.
++  const mergedRef = useMemo(() => mergeRefs(ref, truncation.ref, headingRef), [ref, truncation.ref]);
++
+   // Build inline style for -webkit-line-clamp (dynamic value)
+   const inlineStyle = maxLines > 1 ? {
+     WebkitLineClamp: maxLines
+   } : undefined;
+   return /*#__PURE__*/_jsxs(_Fragment, {
+     children: [/*#__PURE__*/_jsx(Component, {
+-      ref: mergeRefs(ref, truncation.ref, headingRef),
++      ref: mergedRef,
+       ...mergeProps(themeProps('heading', {
+         level,
+         color,
+diff --git a/dist/Text/Text.js b/dist/Text/Text.js
+index 4f10ae885ff32b7fb79d804fd728546f4484f836..45712717d7c80e2f31377bb16e0a701e580ecf65 100644
+--- a/dist/Text/Text.js
++++ b/dist/Text/Text.js
+@@ -15,7 +15,7 @@
+  * - /apps/storybook/stories/Text.stories.tsx (storybook stories)
+  * - /packages/cli/assets/templates/blocks/components/Text/ (showcase blocks)
+  */
+-import { lazy, Suspense, useRef } from 'react';
++import { lazy, Suspense, useMemo, useRef } from 'react';
+ import * as stylex from '@stylexjs/stylex';
+ import { colorStyles, defaultWeightByTypeStyles, sizeStyles, sizeByTypeStyles, weightStyles, displayStyles, justifyStyles, truncationStyles, wordBreakStyles, textWrapStyles, capsizeStyles, decorationStyles, tabularNumbersStyle, truncationTooltipStyles } from "./text.stylex.js";
+ import { useTruncation } from "./useTruncation.js";
+@@ -134,13 +134,18 @@ export function Text({
+   // Ref for the text element (used as tooltip anchor)
+   const textRef = useRef(null);
+ 
++  // Pace patch: keep the merged ref stable across renders so React does not
++  // detach/reattach it (and re-run useTruncation's ref) on every commit.
++  // Upstream fixed this in 0.6.x with useMergedRefs.
++  const mergedRef = useMemo(() => mergeRefs(ref, truncation.ref, textRef), [ref, truncation.ref]);
++
+   // Build inline style for -webkit-line-clamp (dynamic value)
+   const inlineStyle = maxLines > 1 ? {
+     WebkitLineClamp: maxLines
+   } : undefined;
+   return /*#__PURE__*/_jsxs(_Fragment, {
+     children: [/*#__PURE__*/_jsx(Component, {
+-      ref: mergeRefs(ref, truncation.ref, textRef),
++      ref: mergedRef,
+       ...mergeProps(themeProps('text', {
+         type,
+         size,
