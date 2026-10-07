@@ -15,6 +15,25 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.2.1",
+    date: "2026-10-07",
+    title: "Sending a prompt no longer crashes the window",
+    summary: "This release fixes a crash in 0.2.0 where sending a prompt could replace the whole window with “Something went wrong”, and keeps the model picker's flyout from staying open.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.2.1",
+    changes: [
+      {
+        kind: "fixed",
+        title: "No crash while a reply streams",
+        description: "Sending a prompt, or typing while a reply was streaming, could replace the window with “Something went wrong” (React error #185) under Pi 1.0's denser event stream. The open Session is now marked read as its results arrive instead of after each render, and chat step labels and text no longer update themselves on every event.",
+      },
+      {
+        kind: "fixed",
+        title: "Model picker flyout closes",
+        description: "Moving the pointer from a model row to Add Models no longer leaves the previous row highlighted with its options flyout open.",
+      },
+    ],
+  },
+  {
     version: "0.2.0",
     date: "2026-10-07",
     title: "Pi 1.0 and reliable sign-in refresh",
