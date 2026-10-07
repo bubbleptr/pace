@@ -15,6 +15,40 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.2.0",
+    date: "2026-10-07",
+    title: "Pi 1.0 and reliable sign-in refresh",
+    summary: "This release ships Pi 1.0.4 with a leaner codemode and image generation, and fixes signed-in providers failing once their token expired. Pi renamed the Azure provider from azure-openai-responses to azure; if you use Azure, rename it in auth.json, models.json and settings.json, or enter your Azure credentials again in Settings → Providers.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.2.0",
+    changes: [
+      {
+        kind: "added",
+        title: "Bundled Pi 1.0.4",
+        description: "Codemode uses about 40% fewer prompt tokens and its errors tell the model how to recover. Scripts can generate images with models.generateImages(), each image is also saved to a file, and tools.read() returns image files as images.",
+      },
+      {
+        kind: "added",
+        title: "Azure Foundry chat models",
+        description: "The Azure provider, now named azure, also serves Foundry Chat Completions deployments, starting with azure/deepseek-v4-pro. The AZURE_OPENAI_* environment variables are unchanged.",
+      },
+      {
+        kind: "improved",
+        title: "MCP sign-in per server",
+        description: "MCP OAuth credentials are stored per server name and URL, so two servers with the same URL can use different accounts. Existing sign-ins move to the first server that uses them, and Settings → MCP shows the new state.",
+      },
+      {
+        kind: "improved",
+        title: "One codemode exposure",
+        description: "The codemode exposure now finds a server's tools with searchTools(), so the separate codemode-deferred option is gone. Servers already set to codemode-deferred keep working as codemode.",
+      },
+      {
+        kind: "fixed",
+        title: "Sign-ins survive token expiry",
+        description: "Once an OAuth token expired, providers such as Radius, ChatGPT, GitHub Copilot and Kimi failed with Provider authentication failed because the installed app could not load Pi's refresh code. Tokens now refresh on their own.",
+      },
+    ],
+  },
+  {
     version: "0.1.0",
     date: "2026-10-01",
     title: "MCP servers, nested tools and Linux",
