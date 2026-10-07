@@ -119,7 +119,7 @@ const providerBrands: Record<string, ProviderBrand> = {
   },
   "amazon-bedrock": lobeBrand(Bedrock),
   "ant-ling": lobeBrand(AntGroup),
-  "azure-openai-responses": lobeBrand(Azure),
+  azure: lobeBrand(Azure),
   baseten: lobeBrand(Baseten),
   cerebras: lobeBrand(Cerebras),
   "cloudflare-ai-gateway": lobeBrand(Cloudflare),

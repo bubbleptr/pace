@@ -143,6 +143,151 @@ test("the shipped backend works without global pi or repository node_modules", a
   }
 });
 
+test("an expired OAuth credential refreshes in the shipped backend", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pigui-bundled-oauth-"));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks).toString();
+    requests.push({ method: request.method, url: request.url, headers: request.headers, body });
+    // Radius OAuth token endpoint: the expired credential must rotate through
+    // a refresh_token grant, not an interactive login.
+    if (request.method === "POST" && request.url === "/v1/oauth/token") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        access_token: "refreshed-access-token",
+        refresh_token: "refreshed-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        scope: "gateway offline_access",
+      }));
+      return;
+    }
+    // pi-messages stream endpoint: `{baseUrl}/messages`. A minimal terminal
+    // event stream so the run settles after the refresh.
+    if (request.method === "POST" && request.url === "/v1/messages") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(
+        'data: {"type":"start"}\n\n' +
+        'data: {"type":"text_start","contentIndex":0}\n\n' +
+        'data: {"type":"text_delta","contentIndex":0,"delta":"ok"}\n\n' +
+        'data: {"type":"text_end","contentIndex":0,"content":"ok"}\n\n' +
+        'data: {"type":"done","reason":"stop","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}\n\n',
+      );
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing server address");
+  try {
+    const appDir = join(root, "app");
+    const agentDir = join(root, "agent");
+    const cwd = join(root, "project");
+    await cp(join(repo, "apps/desktop/out/main"), join(appDir, "out/main"), { recursive: true });
+    await cp(join(repo, "apps/desktop/package.json"), join(appDir, "package.json"));
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(cwd);
+    await writeFile(join(agentDir, "auth.json"), JSON.stringify({
+      radius: { type: "oauth", access: "stale-access-token", refresh: "stale-refresh-token", expires: Date.now() - 60_000 },
+    }));
+    // `oauth: "radius"` + baseUrl rebuilds the built-in Radius provider on
+    // the mock gateway via ModelRuntime.configureRadiusProviders.
+    await writeFile(join(agentDir, "models.json"), JSON.stringify({
+      providers: {
+        radius: {
+          name: "Radius",
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+          oauth: "radius",
+          api: "pi-messages",
+          models: [{ id: "probe", name: "Probe", api: "pi-messages", reasoning: false, input: ["text"], contextWindow: 16000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+        },
+      },
+    }));
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify({
+      defaultProvider: "radius",
+      defaultModel: "probe",
+      defaultThinkingLevel: "off",
+    }));
+    const { stdout, stderr } = await run(process.execPath, ["--input-type=module", "-e", `
+      import { pathToFileURL } from "node:url";
+      const pending = new Map();
+      const events = [];
+      let receive;
+      let control;
+      let connected;
+      const ready = new Promise(resolve => { connected = resolve; });
+      process.parentPort = { on(_name, connect) {
+        control = connect;
+        connect({ data: { type: "connect" }, ports: [{
+          on(event, handler) { if (event === "message") { receive = handler; connected(); } }, start() {},
+          postMessage(message) {
+            if (message.type === "event") events.push(message.event);
+            else { pending.get(message.id)?.(message); pending.delete(message.id); }
+          },
+        }] });
+      }, postMessage() {} };
+      await import(pathToFileURL(process.env.PROBE_BACKEND));
+      await ready;
+      let sequence = 0;
+      const request = (method, params) => new Promise(resolve => {
+        const id = String(++sequence); pending.set(id, resolve); receive({ data: { id, method, params } });
+      });
+      const created = await request("create_session", { sessionId: "probe", projectId: "probe", cwd: process.env.PROBE_CWD });
+      const piSessionId = created.result?.piSessionId;
+      let prompted;
+      let snapshot;
+      if (piSessionId) {
+        prompted = request("send_prompt", { piSessionId, prompt: "say ok" });
+        const deadline = Date.now() + 25000;
+        do {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          snapshot = await request("get_runtime_snapshot", { piSessionId });
+        } while (snapshot.result?.status === "running" && Date.now() < deadline);
+        prompted = await prompted;
+      }
+      await control({ data: { type: "shutdown" } });
+      console.log("PROBE_RESULT " + JSON.stringify({ created, prompted, snapshot, events }));
+    `], {
+      cwd,
+      env: {
+        ...process.env,
+        PATH: "",
+        HOME: root,
+        PI_CODING_AGENT_DIR: agentDir,
+        PACE_DATA_DIR: join(root, "data"),
+        PROBE_BACKEND: join(appDir, "out/main/backend.js"),
+        PI_PACKAGE_DIR: join(appDir, "out/main/pi-assets"),
+        PROBE_CWD: cwd,
+      },
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    const result = JSON.parse(stdout.split("\n").find(line => line.startsWith("PROBE_RESULT ")).slice(13));
+    if (stderr) console.error(stderr);
+    assert.equal(result.created.error, undefined);
+    assert.equal(result.prompted?.error, undefined, JSON.stringify(result.snapshot).slice(0, 2000));
+    const serialized = JSON.stringify(result) + stderr;
+    assert.ok(!serialized.includes("Cannot find module"), `no bundled-module fallback may fire: ${serialized.slice(0, 2000)}`);
+    const refresh = requests.find((entry) => entry.url === "/v1/oauth/token");
+    assert.ok(refresh, "the gateway must receive a token request");
+    assert.match(refresh.body, /grant_type=refresh_token/);
+    assert.match(refresh.body, /refresh_token=stale-refresh-token/);
+    const streamed = requests.find((entry) => entry.url === "/v1/messages");
+    assert.ok(streamed, "the prompt must reach the gateway after refresh");
+    assert.equal(streamed.headers.authorization, "Bearer refreshed-access-token");
+    const stored = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8"));
+    assert.equal(stored.radius?.access, "refreshed-access-token", "auth.json must hold the rotated access token");
+    assert.equal(stored.radius?.refresh, "refreshed-refresh-token");
+  } finally {
+    server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("codemode scripts reach MCP tools in the shipped backend", async () => {
   const root = await mkdtemp(join(tmpdir(), "pigui-bundled-codemode-"));
   const requests = [];
