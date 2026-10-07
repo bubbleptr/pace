@@ -90,7 +90,9 @@ export function createSessionProjectionsStore(options: {
     for (const listener of listeners) listener();
   };
   const commit = (next: SessionProjection[]) => {
-    projections = next;
+    // Every write passes here, so a viewed Session is read however its
+    // projection arrives (event, history read, insert, rehydrate).
+    projections = viewed.size > 0 ? next.map(seen) : next;
     notify();
   };
   const get = (sessionId: string) =>
@@ -180,7 +182,7 @@ export function createSessionProjectionsStore(options: {
           }
         }
         history.set(sessionId, { key, piSessionId, state: "loaded" });
-        replace(seen(next));
+        replace(next);
       })
       .catch((error: unknown) => {
         if (!current()) return;

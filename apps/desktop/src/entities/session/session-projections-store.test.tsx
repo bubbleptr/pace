@@ -618,6 +618,30 @@ describe("viewed Sessions", () => {
     expect(notifies).toHaveLength(1);
   });
 
+  it("reads a Session that arrives after its view started", () => {
+    const store = createStore();
+    const release = store.view("late");
+
+    // Insert bypasses apply(): the read marker has to come from commit itself.
+    store.insert({ ...boundSession("late"), unreadResult: true });
+
+    expect(store.get("late")?.unreadResult).toBe(false);
+    release();
+  });
+
+  it("reads a viewed Session that rehydrate brings in unread", async () => {
+    const fake = createFakeBridge();
+    const store = createStore(fake, async () => [
+      coldSession("hydrated", { unreadResult: true }),
+    ]);
+    const release = store.view("hydrated");
+
+    await store.rehydrate();
+
+    expect(store.get("hydrated")?.unreadResult).toBe(false);
+    release();
+  });
+
   it("commits once per assistant event while the Session is on screen", () => {
     const fake = createFakeBridge();
     let store!: SessionProjectionsStore;
