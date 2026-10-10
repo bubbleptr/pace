@@ -38,8 +38,7 @@
   <BrowserSurface.Toolbar address={address} canGoBack={canGoBack} canGoForward={canGoForward}
     isDesignMode={isDesignMode} annotationCount={n} onAddressChange={setAddress}
     onAddressSubmit={submit} onBack={back} onForward={forward} onReload={reload}
-    onOpenExternal={open} onClearAnnotations={clear} onDesignModeChange={setDesign}
-    onSendToComposer={send} />
+    onOpenExternal={open} onClearAnnotations={clear} onDesignModeChange={setDesign} />
   <BrowserSurface.Viewport viewportRef={viewportRef} snapshot={snapshot} notice={notice}
     onAddTab={add} onReload={reload} />
 </BrowserSurface>

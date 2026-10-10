@@ -66,7 +66,14 @@ Codex 默认是 Enter 直发、`Cmd+Enter` 攒（#22719 下大量反对）；Pac
 - **消费**：提交成功后按**构建时快照的 id 列表**调 `browser_consume_annotations`；提交期间新存的评论不受影响。提交失败则全部保留。
 - **Cmd/Ctrl+Enter 直发**：页面 → 主进程 `submit-requested` → 渲染层事件 → composer 执行与点击发送相同的 `submitDraft`（新增 `requestComposerSubmit(sessionId)`，与 `injectIntoComposer` 同范式，返回是否有 composer 接住；没接住时 Browser 面板一行提示，评论保留）。
 - **局部截图**：保存时由 overlay 隐藏整层、等两帧，再通知主进程；主进程 `capturePage(rect)`，rect = 元素矩形外扩 48 CSS px、最小 320×200、夹进视口，按 CSS 像素降采样（沿用 `downsampleToCssWidth`）。状态事件只带 `hasImage`，图片走单独的只读命令按 id 取（缩略图与发送时用），不在每次状态广播里搬 data URL。
-- **格式化**：core 新增 `formatBrowserComments(groups)` 替换 `formatBrowserAnnotationPrompt`：按 URL 分组，每条 `#n` + selector/tag + 评论 + text/source；无截图的条目附 rect；`stale` 条目注明「元素已不在当前页面，截图为保存时所见」。模板由测试锁定。
+- **格式化**：core 新增 `formatBrowserComments(comments)` 替换 `formatBrowserAnnotationPrompt`：每条 `#n` + selector/tag + 评论（多行保留，逐行缩进）+ text/source；无截图的条目附 rect；`stale` 条目注明「元素已不在当前页面，按保存时描述」。模板由测试锁定。
+
+**S3 实现时的修订（#448）：**
+- 不按 URL 重新分组：评论保持 Session 顺序（`#n` 升序），URL 变化时插入一个 `Page:` 段落头。重新分组会让编号乱序，与页面徽章、图片顺序都对不上。
+- 评论图片附在消息图片的**最后**，按评论顺序排列；有截图的条目标 `[screenshot]`，标题句说明这一约定。用户自己附的图片在前。
+- 抽屉条目是 `Token` chip（`#n 首行摘要` + 移除，stale 用黄色并带说明），**不显示缩略图**；截图只在发送时按 id 拉取。
+- 页面内 Cmd/Ctrl+Enter：overlay 在 `annotation-saved` 之后发 `submit-requested`；主进程等本 Session 在途的局部截图落定后，再经浏览器事件通知渲染层；Browser 面板调用 `requestComposerSubmit(sessionId)`，没有 composer 接住时给出提示。
+- v1 的 `To composer`、`browser_capture_annotation` 整视口截图路径与 `injectIntoComposer` 一并移除。
 
 ### 5. 跨文档保留与重新定位
 

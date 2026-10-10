@@ -1,6 +1,5 @@
 import { invoke, onBrowserEvent } from "@/shared/runtime";
 import type {
-  BrowserAnnotationCapture,
   BrowserAnnotationPalette,
   BrowserComment,
   BrowserEvent,
@@ -106,12 +105,6 @@ export function consumeBrowserComments(sessionId: string, ids: string[]) {
 }
 export function captureBrowser(target: BrowserTabTarget) {
   return invoke<string | null>("browser_capture", target);
-}
-export function captureBrowserAnnotation(target: BrowserTabTarget) {
-  return invoke<BrowserAnnotationCapture | null>(
-    "browser_capture_annotation",
-    target,
-  );
 }
 export function openBrowserUrlExternally(url: string) {
   return invoke<null>("browser_open_external", { url });

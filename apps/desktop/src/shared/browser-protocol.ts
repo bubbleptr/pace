@@ -10,6 +10,7 @@
 import type {
   BrowserAnnotationElement,
   BrowserAnnotationViewport,
+  BrowserComment,
 } from "@pace/core";
 
 export type BrowserViewRect = {
@@ -33,16 +34,20 @@ export type BrowserViewState = BrowserViewSnapshot & {
 
 /**
  * What the user marked in design mode lives in `@pace/core`: the shapes
- * outgrew the wire — the renderer assembles a payload out of them and core's
- * `formatBrowserAnnotationPrompt` renders it for Pi. They are re-exported here
- * so main, the annotation preload and the renderer keep reading one protocol
- * module.
+ * outgrew the wire — the Session-level `BrowserComment` and core's
+ * `formatBrowserComments` are what the composer renders for Pi. They are
+ * re-exported here so main, the annotation preload and the renderer keep
+ * reading one protocol module.
  *
  * Type-only on purpose. The annotation preload reaches this module (through
  * `electron/browser-annotation.ts`) and has to stay self-contained, so nothing
  * here may become a runtime import (PRD S2 implementation constraint 6).
  */
-export type { BrowserAnnotationElement, BrowserAnnotationViewport };
+export type {
+  BrowserAnnotationElement,
+  BrowserAnnotationViewport,
+  BrowserComment,
+};
 
 /**
  * The renderer's theme tokens, resolved to computed colour values and carried
@@ -57,20 +62,6 @@ export type BrowserAnnotationPalette = {
   foreground: string;
   border: string;
   muted: string;
-};
-
-/**
- * What `browser_capture_annotation` answers with: the screenshot and the marks
- * it was taken against, which the page settled and re-measured for this shot.
- * They travel together because a payload assembled from two moments would
- * describe a viewport the picture was not taken in.
- */
-export type BrowserAnnotationCapture = {
-  /** PNG data URL, or null when the page could not be photographed. */
-  image: string | null;
-  annotations: BrowserAnnotationElement[];
-  viewport: BrowserAnnotationViewport | null;
-  url: string;
 };
 
 export type BrowserTabTarget = { sessionId: string; tabId: string };
@@ -93,34 +84,12 @@ export type BrowserSessionState = {
   activeTabId: string | null;
 };
 
-/**
- * A saved annotation as the Session-level comment store hands it out. The
- * page element it describes (`selector`/`tag`/`rect`/`comment`) is the
- * annotation's own shape; the fields here pin it to a tab, a document and a
- * moment. `index` is its 1-based position in the Session's comment order and
- * is recomputed on every read — a badge number only ever means "the nth
- * comment kept for this Session".
- */
-export type BrowserComment = BrowserAnnotationElement & {
-  tabId: string;
-  /** Page URL when saved; documents sharing it (`urlKey`) get the marker back. */
-  url: string;
-  title: string;
-  /** The viewport the rect was measured in. */
-  viewport: BrowserAnnotationViewport;
-  /** The last restore attempt could not find the element in the document. */
-  stale: boolean;
-  /** A cropped screenshot was taken for it. */
-  hasImage: boolean;
-  createdAt: string;
-};
-
 export type BrowserEvent =
   | { type: "state-changed"; tab: BrowserTabState }
   /**
    * The Session's comment store changed — saved, edited, deleted or consumed.
    * Renderer state for a tab's visible marks still arrives via `state-changed`;
-   * this is for the composer-to-be, which reads the Session, not a document.
+   * this is for whoever reads the Session, not a document.
    */
   | {
       type: "comments-changed";
@@ -137,6 +106,12 @@ export type BrowserEvent =
       sessionId: string;
       tabId: string;
       reason: "limit";
-    };
+    }
+  /**
+   * Cmd/Ctrl+Enter in the page asked for the comments to go out now. Emitted
+   * only after every pending save-crop settled, so it arrives after the
+   * `comments-changed` that carries their `hasImage`.
+   */
+  | { type: "submit-requested"; sessionId: string };
 
 export const browserEventChannel = "pigui:browser-event";

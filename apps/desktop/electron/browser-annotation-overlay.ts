@@ -64,14 +64,8 @@ export type BrowserAnnotationOverlay = {
    */
   syncAnnotations(annotations: BrowserAnnotationElement[]): void;
   /**
-   * Put the overlay out of shot and say what it holds, so main can photograph
-   * the page without the overlay's own chrome on it. A draft worth keeping is
-   * saved first: asking for the shot is intent to send.
-   */
-  prepareCapture(): void;
-  /**
-   * The shot is done — the mode chrome `prepareCapture` hid comes back, and
-   * an overlay hidden for a save's crop becomes visible again.
+   * A save's crop is done — the mode chrome and the overlay hidden for the
+   * shot are allowed back on screen.
    */
   finishCapture(): void;
   dispose(): void;
@@ -170,11 +164,12 @@ export function createAnnotationOverlay(options: {
    */
   onAnnotationPresence: (id: string, stale: boolean) => void;
   onDesignModeChange: (enabled: boolean) => void;
-  /** The ack main waits for before it shoots. */
-  onCaptureReady: (
-    annotations: BrowserAnnotationElement[],
-    viewport: BrowserAnnotationViewport,
-  ) => void;
+  /**
+   * Cmd/Ctrl+Enter in the page: send the Session's comments now. Posted only
+   * after a pending `annotation-saved` report, so the store hears about the
+   * comment before the send.
+   */
+  onSubmitRequested: () => void;
 }): BrowserAnnotationOverlay {
   const doc = options.document;
   // The earliest node in the capture path, so page handlers registered later
@@ -467,9 +462,17 @@ export function createAnnotationOverlay(options: {
    * annotation — a new one only after the hide-and-two-frames above lets the
    * element paint clean for its crop, an edit immediately (no re-capture).
    */
-  function reportSaved(annotation: BrowserAnnotationElement, isNew: boolean) {
-    const report = () =>
+  function reportSaved(
+    annotation: BrowserAnnotationElement,
+    isNew: boolean,
+    afterReport?: () => void,
+  ) {
+    const report = () => {
       options.onAnnotationSaved({ ...annotation }, readViewport());
+      // A submit request rides the report it belongs to: main must store the
+      // comment before it can send the batch it is part of.
+      afterReport?.();
+    };
 
     if (!isNew) {
       report();
@@ -1217,7 +1220,7 @@ export function createAnnotationOverlay(options: {
    * draft is open does not switch — it shakes instead, so typed text is
    * never silently lost.
    */
-  function saveEditor() {
+  function saveEditor(thenSubmit = false) {
     if (!editor || !editorText) {
       return;
     }
@@ -1251,7 +1254,11 @@ export function createAnnotationOverlay(options: {
     }
 
     closeEditor();
-    reportSaved(saved, !existing);
+    reportSaved(
+      saved,
+      !existing,
+      thenSubmit ? () => options.onSubmitRequested() : undefined,
+    );
   }
 
   function shakeEditor() {
@@ -1461,6 +1468,25 @@ export function createAnnotationOverlay(options: {
       return;
     }
 
+    if (keyboard.key === "Enter" && (keyboard.metaKey || keyboard.ctrlKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Cmd/Ctrl+Enter sends what is there: a draft with text saves first and
+      // the submit rides its report; an empty one is a misclick to cancel.
+      if (editor) {
+        if (editorText?.value.trim()) {
+          saveEditor(true);
+        } else {
+          closeEditor();
+          options.onSubmitRequested();
+        }
+      } else {
+        options.onSubmitRequested();
+      }
+      return;
+    }
+
     if (own && editor && keyboard.key === "Enter" && !keyboard.shiftKey) {
       // A bare Enter saves and keeps marking; Shift+Enter stays a newline
       // because its default action is left alone.
@@ -1507,30 +1533,6 @@ export function createAnnotationOverlay(options: {
       // No notification back: this is main answering its own command, and an
       // echo would fight the renderer's own state.
       applyDesignMode(enabled);
-    },
-
-    prepareCapture() {
-      // An open editor settles before the shot: a draft with text is saved —
-      // asking to send is intent to keep it — an empty one is a misclick.
-      if (editor) {
-        if (editorText?.value.trim()) {
-          saveEditor();
-        } else {
-          closeEditor();
-        }
-      }
-      syncOverlayPositions();
-      // Editor, hover box and mode chrome are overlay chrome — none of them
-      // belong in a screenshot of the user's page. The marks stay: they are
-      // what the numbered rows in the prompt point at.
-      hideHighlight();
-      setModeAffordanceVisible(false);
-      // Measured now rather than when the mark was made: the panel can have
-      // been dragged wider since, and the shot is being taken at this size.
-      options.onCaptureReady(
-        annotations.map((annotation) => ({ ...annotation })),
-        readViewport(),
-      );
     },
 
     finishCapture() {

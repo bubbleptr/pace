@@ -20,7 +20,6 @@ type SurfaceHarness = {
   annotationCount: number;
   isDesignMode: boolean;
   isLoading?: boolean;
-  isSending?: boolean;
   notice?: string | null;
   snapshot?: string | null;
   onAddressChange: (address: string) => void;
@@ -31,7 +30,6 @@ type SurfaceHarness = {
   onOpenExternal: () => void;
   onClearAnnotations: () => void;
   onDesignModeChange: (isDesignMode: boolean) => void;
-  onSendToComposer: () => void;
 };
 
 function surfaceProps(overrides: Partial<SurfaceHarness> = {}): SurfaceHarness {
@@ -58,7 +56,6 @@ function surfaceProps(overrides: Partial<SurfaceHarness> = {}): SurfaceHarness {
     onOpenExternal: vi.fn(),
     onClearAnnotations: vi.fn(),
     onDesignModeChange: vi.fn(),
-    onSendToComposer: vi.fn(),
     ...overrides,
   };
 }
@@ -81,7 +78,6 @@ function ComposedBrowserSurface(props: SurfaceHarness) {
         canGoForward={props.canGoForward}
         isDesignMode={props.isDesignMode}
         isLoading={props.isLoading}
-        isSending={props.isSending}
         onAddressChange={props.onAddressChange}
         onAddressSubmit={props.onAddressSubmit}
         onBack={props.onBack}
@@ -90,7 +86,6 @@ function ComposedBrowserSurface(props: SurfaceHarness) {
         onForward={props.onForward}
         onOpenExternal={props.onOpenExternal}
         onReload={props.onReload}
-        onSendToComposer={props.onSendToComposer}
       />
       <BrowserSurface.Viewport
         notice={props.notice}
@@ -252,22 +247,6 @@ describe("BrowserSurface", () => {
     await user.click(screen.getByRole("button", { name: "Clear marks" }));
 
     expect(props.onClearAnnotations).toHaveBeenCalledTimes(1);
-  });
-
-  it("sends the marks to the composer, but only once there are some", async () => {
-    const user = userEvent.setup();
-    const props = surfaceProps();
-    const view = render(<ComposedBrowserSurface {...props} />);
-    const send = () => screen.getByRole("button", { name: "Send to composer" });
-
-    // An unmarked page has nothing to say: the prompt would be a URL and a
-    // screenshot with no question attached to it.
-    expect(send()).toBeDisabled();
-
-    view.rerender(<ComposedBrowserSurface {...props} annotationCount={1} />);
-    await user.click(send());
-
-    expect(props.onSendToComposer).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the design controls out of reach until a page is live", () => {

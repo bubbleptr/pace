@@ -21,12 +21,6 @@ export const browserAnnotationChannel = "pigui:browser-annotation";
 /** Main → page. Design mode is a command, never a page-side decision. */
 export const browserAnnotationCommandChannel = "pigui:browser-annotation-command";
 
-/** Marks, and the space they were measured in — always reported together. */
-type AnnotationsPayload = {
-  annotations: BrowserAnnotationElement[];
-  viewport: BrowserAnnotationViewport;
-};
-
 export type BrowserAnnotationMessage =
   /** A fresh document's overlay is live: main answers with mode and marks. */
   | { type: "ready" }
@@ -54,11 +48,10 @@ export type BrowserAnnotationMessage =
    */
   | { type: "annotation-presence"; id: string; stale: boolean }
   /**
-   * The overlay has put itself out of shot — comment bubble committed and
-   * closed, hover highlight hidden — and states what it holds right now. Main
-   * waits for this before `capturePage`.
+   * Cmd/Ctrl+Enter in the page: send the Session's comments now. Posted only
+   * after every pending `annotation-saved`, so the store is settled first.
    */
-  | ({ type: "capture-ready" } & AnnotationsPayload);
+  | { type: "submit-requested" };
 
 export type BrowserAnnotationCommand =
   | {
@@ -82,11 +75,9 @@ export type BrowserAnnotationCommand =
       type: "set-annotation-palette";
       palette: BrowserAnnotationPalette;
     }
-  | { type: "prepare-capture" }
   /**
-   * The screenshot is taken (or abandoned). For a `prepare-capture` shot the
-   * overlay may put its mode chrome back; for a save's crop it may become
-   * visible again.
+   * A save's crop is done (or abandoned): the overlay hidden for it may
+   * become visible again.
    */
   | { type: "capture-done" };
 
@@ -98,7 +89,6 @@ const maxTextLength = 120;
 export const maxCommentLength = 500;
 const maxTagLength = 40;
 const maxSelectorLength = 1_000;
-const maxAnnotations = 200;
 /** `file:line` or `file:line:column`, with a file part that is not empty. */
 const sourcePattern = /^(.+?):(\d+)(?::(\d+))?$/;
 /** What the overlay mints with `crypto.randomUUID()` — short and url-safe. */
@@ -123,6 +113,19 @@ function clampText(value: string, max: number) {
   const line = value.replace(/[\r\n]+/g, " ");
 
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * A comment may span lines — the editor takes Shift+Enter — so it is not
+ * folded like the other fields. Line endings are normalised and runs of
+ * blank space capped at one empty line; the length cap is `clampText`'s.
+ */
+function clampComment(value: string, max: number) {
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
+
+  return normalized.length > max
+    ? `${normalized.slice(0, max - 1)}…`
+    : normalized;
 }
 
 function resolvesUniquely(element: Element, selector: string) {
@@ -390,28 +393,8 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     rect: rectangle,
     ...(location ? { source: location } : {}),
     ...(typeof comment === "string" && comment
-      ? { comment: clampText(comment, maxCommentLength) }
+      ? { comment: clampComment(comment, maxCommentLength) }
       : {}),
-  };
-}
-
-function readAnnotationsPayload(
-  message: Record<string, unknown>,
-): AnnotationsPayload | null {
-  const viewport = readViewportValue(message.viewport);
-
-  // Rects without the viewport they were measured in describe positions in an
-  // unknown space, so the message is not usable without one.
-  if (!Array.isArray(message.annotations) || !viewport) {
-    return null;
-  }
-
-  return {
-    annotations: message.annotations
-      .slice(0, maxAnnotations)
-      .map(readAnnotation)
-      .filter((annotation): annotation is BrowserAnnotationElement => annotation !== null),
-    viewport,
   };
 }
 
@@ -497,11 +480,8 @@ export function acceptBrowserAnnotationMessage<Sender>(input: {
         typeof message.stale === "boolean"
         ? { type: "annotation-presence", id: message.id, stale: message.stale }
         : null;
-    case "capture-ready": {
-      const payload = readAnnotationsPayload(message);
-
-      return payload ? { type: "capture-ready", ...payload } : null;
-    }
+    case "submit-requested":
+      return { type: "submit-requested" };
     default:
       return null;
   }

@@ -9,6 +9,7 @@ import {
   ComposerAttachmentDrawer,
   ComposerInsertMenu,
   buildPromptWithAttachments,
+  type PromptAppendix,
   useComposerAttachments,
   useFilePicker,
 } from "@/shared/ui/composer-attachments";
@@ -51,7 +52,14 @@ import {
   getFollowUpDraft,
   saveFollowUpDraft,
 } from "@/entities/session/follow-up-drafts";
-import { subscribeComposerInjections } from "@/entities/session/composer-injections";
+import { subscribeComposerSubmitRequests } from "@/entities/session/composer-submit-requests";
+import {
+  consumeBrowserComments,
+  deleteBrowserComment,
+  readBrowserCommentImages,
+} from "@/entities/browser/browser-client";
+import { useBrowserComments } from "@/entities/browser/use-browser-comments";
+import { formatBrowserComments } from "@pace/core";
 import { type SessionDraftCheckoutMode } from "@/entities/session/session-drafts";
 import { type SessionProjection } from "@/entities/session/session-projection";
 import { useSessionChanges, type SessionChangesView } from "@/entities/session/use-session-changes";
@@ -119,10 +127,6 @@ export function FullChatComposer({
   const [draft, setDraft] = useState(() =>
     sessionId ? getFollowUpDraft(sessionId)?.message ?? "" : "",
   );
-  // What an injection appends to; the subscription below outlives every
-  // keystroke and must not resubscribe for each one.
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
   const [composerError, setComposerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -228,33 +232,38 @@ export function FullChatComposer({
     attachments.clear();
   }, [sessionId, attachments.clear]);
 
-  // A surface outside the chat column — today the browser's `Send to composer`
-  // (#151) — handing the user something to send. It lands in the draft rather
-  // than being sent, so it can be edited, queued or steered like anything the
-  // user typed.
-  useEffect(() => {
-    if (!sessionId) {
-      return;
-    }
+  // The Session's browser comments ride the send as an appendix — chips in
+  // the drawer, and a formatted block + screenshots in the prompt itself.
+  const browserComments = useBrowserComments(sessionId);
+  const commentChips = useMemo(
+    () =>
+      browserComments.comments.map((comment) => {
+        const line = comment.comment
+          ?.split(/\r?\n/)
+          .map((part) => part.trim())
+          .find((part) => part.length > 0);
+        return {
+          id: comment.id,
+          label: line ? `#${comment.index} ${line}` : `#${comment.index}`,
+          warning: comment.stale
+            ? "No longer on the page — sent as it was when saved"
+            : undefined,
+        };
+      }),
+    [browserComments.comments],
+  );
 
-    return subscribeComposerInjections(sessionId, (injection) => {
-      const current = draftRef.current;
-      const next = current.trim()
-        ? `${current.trimEnd()}\n\n${injection.text}`
-        : injection.text;
-
-      // Through the ref rather than a state updater: persisting the draft is a
-      // side effect, and it also has to be right for a second injection that
-      // lands before React has re-rendered the first.
-      draftRef.current = next;
-      setDraft(next);
-      saveFollowUpDraft(sessionId, next);
-
-      if (injection.files?.length) {
-        attachments.addFiles(injection.files);
+  const removeBrowserComment = useCallback(
+    (id: string) => {
+      if (!sessionId) {
+        return;
       }
-    });
-  }, [attachments.addFiles, sessionId]);
+      deleteBrowserComment(sessionId, id).catch((error) => {
+        setComposerError(errorMessage(error));
+      });
+    },
+    [sessionId],
+  );
 
   const submitDraft = async () => {
     if (submittingRef.current) return;
@@ -269,19 +278,77 @@ export function FullChatComposer({
         return;
       }
 
-      const built = await buildPromptWithAttachments(draft, attachments.items);
+      // Snapshot now: what is sent is exactly what the chips said when the
+      // user pressed send — a comment saved during the flight is not in it,
+      // and survives the consume that follows.
+      const pending = browserComments.latest();
+      const sentCommentIds = pending.map((comment) => comment.id);
+      let appendix: PromptAppendix | undefined;
+
+      if (pending.length && sessionId) {
+        const imageIds = pending
+          .filter((comment) => comment.hasImage)
+          .map((comment) => comment.id);
+        let imageData: Record<string, string | null> = {};
+
+        try {
+          if (imageIds.length) {
+            imageData = await readBrowserCommentImages(sessionId, imageIds);
+          }
+        } catch (error) {
+          // Nothing sent means nothing consumed — the comments stay put.
+          setComposerError(errorMessage(error));
+          return;
+        }
+
+        // hasImage here answers what this message actually carries, not what
+        // the store hopes to have.
+        const entries = pending.map((comment) => ({
+          ...comment,
+          hasImage: Boolean(imageData[comment.id]),
+        }));
+
+        appendix = {
+          text: formatBrowserComments(entries),
+          images: entries
+            .filter((comment) => comment.hasImage)
+            .map((comment) =>
+              promptImageFromDataUrl(
+                imageData[comment.id]!,
+                `browser-comment-${comment.index}.png`,
+              ),
+            ),
+        };
+      }
+
+      const built = await buildPromptWithAttachments(
+        draft,
+        attachments.items,
+        appendix,
+      );
 
       if (!built.ok) {
         setComposerError(built.error);
         return;
       }
 
+      const sent = () => {
+        setComposerError(null);
+        attachments.clear();
+        clearSubmittedDraft();
+        // Sent comments leave the store — only the snapshot ids, so anything
+        // saved while the send was in flight is kept.
+        if (sentCommentIds.length && sessionId) {
+          void consumeBrowserComments(sessionId, sentCommentIds).catch(
+            () => {},
+          );
+        }
+      };
+
       if (queueMode) {
         try {
           await onQueueSubmit?.(built.prompt, built.images);
-          setComposerError(null);
-          attachments.clear();
-          clearSubmittedDraft();
+          sent();
         } catch (error) {
           setComposerError(errorMessage(error));
         }
@@ -291,9 +358,7 @@ export function FullChatComposer({
 
       try {
         await onPromptSubmit?.(built.prompt, built.images);
-        setComposerError(null);
-        attachments.clear();
-        clearSubmittedDraft();
+        sent();
       } catch (error) {
         setComposerError(errorMessage(error));
       }
@@ -302,6 +367,48 @@ export function FullChatComposer({
       setIsSubmitting(false);
     }
   };
+  // Cmd/Ctrl+Enter in the page asks this composer to send what it holds. The
+  // ref keeps the subscription stable across every keystroke's new submitDraft.
+  const submitDraftRef = useRef(submitDraft);
+  submitDraftRef.current = submitDraft;
+
+  // The request's own gates, read through refs for the same reason: while the
+  // composer cannot send at all (Session Creation, a stop in flight) a page
+  // request is ignored — and so is one that would go out empty. Delivered is
+  // still true either way: the composer is mounted and did consider it.
+  const composerBusyRef = useRef(isCreating || isStoppingRun);
+  composerBusyRef.current = isCreating || isStoppingRun;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const attachmentsRef = useRef(attachments.items);
+  attachmentsRef.current = attachments.items;
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    return subscribeComposerSubmitRequests(sessionId, () => {
+      if (composerBusyRef.current) {
+        return;
+      }
+
+      const hasDraft = Boolean(
+        draftRef.current.replace(/\u00A0/g, " ").trim(),
+      );
+
+      if (
+        !hasDraft &&
+        attachmentsRef.current.length === 0 &&
+        browserComments.latest().length === 0
+      ) {
+        return;
+      }
+
+      void submitDraftRef.current();
+    });
+  }, [sessionId]);
+
   // Queue-first model: the composer always queues while a run is active, and
   // steering happens from the queued row itself as one locked mutation.
   // Decision record: .scratch/composer-redesign/PRD.md
@@ -423,13 +530,18 @@ export function FullChatComposer({
         className="mx-auto w-full max-w-[44rem]"
         drawer={
           <ComposerAttachmentDrawer
+            comments={commentChips}
+            commentsLabel="Browser comments"
             items={attachments.items}
             onRemove={attachments.remove}
+            onRemoveComment={removeBrowserComment}
           />
         }
         error={attachments.error ?? composerError}
         footer={composerFooter}
-        hasAttachments={attachments.items.length > 0}
+        hasAttachments={
+          attachments.items.length > 0 || browserComments.comments.length > 0
+        }
         inputRef={inputRef}
         leadingTokenFor={leadingTokenFor}
         lockInputOnRun={!queueMode || isSubmitting}
@@ -496,4 +608,22 @@ export function FullChatComposer({
       ) : null}
     </div>
   );
+}
+
+/**
+ * A `data:image/…;base64,…` URL split into the pieces the runtime prompt
+ * image takes. Anything unexpected still parses — the store only ever hands
+ * back PNGs, and the fallback keeps a malformed one a sendable PNG.
+ */
+function promptImageFromDataUrl(
+  dataUrl: string,
+  name: string,
+): RuntimePromptImage {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
+
+  return {
+    mimeType: match?.[1] ?? "image/png",
+    data: match?.[2] ?? "",
+    name,
+  };
 }

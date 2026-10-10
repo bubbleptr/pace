@@ -6,7 +6,6 @@ import type {
   BrowserViewState,
 } from "@/shared/browser-protocol";
 import {
-  browserCaptureAckTimeoutMs,
   browserTitlebarBandPx,
   createBrowserHost,
   createBrowserTabHost,
@@ -71,9 +70,6 @@ function createFakeView() {
     setAnnotationPalette(palette) {
       calls.push("setAnnotationPalette");
       calls.push(`palette(${JSON.stringify(palette)})`);
-    },
-    prepareCapture() {
-      calls.push("prepareCapture");
     },
     finishCapture() {
       calls.push("finishCapture");
@@ -208,24 +204,6 @@ describe("resolveBrowserViewBounds", () => {
 });
 
 describe("browser host commands", () => {
-  /** What the page reported while marking, and what it acks at capture time. */
-  const marked = {
-    annotations: [
-      {
-        id: "m1",
-        index: 1,
-        selector: "#cta",
-        tag: "button",
-        rect: { x: 0, y: 0, width: 8, height: 8 },
-      },
-    ],
-    viewport: { width: 684, height: 820, dpr: 2 },
-  };
-  const acked = {
-    annotations: [{ ...marked.annotations[0]!, comment: "Too small to hit" }],
-    viewport: { width: 900, height: 820, dpr: 2 },
-  };
-
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -444,89 +422,6 @@ describe("browser host commands", () => {
     );
   });
 
-  it("caps the annotation capture at the panel's own CSS width", async () => {
-    const { host, views } = createHostHarness();
-
-    await expect(host.invoke("browser_capture_annotation")).resolves.toBeNull();
-
-    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-    await host.invoke("browser_set_bounds", {
-      rect: { x: 748, y: 40, width: 684, height: 820 },
-    });
-
-    await host.invoke("browser_capture");
-
-    const capture = host.invoke("browser_capture_annotation");
-
-    host.recordCaptureReady([], marked.viewport);
-    await capture;
-
-    // The still that stands in for the native view keeps every device pixel,
-    // because it is shown at the placeholder's own size. The one that becomes
-    // a prompt attachment does not: a 2x capture of a wide panel is a PNG
-    // approaching the 8 MiB image ceiling, and the model gains nothing from it.
-    expect(views[0]!.calls).toContain("capture()");
-    expect(views[0]!.calls).toContain("capture(684)");
-  });
-
-  it("has the page settle its overlay before the shot, and sends what it acked", async () => {
-    const { host, views } = createHostHarness();
-
-    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-    await host.invoke("browser_set_bounds", {
-      rect: { x: 748, y: 40, width: 684, height: 820 },
-    });
-    const capture = host.invoke("browser_capture_annotation");
-
-    // The page answers the prepare with the comment it has just committed and
-    // a viewport measured now, after the panel was dragged wider.
-    host.recordCaptureReady(acked.annotations, acked.viewport);
-
-    expect(await capture).toEqual({
-      image: "data:image/png;base64,SNAPSHOT",
-      annotations: acked.annotations,
-      viewport: acked.viewport,
-      url: "http://localhost:5173/",
-    });
-    // Order is the whole point: shooting first would print the open comment
-    // bubble and a stale hover box onto what Pi reads — and the page is told
-    // when the shot is over so its annotation chrome can come back.
-    expect(views[0]!.calls.slice(-3)).toEqual([
-      "prepareCapture",
-      "capture(684)",
-      "finishCapture",
-    ]);
-  });
-
-  it("shoots anyway when the page never answers, using what main last heard", async () => {
-    vi.useFakeTimers();
-
-    try {
-      const { host, views } = createHostHarness(undefined, () => ({
-        annotations: marked.annotations,
-        viewport: marked.viewport,
-      }));
-
-      await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-
-      const capture = host.invoke("browser_capture_annotation");
-
-      // No annotation preload is listening — a page that replaced the document
-      // before its overlay reported in, say. The toolbar must not hang on it.
-      await vi.advanceTimersByTimeAsync(browserCaptureAckTimeoutMs);
-
-      expect(await capture).toMatchObject({
-        annotations: marked.annotations,
-        viewport: marked.viewport,
-      });
-      expect(views[0]!.calls).toContain("capture()");
-      // Even the bail-out tells the page the shot is over.
-      expect(views[0]!.calls).toContain("finishCapture");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("drives design mode through the view and remembers it for the next document", async () => {
     const { host, views } = createHostHarness();
 
@@ -625,7 +520,6 @@ describe("browser host commands", () => {
   it("claims only the commands it implements, so the backend keeps the rest", () => {
     for (const command of [
       "browser_capture",
-      "browser_capture_annotation",
       "browser_navigate",
       "browser_back",
       "browser_forward",
@@ -795,7 +689,7 @@ describe("Browser multi-instance host", () => {
     expect(views[0]?.readState().url).toBe("http://localhost:3000/");
   });
 
-  it("keeps annotations per tab and cancels captures when their tab is closed", async () => {
+  it("keeps annotations per tab and drops only the view when a tab is closed", async () => {
     const { host, views } = createHostHarness();
     await host.invoke("browser_open", first);
     await host.invoke("browser_navigate", { ...first, url: "localhost:3000" });
@@ -806,7 +700,6 @@ describe("Browser multi-instance host", () => {
       { width: 600, height: 700, dpr: 1 },
       "http://localhost:3000/",
     );
-    const capture = host.invoke("browser_capture_annotation", first);
     await host.invoke("browser_open", second);
     await host.invoke("browser_navigate", { ...second, url: "localhost:4000" });
     expect(host.readTab(second)).toMatchObject({
@@ -817,8 +710,9 @@ describe("Browser multi-instance host", () => {
       designMode: true,
       annotations: [{ selector: "#a" }],
     });
+    // Closing removes the view and its markers — the comment lives in the
+    // Session store and outlives both.
     await host.invoke("browser_close", first);
-    expect(await capture).toBeNull();
     expect(views[0]?.destroyed).toBe(true);
     expect(views[1]?.destroyed).toBe(false);
   });
@@ -1202,6 +1096,59 @@ describe("Session comment store", () => {
 
     expect(await host.invoke("browser_list_comments", { sessionId: "s" })).toEqual([]);
     expect(views).toHaveLength(0);
+  });
+
+  it("waits for a pending save crop before publishing the page's send", async () => {
+    const { host, views, events } = harness();
+    let releaseCrop = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseCrop = resolve;
+    });
+
+    await openOn(host, first, "localhost:3000");
+    views[0]!.captureRect = async () => {
+      await gate;
+      return "data:image/png;base64,LATE";
+    };
+
+    // IPC order is what makes this observable: the save's crop is pending
+    // before the page can ask for the send that depends on it.
+    void host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    const submit = host.requestSubmit(first);
+
+    // The request holds until the crop resolves: emitting now would publish a
+    // send whose comments-changed has not gone out — and hasImage is not yet
+    // known.
+    await Promise.resolve();
+    expect(events.some((event) => event.type === "submit-requested")).toBe(false);
+
+    releaseCrop();
+    await submit;
+
+    const types = events.map((event) => event.type);
+    const changed = types.lastIndexOf("comments-changed");
+    const submitted = types.indexOf("submit-requested");
+
+    expect(changed).toBeGreaterThanOrEqual(0);
+    expect(submitted).toBeGreaterThan(changed);
+    expect(events[changed]).toMatchObject({
+      sessionId: "s",
+      comments: [expect.objectContaining({ id: "c1", hasImage: true })],
+    });
+    expect(events[submitted]).toEqual({ type: "submit-requested", sessionId: "s" });
+  });
+
+  it("emits the send request at once with no crop pending, and ignores stray tabs", async () => {
+    const { host, events } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    await host.requestSubmit({ sessionId: "other", tabId: "z" });
+    await host.requestSubmit({ sessionId: "s", tabId: "zzz" });
+    expect(events.some((event) => event.type === "submit-requested")).toBe(false);
+
+    await host.requestSubmit(first);
+    expect(events).toContainEqual({ type: "submit-requested", sessionId: "s" });
   });
 });
 

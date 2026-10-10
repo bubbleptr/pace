@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatBrowserAnnotationPrompt } from "@pace/core";
 import {
   activateBrowserTab,
   attachBrowserSession,
   browserBack,
   browserForward,
   captureBrowser,
-  captureBrowserAnnotation,
   clearBrowserAnnotations,
   closeBrowserTab,
   hideBrowserSession,
@@ -20,7 +18,7 @@ import {
   setBrowserVisible,
   subscribeBrowserEvents,
 } from "@/entities/browser/browser-client";
-import { injectIntoComposer } from "@/entities/session/composer-injections";
+import { requestComposerSubmit } from "@/entities/session/composer-submit-requests";
 import { isElectronRuntime } from "@/shared/runtime";
 import type {
   BrowserAnnotationPalette,
@@ -81,7 +79,6 @@ function BrowserSessionContent({
     tabId: string;
     image: string;
   } | null>(null);
-  const [sendingTabId, setSendingTabId] = useState<string | null>(null);
   const alive = useRef(false);
   // Every context change invalidates pending captures, even if the user switches back.
   const contextVersion = useRef(0);
@@ -123,9 +120,24 @@ function BrowserSessionContent({
     // Main can publish while attach restores a fast page, before its reply arrives.
     const early = new Map<string, BrowserTabState>();
     const unsubscribe = subscribeBrowserEvents((event) => {
-      // comments-changed is store news for the composer (S3) — the panel's
-      // state is only ever tab snapshots, plus the one notice that explains
-      // a comment main refused to keep.
+      // comments-changed is store news for the composer — the panel's state
+      // is only ever tab snapshots, plus the notices a page could not get on
+      // its own.
+      if (event.type === "submit-requested") {
+        // Cmd/Ctrl+Enter in the page. A composer mounted for this Session
+        // answers by submitting; with none, the comments stay on the page and
+        // the user hears that nothing was sent.
+        if (event.sessionId !== sessionId || !alive.current) return;
+        if (!requestComposerSubmit(sessionId)) {
+          const tabId = groupRef.current?.activeTabId ?? "empty";
+          setNotices((current) => ({
+            ...current,
+            [tabId]:
+              "No composer is open for this Session, so nothing was sent. Your comments are kept.",
+          }));
+        }
+        return;
+      }
       if (event.type === "comment-rejected") {
         if (event.sessionId === sessionId && alive.current) {
           setNotices((current) => ({
@@ -397,50 +409,6 @@ function BrowserSessionContent({
         setActionError(errorMessage(error));
     }
   };
-  const sendToComposer = async () => {
-    if (!active?.annotations.length || !active.viewport || sendingTabId) return;
-    const page = { sessionId, tabId: active.tabId };
-    const version = contextVersion.current;
-    const navigationId = active.navigationId;
-    setSendingTabId(page.tabId);
-    setNotices((current) => ({ ...current, [page.tabId]: null }));
-    try {
-      const capture = await captureBrowserAnnotation(page).catch(() => null);
-      const current = groupRef.current;
-      const latest = current?.tabs.find((tab) => tab.tabId === page.tabId);
-      if (
-        !alive.current ||
-        version !== contextVersion.current ||
-        current?.activeTabId !== page.tabId ||
-        latest?.navigationId !== navigationId ||
-        latest.url !== active.url
-      )
-        return;
-      const image = capture?.image ?? null;
-      const delivered = injectIntoComposer({
-        sessionId,
-        text: formatBrowserAnnotationPrompt({
-          url: capture?.url || active.url,
-          viewport: capture?.viewport ?? active.viewport,
-          elements: capture?.annotations ?? active.annotations,
-          capturedAt: new Date().toISOString(),
-          screenshot: image !== null,
-        }),
-        files: image ? [pngFileFromDataUrl(image)] : [],
-      });
-      setNotices((current) => ({
-        ...current,
-        [page.tabId]: !delivered
-          ? "No composer is open for this Session, so nothing was sent. The marks are still on the page."
-          : image
-            ? null
-            : "Sent without a screenshot — the page could not be photographed.",
-      }));
-    } finally {
-      if (alive.current) setSendingTabId(null);
-    }
-  };
-
   const addressKey = tabId ?? "empty";
   const tabs = (group?.tabs ?? []).map((tab, index) => ({
     id: tab.tabId,
@@ -478,7 +446,6 @@ function BrowserSessionContent({
         canGoForward={active?.canGoForward ?? false}
         isDesignMode={active?.designMode ?? false}
         isLoading={active?.loading ?? false}
-        isSending={sendingTabId === tabId && tabId !== null}
         onAddressChange={(address) =>
           setDrafts((current) => ({ ...current, [addressKey]: address }))
         }
@@ -506,11 +473,6 @@ function BrowserSessionContent({
           if (active) runPageCommand(() => openBrowserUrlExternally(active.url));
         }}
         onReload={onReload}
-        onSendToComposer={() =>
-          void sendToComposer().catch((error) => {
-            if (alive.current) setActionError(errorMessage(error));
-          })
-        }
       />
       <BrowserSurface.Viewport
         notice={actionError ?? notices[addressKey]}
@@ -523,13 +485,6 @@ function BrowserSessionContent({
   );
 }
 
-function pngFileFromDataUrl(dataUrl: string) {
-  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1)
-    bytes[index] = binary.charCodeAt(index);
-  return new File([bytes], "browser-annotations.png", { type: "image/png" });
-}
 function errorMessage(error: unknown) {
   return error instanceof Error
     ? error.message

@@ -4,15 +4,11 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  BrowserAnnotationCapture,
   BrowserEvent,
   BrowserTabTarget,
 } from "@/shared/browser-protocol";
 import type { PaceRendererApi } from "@/shared/runtime";
-import {
-  subscribeComposerInjections,
-  type ComposerInjection,
-} from "@/entities/session/composer-injections";
+import { subscribeComposerSubmitRequests } from "@/entities/session/composer-submit-requests";
 import { createBrowserHost } from "../../../electron/browser-host";
 import { SessionDockMotionContext } from "@/shared/ui/session-dock/session-dock";
 import { SessionBrowserPanel } from "./session-browser-panel";
@@ -27,19 +23,11 @@ const marks = [
   },
 ];
 const viewport = { width: 900, height: 820, dpr: 2 };
-const settledCapture: BrowserAnnotationCapture = {
-  image: "data:image/png;base64,SNAP",
-  url: "http://localhost:3000/",
-  viewport,
-  annotations: [{ ...marks[0]!, comment: "Too small to hit" }],
-};
 
 function installPreload(
   options: {
     captureGate?: Promise<void>;
     activateGate?: Promise<void>;
-    annotationGate?: Promise<void>;
-    failCapture?: boolean;
     openGate?: Promise<void>;
     failOpen?: boolean;
   } = {},
@@ -63,7 +51,6 @@ function installPreload(
         setDesignMode() {},
         setAnnotationPalette() {},
         syncAnnotations() {},
-        prepareCapture() {},
         finishCapture() {},
         reload() {},
         destroy() {},
@@ -88,11 +75,6 @@ function installPreload(
       if (command === "browser_capture") {
         await options.captureGate;
         return "data:image/png;base64,SNAP";
-      }
-      if (command === "browser_capture_annotation") {
-        await options.annotationGate;
-        if (options.failCapture) throw new Error("Cannot capture");
-        return settledCapture;
       }
       const answer = await host.invoke(command, args);
       if (command === "browser_activate") await options.activateGate;
@@ -380,103 +362,56 @@ describe("SessionBrowserPanel multi-instance", () => {
     expect(screen.queryByText("OLD ERROR")).toBeNull();
   });
 
-  it("sends only the active tab's settled capture once, using the loaded URL", async () => {
-    let release = () => {};
-    const preload = installPreload({
-      annotationGate: new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-    });
-    const user = userEvent.setup();
-    const injections: ComposerInjection[] = [];
-    const unsubscribe = subscribeComposerInjections("s", (injection) =>
-      injections.push(injection),
+  it("hands the page's submit request to a mounted composer", async () => {
+    const preload = installPreload();
+    const submits: number[] = [];
+    const unsubscribe = subscribeComposerSubmitRequests("s", () =>
+      submits.push(submits.length),
     );
+
     mount();
     await restored();
-    const first = await preload.target();
-    await preload.mark(first);
-    await user.clear(screen.getByRole("textbox", { name: "Address" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "Address" }),
-      "draft.local",
-    );
-    const send = screen.getByRole("button", { name: "Send to composer" });
-    await user.click(send);
-    expect(send).toBeDisabled();
-    await user.click(send);
-    await act(async () => release());
-    await waitFor(() => expect(injections).toHaveLength(1));
-    expect(
-      preload.invocations.filter(
-        (i) => i.command === "browser_capture_annotation",
-      ),
-    ).toEqual([
-      {
-        command: "browser_capture_annotation",
-        args: { sessionId: "s", tabId: first.tabId },
-      },
-    ]);
-    expect(injections[0]?.text).toContain("Too small to hit");
-    expect(injections[0]?.text).toContain("http://localhost:3000/");
-    expect(injections[0]?.files?.[0]).toBeInstanceOf(File);
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "s" });
+    });
+
+    expect(submits).toHaveLength(1);
+    expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
     unsubscribe();
   });
 
-  it.each(["tab", "session", "close"])(
-    "discards an in-flight send after a %s switch",
-    async (change) => {
-      let release = () => {};
-      const preload = installPreload({
-        annotationGate: new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-      });
-      const user = userEvent.setup();
-      const injections: ComposerInjection[] = [];
-      const unsubscribe = subscribeComposerInjections("s", (injection) =>
-        injections.push(injection),
-      );
-      const view = mount();
-      await restored();
-      await preload.mark(await preload.target());
-      await user.click(
-        screen.getByRole("button", { name: "Send to composer" }),
-      );
-      if (change === "session")
-        view.rerender(
-          <SessionBrowserPanel docked projectId="q" sessionId="next" />,
-        );
-      else
-        await user.click(
-          screen.getByRole("button", {
-            name: change === "tab" ? "New browser tab" : "Close Browser 1",
-          }),
-        );
-      await act(async () => release());
-      expect(injections).toHaveLength(0);
-      unsubscribe();
-    },
-  );
+  it("says nothing was sent when no composer answers the submit request", async () => {
+    const preload = installPreload();
 
-  it("falls back to text on capture failure and reports when no composer is mounted", async () => {
-    const user = userEvent.setup();
-    const preload = installPreload({ failCapture: true });
     mount();
     await restored();
-    await preload.mark(await preload.target());
-    await user.click(screen.getByRole("button", { name: "Send to composer" }));
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "s" });
+    });
+
     expect(
       await screen.findByTestId("browser-surface-notice"),
-    ).toHaveTextContent(/No composer/);
-    const injections: ComposerInjection[] = [];
-    const unsubscribe = subscribeComposerInjections("s", (injection) =>
-      injections.push(injection),
+    ).toHaveTextContent(/No composer is open for this Session/);
+  });
+
+  it("ignores another Session's submit request", async () => {
+    const preload = installPreload();
+    const submits: number[] = [];
+    const unsubscribe = subscribeComposerSubmitRequests("s", () =>
+      submits.push(submits.length),
     );
-    await user.click(screen.getByRole("button", { name: "Send to composer" }));
-    await waitFor(() => expect(injections).toHaveLength(1));
-    expect(injections[0]?.files).toEqual([]);
-    expect(injections[0]?.text).toContain("no screenshot could be taken");
+
+    mount();
+    await restored();
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "other" });
+    });
+
+    expect(submits).toHaveLength(0);
+    expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
     unsubscribe();
   });
 

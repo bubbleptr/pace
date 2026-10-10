@@ -335,13 +335,9 @@ describe("Design components layer", () => {
         .some((button) => button.getAttribute("aria-pressed") === "true"),
     ).toBe(true);
 
-    // Send to composer is the point of annotation mode, and it has two states
-    // worth showing: nothing marked yet, and something to send.
-    const send = within(section).getAllByRole("button", { name: "Send to composer" });
-
-    expect(send.some((button) => !button.hasAttribute("disabled"))).toBe(true);
-    expect(send.some((button) => button.hasAttribute("disabled"))).toBe(true);
-    // And what a send leaves behind when it could not do all of it.
+    // And what a page request leaves behind when it could not be answered —
+    // a notice in plain text, since a layer here would swap the live page for
+    // a still.
     expect(within(section).getAllByTestId("browser-surface-notice")).toHaveLength(2);
   });
 

@@ -283,11 +283,81 @@ test("Browser surface loads a page, follows the panel, and keeps popups in place
   }
 });
 
-test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and sends the marks to the composer", async () => {
+test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and sends the comments through the composer", async () => {
   const { server, origin } = await startPreviewServer();
+  // The page's Cmd/Ctrl+Enter send goes to a real Pi runtime, so it needs a
+  // provider that can answer — a stub completions endpoint, like the lazy
+  // history spec uses.
+  const provider = createServer(async (request, response) => {
+    for await (const chunk of request) void chunk;
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const base = {
+      id: "reply",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "probe",
+    };
+    response.write(
+      `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "Comments received." }, finish_reason: null }] })}\n\n`,
+    );
+    response.write(
+      `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+    );
+    response.end("data: [DONE]\n\n");
+  });
+  await new Promise<void>((resolve) =>
+    provider.listen(0, "127.0.0.1", resolve),
+  );
+  const providerAddress = provider.address();
+  if (!providerAddress || typeof providerAddress === "string")
+    throw new Error("Missing provider fixture address");
+
   const testApp = await launchPace({
     seedSession: true,
     seedPreflightAuth: true,
+    seedModelControls: true,
+    agentFiles: {
+      "settings.json": JSON.stringify({
+        defaultProvider: "pace-test",
+        defaultModel: "probe",
+        defaultThinkingLevel: "off",
+      }),
+      "models.json": JSON.stringify({
+        providers: {
+          "pace-test": {
+            baseUrl: `http://127.0.0.1:${providerAddress.port}/v1`,
+            api: "openai-completions",
+            apiKey: "local-test-placeholder",
+            models: [
+              {
+                id: "probe",
+                name: "Probe",
+                reasoning: false,
+                input: ["text", "image"],
+                contextWindow: 16000,
+                maxTokens: 1024,
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
+              },
+            ],
+          },
+        },
+      }),
+    },
+    projections: (seeded) => [
+      {
+        ...seeded,
+        modelSelection: {
+          provider: "pace-test",
+          modelId: "probe",
+          thinkingLevel: "off",
+        },
+      },
+    ],
   });
 
   try {
@@ -335,11 +405,20 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
       "1 comment",
     );
 
+    // A second element, so the send below has two comments and two crops.
+    await embedded.evaluate(() =>
+      document.getElementById("csp-home")!.click(),
+    );
+    await typeAndSaveComment(testApp.app, "Heading sits too low");
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "2 comments",
+    );
+
     // The store — not the document — owns comments: reloading rebuilds the
     // page, and its fresh overlay gets the Session's marks for this URL back.
     await embedded.reload();
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 comment",
+      "2 comments",
     );
 
     // Marks also follow the document, not the navigation: away empties the
@@ -348,7 +427,7 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
     await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
     await embedded.evaluate(() => window.location.assign("/csp"));
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 comment",
+      "2 comments",
     );
 
     // Everything the overlay draws stays behind a closed shadow root: the page
@@ -371,19 +450,52 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
       leaksOverlayText: false,
     });
 
-    // What design mode is for: the marks and a screenshot of them land in this
-    // Session's composer as a draft, never as a sent prompt.
-    await aside.getByRole("button", { name: "Send to composer" }).click();
-
+    // Saved comments sit in the composer as structured chips — not text in
+    // the draft — until the page asks for the send.
     const composer = window.getByTestId("full-chat-composer");
+    const chips = composer.getByRole("group", { name: "Browser comments" });
 
-    // The comment typed into the shadow-root editor is on the row Pi reads.
-    await expect(composer.getByRole("combobox", { name: "Prompt" })).toHaveText(
-      /#1 `#cta` \(button\) — Needs a bigger hit area/,
+    await expect(chips.getByText("#1 Needs a bigger hit area")).toBeVisible();
+    await expect(chips.getByText("#2 Heading sits too low")).toBeVisible();
+
+    // Cmd/Ctrl+Enter inside the page sends: the whole Session's comments go
+    // out as one block with each element's crop attached.
+    await testApp.app.evaluate(({ BrowserWindow }) => {
+      const view = (BrowserWindow.getAllWindows()[0]?.contentView.children ?? [])
+        .filter(
+          (child): child is Electron.WebContentsView => "webContents" in child,
+        )
+        .filter((child) => child.webContents.getURL() !== "")
+        .at(-1);
+
+      view?.webContents.sendInputEvent({
+        type: "keyDown",
+        keyCode: "Enter",
+        modifiers: ["meta"],
+      });
+      view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+    });
+
+    const messages = window.getByLabel("Live Chat messages");
+
+    // The block Pi reads — index, selector and comment per mark.
+    await expect(messages).toContainText(
+      "Browser comments from the embedded preview",
     );
+    await expect(messages).toContainText("#1 [screenshot] `#cta` (button)");
+    await expect(messages).toContainText("#2 [screenshot] `#csp-home` (h1)");
+    // One crop per comment rides along, in comment order.
     await expect(
-      composer.getByAltText("browser-annotations.png"),
+      messages.getByAltText("browser-comment-1.png"),
     ).toBeVisible();
+    await expect(
+      messages.getByAltText("browser-comment-2.png"),
+    ).toBeVisible();
+
+    // A sent comment is consumed: the chips leave the drawer and the toolbar
+    // counts nothing.
+    await expect(chips).toHaveCount(0);
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
 
     // Escape inside the page leaves design mode, and the toolbar follows.
     await embedded.evaluate(() =>
@@ -399,12 +511,10 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
     await expect(
       aside.getByRole("button", { name: "Annotate" }),
     ).toHaveAttribute("aria-pressed", "false");
-
-    await aside.getByRole("button", { name: "Clear marks" }).click();
-    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
   } finally {
     await testApp.close();
     server.close();
+    provider.close();
   }
 });
 
@@ -502,10 +612,13 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     });
     await aside.getByTestId("browser-viewport").hover();
     await expect(aside.getByTestId("browser-snapshot")).toHaveCount(0);
-    await aside.getByRole("button", { name: "Send to composer" }).click();
+    // The saved comment rides this Session's composer as a chip, not draft text.
     await expect(
-      window.getByTestId("full-chat-composer").getByRole("combobox", { name: "Prompt" }),
-    ).toHaveText(/#cta/);
+      window
+        .getByTestId("full-chat-composer")
+        .getByRole("group", { name: "Browser comments" })
+        .getByText("#1 Pinned to tab one"),
+    ).toBeVisible();
 
     const before = await readBrowserViews(app);
     await window

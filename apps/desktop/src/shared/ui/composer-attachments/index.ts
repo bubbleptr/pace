@@ -8,6 +8,7 @@ export {
   buildPromptWithAttachments,
   classifyFile,
   type ComposerAttachment,
+  type PromptAppendix,
 } from "./composer-attachment-logic";
 export { ComposerAttachmentDrawer } from "./composer-attachment-drawer";
 export {

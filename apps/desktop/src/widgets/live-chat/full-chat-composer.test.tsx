@@ -661,3 +661,381 @@ describe("FullChatComposer file references", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("FullChatComposer browser comments", () => {
+  const SESSION_ID = "session-comments";
+
+  function comment(id: string, index: number, overrides = {}) {
+    return {
+      id,
+      index,
+      selector: `#${id}`,
+      tag: "button",
+      comment: `note ${id}`,
+      rect: { x: 0, y: 0, width: 10, height: 10 },
+      tabId: "t1",
+      url: "http://localhost:3000/",
+      title: "A",
+      viewport: { width: 800, height: 600, dpr: 1 },
+      stale: false,
+      hasImage: false,
+      createdAt: "2026-10-10T09:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  function liveProjection() {
+    return {
+      ...createSessionProjection({
+        id: SESSION_ID,
+        projectId: "pig-docs",
+        initialPrompt: "start",
+        createdAt: "2026-08-20T08:00:00.000Z",
+      }),
+      status: "waiting" as const,
+      runtimeId: `pi-sdk:${SESSION_ID}`,
+      piSessionId: `pi-${SESSION_ID}`,
+    };
+  }
+
+  function installPreload(options: { comments?: ReturnType<typeof comment>[] } = {}) {
+    const listeners = new Set<(event: unknown) => void>();
+    const comments = options.comments ?? [];
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_prompt_commands") {
+        return { source: "runtime", commands: [] };
+      }
+      if (command === "browser_list_comments") {
+        return comments;
+      }
+      if (command === "browser_comment_images") {
+        const ids = (args?.ids as string[]) ?? [];
+        return Object.fromEntries(
+          ids.map((id) => [id, `data:image/png;base64,${btoa(id.toUpperCase())}`]),
+        );
+      }
+      if (command === "browser_delete_comment" || command === "browser_consume_comments") {
+        return null;
+      }
+      return null;
+    });
+    window.pace = {
+      invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn((listener) => {
+        listeners.add(listener as (event: unknown) => void);
+        return () => listeners.delete(listener as (event: unknown) => void);
+      }),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+    return {
+      invoke,
+      publish(event: unknown) {
+        for (const listener of listeners) {
+          listener(event);
+        }
+      },
+      callsFor(command: string) {
+        return invoke.mock.calls.filter(([name]) => name === command);
+      },
+    };
+  }
+
+  const commentsGroup = () =>
+    screen.findByRole("group", { name: "Browser comments" });
+
+  function typeText(element: HTMLElement, text: string) {
+    element.textContent = text;
+    fireEvent.input(element);
+  }
+
+  beforeEach(() => {
+    clearFollowUpDraft(SESSION_ID);
+    delete window.pace;
+  });
+
+  it("shows the Session's comments as chips and flags stale ones", async () => {
+    installPreload({
+      comments: [
+        comment("c1", 1),
+        comment("c2", 2, { stale: true }),
+      ],
+    });
+    render(<FullChatComposer projection={liveProjection()} />);
+
+    const group = await commentsGroup();
+    expect(screen.getByText("#1 note c1")).toBeInTheDocument();
+    const staleChip = screen
+      .getByText("#2 note c2")
+      .closest("[aria-description]");
+    expect(staleChip).toHaveAttribute(
+      "aria-description",
+      "No longer on the page — sent as it was when saved",
+    );
+    expect(group).toBeInTheDocument();
+  });
+
+  it("removes a chip through the store", async () => {
+    const preload = installPreload({ comments: [comment("c1", 1)] });
+    const user = userEvent.setup();
+    render(<FullChatComposer projection={liveProjection()} />);
+
+    await commentsGroup();
+    await user.click(
+      screen.getAllByRole("button", { name: /remove/i })[0]!,
+    );
+
+    expect(preload.callsFor("browser_delete_comment")).toEqual([
+      ["browser_delete_comment", { sessionId: SESSION_ID, id: "c1" }],
+    ]);
+  });
+
+  it("sends the draft plus the comments block and screenshots, then consumes the snapshot", async () => {
+    const preload = installPreload({
+      comments: [
+        comment("c1", 1, { hasImage: true }),
+        comment("c2", 2),
+      ],
+    });
+    const onPromptSubmit = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+    await commentsGroup();
+
+    typeText(input, "Please look");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+    const [prompt, images] = onPromptSubmit.mock.calls[0]! as unknown as [
+      string,
+      { name: string; mimeType: string; data: string }[],
+    ];
+
+    // Draft first, then the comments block — the contract Pi reads.
+    expect(prompt.startsWith("Please look\n\nBrowser comments from the embedded preview.")).toBe(true);
+    expect(prompt).toContain("[screenshot] has a cropped screenshot");
+    expect(prompt).toContain("#1 [screenshot] `#c1` (button)");
+    expect(prompt).toContain("note c1");
+    expect(prompt).toContain("#2 `#c2` (button)");
+    expect(prompt).toContain("- rect: 10×10 at (0, 0)");
+
+    // Only the comment that has a shot rides along, in comment order.
+    expect(images).toEqual([
+      {
+        mimeType: "image/png",
+        data: btoa("C1"),
+        name: "browser-comment-1.png",
+      },
+    ]);
+
+    await waitFor(() =>
+      expect(preload.callsFor("browser_consume_comments")).toEqual([
+        [
+          "browser_consume_comments",
+          { sessionId: SESSION_ID, ids: ["c1", "c2"] },
+        ],
+      ]),
+    );
+  });
+
+  it("keeps a comment that arrives while the send is in flight", async () => {
+    let releaseSend = () => {};
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const preload = installPreload({ comments: [comment("c1", 1)] });
+    const onPromptSubmit = vi.fn(() => sendGate);
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+    await commentsGroup();
+
+    typeText(input, "look");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+
+    act(() => {
+      preload.publish({
+        type: "comments-changed",
+        sessionId: SESSION_ID,
+        comments: [comment("c1", 1), comment("c2", 2)],
+      });
+    });
+    await act(async () => releaseSend());
+
+    await waitFor(() =>
+      expect(preload.callsFor("browser_consume_comments")).toEqual([
+        [
+          "browser_consume_comments",
+          { sessionId: SESSION_ID, ids: ["c1"] },
+        ],
+      ]),
+    );
+  });
+
+  it("consumes nothing when the send fails", async () => {
+    const preload = installPreload({ comments: [comment("c1", 1)] });
+    const onPromptSubmit = vi.fn(async () => {
+      throw new Error("Pi said no");
+    });
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+    await commentsGroup();
+
+    typeText(input, "look");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+    // Let the rejection settle — then the store must still hold the comment.
+    await act(async () => {});
+    expect(preload.callsFor("browser_consume_comments")).toHaveLength(0);
+    expect(await screen.findByText(/Pi said no/)).toBeInTheDocument();
+  });
+
+  it("bakes the comments into a queued message the same way", async () => {
+    const preload = installPreload({ comments: [comment("c1", 1)] });
+    const onQueueSubmit = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        queueMode
+        onQueueSubmit={onQueueSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+    await commentsGroup();
+
+    typeText(input, "queued look");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onQueueSubmit).toHaveBeenCalledOnce());
+    const [prompt] = onQueueSubmit.mock.calls[0]! as unknown as [string];
+    expect(prompt).toContain("Browser comments from the embedded preview.");
+    expect(prompt).toContain("#1 `#c1` (button)");
+
+    await waitFor(() =>
+      expect(preload.callsFor("browser_consume_comments")).toHaveLength(1),
+    );
+  });
+
+  it("sends an empty draft that carries only comments", async () => {
+    installPreload({ comments: [comment("c1", 1)] });
+    const onPromptSubmit = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    await findPromptInput();
+    await commentsGroup();
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+    const [prompt] = onPromptSubmit.mock.calls[0]! as unknown as [string];
+    expect(prompt.startsWith("Browser comments from the embedded preview.")).toBe(
+      true,
+    );
+  });
+
+  it("submits when the page asks the composer to send", async () => {
+    installPreload({ comments: [comment("c1", 1)] });
+    const onPromptSubmit = vi.fn(async () => {});
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    await findPromptInput();
+    await commentsGroup();
+
+    const { requestComposerSubmit } = await import(
+      "@/entities/session/composer-submit-requests"
+    );
+    act(() => {
+      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+    });
+
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+    const [prompt] = onPromptSubmit.mock.calls[0]! as unknown as [string];
+    expect(prompt).toContain("#1 `#c1` (button)");
+  });
+
+  it("ignores a page submit request with nothing to send", async () => {
+    installPreload();
+    const onPromptSubmit = vi.fn(async () => {});
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    await findPromptInput();
+
+    // A stray Cmd/Ctrl+Enter in the page: the composer is mounted, so the
+    // request is delivered — but an empty draft and an empty drawer mean a
+    // no-op, not "Type a message or attach a file."
+    const { requestComposerSubmit } = await import(
+      "@/entities/session/composer-submit-requests"
+    );
+    act(() => {
+      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+    });
+
+    await act(async () => {});
+    expect(onPromptSubmit).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("Type a message or attach a file."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores a page submit request while Session Creation owns the composer", async () => {
+    installPreload({ comments: [comment("c1", 1)] });
+    saveFollowUpDraft(SESSION_ID, "a draft waiting to send");
+    const onPromptSubmit = vi.fn(async () => {});
+    render(
+      <FullChatComposer
+        isCreating
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    await findPromptInput();
+    await commentsGroup();
+
+    const { requestComposerSubmit } = await import(
+      "@/entities/session/composer-submit-requests"
+    );
+    act(() => {
+      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+    });
+
+    await act(async () => {});
+    // There was something to send, but the input is locked — the request is
+    // answered "delivered" without going out, like pressing a disabled Send.
+    expect(onPromptSubmit).not.toHaveBeenCalled();
+  });
+});

@@ -562,8 +562,6 @@ function createBrowserView(target: BrowserTabTarget) {
         type: "set-annotation-palette",
         palette,
       }),
-    prepareCapture: () =>
-      sendAnnotationCommand(webContents, { type: "prepare-capture" }),
     finishCapture: () =>
       sendAnnotationCommand(webContents, { type: "capture-done" }),
     reload: () => webContents.reload(),
@@ -593,10 +591,9 @@ function createBrowserView(target: BrowserTabTarget) {
         return null;
       }
 
-      // Resizing by width alone keeps the aspect ratio; who asks for a cap,
-      // and why, is `browser_capture_annotation` in browser-host.ts. The
-      // downsample itself lives in capture-downsample.ts so it can be unit
-      // tested at both 1x and 2x scale without a real HiDPI display.
+      // Resizing by width alone keeps the aspect ratio. The downsample itself
+      // lives in capture-downsample.ts so it can be unit tested at both 1x
+      // and 2x scale without a real HiDPI display.
       return downsampleToCssWidth(image, maxWidth).toDataURL();
     },
     async captureRect(rect: BrowserViewRect, cssWidth: number) {
@@ -678,11 +675,9 @@ ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
     case "annotation-presence":
       getBrowserHost().markStale(target, message.id, message.stale);
       break;
-    case "capture-ready":
-      // The answer to a prepare — it releases the capture waiting on it. The
-      // renderer hears about these marks in the capture's own result, not as
-      // an event, so the two cannot disagree.
-      host.recordCaptureReady(message.annotations, message.viewport);
+    case "submit-requested":
+      // Cmd/Ctrl+Enter: send the Session's comments once pending crops settle.
+      void getBrowserHost().requestSubmit(target);
       break;
     case "design-mode":
       host.recordDesignMode(message.enabled);

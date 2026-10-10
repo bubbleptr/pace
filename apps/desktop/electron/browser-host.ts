@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  BrowserAnnotationCapture,
   BrowserAnnotationElement,
   BrowserAnnotationPalette,
   BrowserAnnotationViewport,
@@ -33,14 +32,6 @@ import { readAnnotationPalette } from "./browser-annotation";
 export const browserTitlebarBandPx = 40;
 
 /**
- * How long main waits for the page to say it is out of shot before taking the
- * screenshot anyway. A page with no annotation preload listening — one that
- * replaced its document before the overlay reported in — would otherwise leave
- * the toolbar waiting forever.
- */
-export const browserCaptureAckTimeoutMs = 500;
-
-/**
  * Enumerated rather than prefix-sniffed: main routes on this set, so a future
  * backend command that happens to start with `browser_` still reaches the
  * backend instead of being swallowed here.
@@ -53,7 +44,6 @@ const browserCommands = new Set([
   "browser_activate",
   "browser_hide_session",
   "browser_capture",
-  "browser_capture_annotation",
   "browser_navigate",
   "browser_back",
   "browser_forward",
@@ -300,17 +290,14 @@ export type BrowserHostView = {
    * clear command: syncing `[]` removes them.
    */
   syncAnnotations(annotations: BrowserAnnotationElement[]): void;
-  /** Asks the overlay to put itself out of shot and report what it holds. */
-  prepareCapture(): void;
-  /** The shot is done — the overlay may put its mode chrome back. */
+  /** A save's crop ended — the hidden overlay may come back. */
   finishCapture(): void;
   reload(): void;
   destroy(): void;
   readState(): BrowserViewSnapshot;
   /**
    * PNG data URL of the view as it stands, or null if it cannot be read.
-   * `maxWidth` is in CSS pixels; see `browser_capture_annotation` below for
-   * why the annotation capture passes one and the overlay still does not.
+   * `maxWidth` is in CSS pixels.
    */
   capture(maxWidth?: number): Promise<string | null>;
   /**
@@ -347,7 +334,7 @@ type BrowserTabHost = {
   invoke(
     command: string,
     args?: Record<string, unknown>,
-  ): Promise<BrowserViewState | BrowserAnnotationCapture | string | null>;
+  ): Promise<BrowserViewState | string | null>;
   allowsNavigationTo(url: string): boolean;
   /** `setWindowOpenHandler`: no new windows; an allowed target loads in place. */
   handleWindowOpen(url: string): void;
@@ -383,11 +370,6 @@ type BrowserTabHost = {
    * must still be released (`capture-done`).
    */
   releaseAnnotationCapture(): void;
-  /** The page is out of shot: whatever capture is waiting can go ahead. */
-  recordCaptureReady(
-    annotations: BrowserAnnotationElement[],
-    viewport: BrowserAnnotationViewport,
-  ): void;
   /**
    * `did-fail-load` on the main frame. Chromium commits its error page under
    * the URL that failed, so without this the next navigate to that same URL
@@ -438,11 +420,6 @@ export function createBrowserTabHost(
   let loading = false;
   let designMode = false;
   let palette: BrowserAnnotationPalette | undefined;
-  /** Set while a capture is waiting for the page to say it is out of shot. */
-  let pendingCaptureAck:
-    | ((settled: Omit<BrowserAnnotationCapture, "image" | "url">) => void)
-    | null = null;
-
   /** The document the view is showing, or the one it was last asked for. */
   function currentUrl() {
     return view?.readState().url || requestedUrl;
@@ -540,73 +517,6 @@ export function createBrowserTabHost(
     return readState();
   }
 
-  /**
-   * The capture handshake. The overlay draws in the page itself — an open
-   * comment bubble and the hover box would both be photographed — and the
-   * comment being typed has not reached main until the bubble is closed. So
-   * the page is asked to settle first and answers with what it then holds,
-   * measured at the size the shot is about to be taken at.
-   */
-  function awaitCaptureAck(active: BrowserHostView) {
-    active.prepareCapture();
-
-    return new Promise<Omit<BrowserAnnotationCapture, "image" | "url">>((resolve) => {
-      // A page that never answers still gets a shot taken: the store's marks
-      // for this document stand in for what the overlay would have reported.
-      const timer = setTimeout(
-        () => settle(commentsNow()),
-        browserCaptureAckTimeoutMs,
-      );
-      const settle = (
-        settled: Omit<BrowserAnnotationCapture, "image" | "url">,
-      ) => {
-        clearTimeout(timer);
-        if (pendingCaptureAck === settle) {
-          pendingCaptureAck = null;
-        }
-        resolve(settled);
-      };
-
-      pendingCaptureAck = settle;
-    });
-  }
-
-  async function captureForAnnotations(): Promise<BrowserAnnotationCapture | null> {
-    if (!view) {
-      return null;
-    }
-
-    const capturedView = view;
-    const capturedNavigation = navigationId;
-    const settled = await awaitCaptureAck(capturedView);
-
-    try {
-      // Closing or navigating a tab invalidates the page this handshake began on.
-      if (view !== capturedView || navigationId !== capturedNavigation) {
-        return null;
-      }
-      const image = await capturedView.capture(bounds?.width);
-      if (view !== capturedView || navigationId !== capturedNavigation)
-        return null;
-
-      return {
-        // Downsampled to the panel's own CSS width: `capturePage` answers in
-        // device pixels, so on a 2x display a wide panel is a PNG approaching
-        // the 8 MiB an image attachment may weigh, for pixels the model cannot
-        // use. The overlay still (`browser_capture`) keeps them, because it is
-        // displayed at the placeholder's size.
-        image,
-        annotations: settled.annotations,
-        viewport: settled.viewport,
-        url: view.readState().url,
-      };
-    } finally {
-      // However the shot ended — taken, abandoned, never answered — the page
-      // gets told so its annotation-mode chrome can come back.
-      capturedView.finishCapture();
-    }
-  }
-
   function setBounds(rect: BrowserViewRect) {
     const contentSize = deps.getContentSize();
 
@@ -701,8 +611,6 @@ export function createBrowserTabHost(
           // native view while a DOM overlay is open, so it has to show the page
           // exactly as it is, marks and all.
           return view ? view.capture() : null;
-        case "browser_capture_annotation":
-          return captureForAnnotations();
         case "browser_open_external":
           await deps.openExternal(normalizeBrowserUrl(readUrlArgument(args)));
           return null;
@@ -770,10 +678,6 @@ export function createBrowserTabHost(
       view?.finishCapture();
     },
 
-    recordCaptureReady(annotations, viewport) {
-      pendingCaptureAck?.({ annotations, viewport });
-    },
-
     recordLoadFailure(message = "The page could not be opened.") {
       loadFailed = true;
       loading = false;
@@ -786,9 +690,6 @@ export function createBrowserTabHost(
       bounds = null;
       visibilityRequested = false;
       designMode = false;
-      // A capture waiting on a page that is going away has to be let go, or it
-      // sits on its timeout with a view it can no longer photograph.
-      pendingCaptureAck?.({ annotations: [], viewport: null });
     },
   };
 }
@@ -820,6 +721,12 @@ type BrowserSessionGroup = {
   comments: StoredComment[];
   /** The save-crop per comment id — null means the shot could not be read. */
   images: Map<string, string | null>;
+  /**
+   * In-flight save commits (crop → images → comments-changed), registered the
+   * moment the report arrives so a `submit-requested` that follows it on IPC
+   * always finds the crop it must wait for.
+   */
+  pendingCrops: Set<Promise<unknown>>;
 };
 
 /** Session membership owns lifetime; the active target alone owns the native slot. */
@@ -836,6 +743,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
         activeTabId: null,
         comments: [],
         images: new Map(),
+        pendingCrops: new Set(),
       };
       sessions.set(sessionId, group);
     }
@@ -1042,7 +950,6 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
   ): Promise<
     | BrowserSessionState
     | BrowserTabState
-    | BrowserAnnotationCapture
     | BrowserComment[]
     | Record<string, string | null>
     | string
@@ -1180,24 +1087,15 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       !isActive(target)
     )
       return null;
-    if (command === "browser_capture_annotation" && !isActive(target))
-      return null;
     const result = controller.invoke(command, args);
     if (
-      ![
-        "browser_set_bounds",
-        "browser_set_visible",
-        "browser_capture",
-        "browser_capture_annotation",
-      ].includes(command)
+      !["browser_set_bounds", "browser_set_visible", "browser_capture"].includes(
+        command,
+      )
     )
       notify(target);
     try {
       const answer = await result;
-      if (command === "browser_capture_annotation")
-        return isActive(target)
-          ? (answer as BrowserAnnotationCapture | null)
-          : null;
       if (command === "browser_capture") return answer as string | null;
       if (sessions.get(sessionId)?.tabs.get(target.tabId) !== controller)
         return null;
@@ -1208,7 +1106,6 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
           "browser_set_bounds",
           "browser_set_visible",
           "browser_capture",
-          "browser_capture_annotation",
         ].includes(command)
       )
         notify(target);
@@ -1298,16 +1195,29 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
 
       group.comments.push(comment);
 
-      const image = await controller.captureCommentCrop(
-        resolveCommentCropRect(annotation.rect, viewport),
-      );
+      // Registered before the first await: IPC preserves message order from
+      // one sender, so a submit-requested that follows the report always sees
+      // this pending commit — and it tracks the whole commit, not just the
+      // crop, so the emitted submit lands after comments-changed.
+      const commit = (async () => {
+        const image = await controller.captureCommentCrop(
+          resolveCommentCropRect(annotation.rect, viewport),
+        );
 
-      // The comment may have been deleted while its crop was in flight —
-      // keep an orphan image out of the map.
-      if (group.comments.includes(comment)) {
-        group.images.set(comment.id, image);
+        // The comment may have been deleted while its crop was in flight —
+        // keep an orphan image out of the map.
+        if (group.comments.includes(comment)) {
+          group.images.set(comment.id, image);
+        }
+        commitCommentChange(target.sessionId, new Set([target.tabId]));
+      })();
+
+      group.pendingCrops.add(commit);
+      try {
+        await commit;
+      } finally {
+        group.pendingCrops.delete(commit);
       }
-      commitCommentChange(target.sessionId, new Set([target.tabId]));
     },
 
     /**
@@ -1346,6 +1256,24 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
 
       comment.stale = stale;
       emitCommentsChanged(target.sessionId);
+    },
+
+    /**
+     * Cmd/Ctrl+Enter in the page. The message only arrives after every
+     * `annotation-saved` it belongs to, and IPC order means the crops those
+     * saves registered are already pending — so waiting for the set to drain
+     * guarantees the emitted request lands after the comments-changed that
+     * carries their `hasImage`.
+     */
+    async requestSubmit(target: BrowserTabTarget) {
+      const group = sessions.get(target.sessionId);
+
+      if (!group || !group.tabs.has(target.tabId)) {
+        return;
+      }
+
+      await Promise.allSettled([...group.pendingCrops]);
+      deps.emit?.({ type: "submit-requested", sessionId: target.sessionId });
     },
 
     /**

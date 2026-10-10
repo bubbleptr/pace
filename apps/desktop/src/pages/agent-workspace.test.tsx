@@ -51,7 +51,7 @@ import {
 } from "@/entities/session/session-projection";
 import { createSessionRuntimeModel } from "@/entities/session/session-runtime-model";
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
-import { injectIntoComposer } from "@/entities/session/composer-injections";
+import { requestComposerSubmit } from "@/entities/session/composer-submit-requests";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
@@ -4240,19 +4240,11 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.queryByLabelText("Project")).not.toBeInTheDocument();
   });
 
-  it("takes an injected block into the draft it already has, screenshot and all", async () => {
-    // The browser surface hands the composer marked-up page annotations from
-    // outside the chat column (#151). jsdom has no object URLs, and the
-    // attachment path makes one for every image preview.
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: () => "blob:annotations",
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: () => {},
-    });
-
+  it("submits what it holds when the page asks the composer to send", async () => {
+    // Cmd/Ctrl+Enter in the page (#448): the request reaches whatever
+    // composer is mounted for that Session — and nothing else.
+    const bridge = createInMemoryPiRuntimeBridge();
+    const send = vi.spyOn(bridge, "sendInitialPrompt");
     let projection = applySessionProjectionEvent(
       createSessionProjection({
         id: "annotated-session",
@@ -4286,6 +4278,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     render(
       <FixtureSessionsView
         projectId="pig-docs"
+        runtimeBridge={bridge}
         sessionProjection={projection}
         workspace={{
           id: "pig-docs",
@@ -4309,34 +4302,23 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    const composer = await findPromptInput(undefined, { placeholder: "What do you want to know?" });
+    await findPromptInput(undefined, { placeholder: "What do you want to know?" });
+
+    // A request aimed at a Session this composer is not showing has no taker.
+    expect(requestComposerSubmit("other-session")).toBe(false);
 
     act(() => {
-      injectIntoComposer({
-        sessionId: "annotated-session",
-        text: "Browser annotations from the embedded preview",
-        files: [
-          new File(["png"], "browser-annotations.png", { type: "image/png" }),
-        ],
-      });
-      // Another Session's surface must not write into this composer.
-      injectIntoComposer({ sessionId: "other-session", text: "Not for you" });
+      expect(requestComposerSubmit("annotated-session")).toBe(true);
     });
 
-    // Appended as its own block: whatever the user was already typing is the
-    // point of landing in the draft rather than sending.
     await waitFor(() =>
-      expect(promptValue(composer)).toBe(
-        "Half a thought\n\nBrowser annotations from the embedded preview",
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          piSessionId: "pi-session-annotated",
+          prompt: "Half a thought",
+        }),
       ),
     );
-    // Persisted like any other draft, so leaving the Session does not lose it.
-    expect(getFollowUpDraft("annotated-session")?.message).toBe(
-      "Half a thought\n\nBrowser annotations from the embedded preview",
-    );
-    // The screenshot rides the existing attachment path: drawer preview, size
-    // check and base64 encoding at submit all come with it.
-    expect(await screen.findByAltText("browser-annotations.png")).toBeInTheDocument();
   });
 
   it("steers an active run as a Live Chat control event instead of a queued message", async () => {
