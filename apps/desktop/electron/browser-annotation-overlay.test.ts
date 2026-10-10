@@ -20,8 +20,12 @@ const shadowRoots: ShadowRoot[] = [];
 let overlay: BrowserAnnotationOverlay | null = null;
 
 function harness() {
-  const annotationChanges: BrowserAnnotationElement[][] = [];
-  const viewports: BrowserAnnotationViewport[] = [];
+  const saved: {
+    annotation: BrowserAnnotationElement;
+    viewport: BrowserAnnotationViewport;
+  }[] = [];
+  const deleted: string[] = [];
+  const presence: { id: string; stale: boolean }[] = [];
   const designModeChanges: boolean[] = [];
   const captures: {
     annotations: BrowserAnnotationElement[];
@@ -30,22 +34,23 @@ function harness() {
 
   overlay = createAnnotationOverlay({
     document,
-    onAnnotationsChange: (annotations, viewport) => {
-      annotationChanges.push(annotations);
-      viewports.push(viewport);
-    },
+    onAnnotationSaved: (annotation, viewport) =>
+      saved.push({ annotation, viewport }),
+    onAnnotationDeleted: (id) => deleted.push(id),
+    onAnnotationPresence: (id, stale) => presence.push({ id, stale }),
     onDesignModeChange: (enabled) => designModeChanges.push(enabled),
     onCaptureReady: (annotations, viewport) => captures.push({ annotations, viewport }),
   });
 
   return {
     overlay,
-    annotationChanges,
-    viewports,
+    saved,
+    deleted,
+    presence,
     designModeChanges,
     captures,
-    latest: () => annotationChanges[annotationChanges.length - 1] ?? [],
     shadow: () => shadowRoots[shadowRoots.length - 1]!,
+    hostElement: () => document.querySelector<HTMLElement>(annotationOverlayHostTag)!,
   };
 }
 
@@ -141,24 +146,35 @@ function typeDraft(h: ReturnType<typeof harness>, text: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** Click, type, Enter — the full path from pointer to saved annotation. */
-function annotate(h: ReturnType<typeof harness>, element: Element, text: string) {
-  clickPageElement(element);
-  typeDraft(h, text);
-  pressKey(editorInput(h), "Enter");
-}
-
-function badges(h: ReturnType<typeof harness>) {
-  return Array.from(
-    h.shadow().querySelectorAll<HTMLElement>('[data-slot="annotation-badge"]'),
-  );
-}
-
-/** jsdom runs rAF on a timer; two frames is enough for a scheduled sync. */
+/** jsdom runs rAF on a timer; two frames is enough for a scheduled sync — and
+ * exactly what a new save waits before reporting, so the crop lands clean. */
 function nextFrames() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
+}
+
+/** Click, type, Enter — then the two frames a new save waits before reporting. */
+async function annotate(
+  h: ReturnType<typeof harness>,
+  element: Element,
+  text: string,
+) {
+  clickPageElement(element);
+  typeDraft(h, text);
+  pressKey(editorInput(h), "Enter");
+  await nextFrames();
+}
+
+function badges(h: ReturnType<typeof harness>) {
+  const root = shadowRoots[shadowRoots.length - 1];
+
+  // Nothing rendered yet means no shadow root exists at all.
+  return root
+    ? Array.from(
+        root.querySelectorAll<HTMLElement>('[data-slot="annotation-badge"]'),
+      )
+    : [];
 }
 
 const fullPalette: BrowserAnnotationPalette = {
@@ -204,7 +220,7 @@ describe("annotation overlay", () => {
     clickPageElement(button);
 
     expect(pageClicks).toHaveBeenCalledTimes(1);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
 
     h.overlay.setDesignMode(true);
     clickPageElement(button);
@@ -216,7 +232,7 @@ describe("annotation overlay", () => {
 
     // A draft is not an annotation yet: main hears nothing while it is typed.
     typeDraft(h, "Too small to hit");
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
     // Main clamps comments at the same ceiling when it rebuilds them.
     expect(editorInput(h).maxLength).toBe(500);
   });
@@ -236,26 +252,87 @@ describe("annotation overlay", () => {
     pressKey(editorInput(h), "Enter");
 
     expect(editorVisible(h)).toBe(true);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
   });
 
-  it("saves on Enter and stays in annotation mode", () => {
+  it("saves on Enter, stays in mode, and hides until the crop answers", async () => {
     const h = harness();
+    const button = place(document.getElementById("cta")!);
 
     h.overlay.setDesignMode(true);
-    annotate(h, place(document.getElementById("cta")!), "Too small to hit");
+    clickPageElement(button);
+    typeDraft(h, "Too small to hit");
+    pressKey(editorInput(h), "Enter");
 
-    expect(h.latest()).toHaveLength(1);
-    expect(h.latest()[0]).toMatchObject({
+    // The mark renders locally at once — provisional index until the sync —
+    // but the report waits two frames behind the hide, so the crop the save
+    // triggers contains no overlay.
+    expect(editorVisible(h)).toBe(false);
+    expect(h.designModeChanges).toEqual([]);
+    expect(h.saved).toHaveLength(0);
+    expect(h.hostElement().style.visibility).toBe("hidden");
+
+    await nextFrames();
+
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]!.annotation).toMatchObject({
       index: 1,
       selector: "#cta",
       tag: "button",
       comment: "Too small to hit",
     });
-    expect(typeof h.latest()[0]!.id).toBe("string");
-    expect(h.designModeChanges).toEqual([]);
-    expect(editorVisible(h)).toBe(false);
+    expect(typeof h.saved[0]!.annotation.id).toBe("string");
     expect(badges(h)[0]?.textContent).toBe("1");
+
+    // The answer to the save's crop brings the overlay back.
+    h.overlay.finishCapture();
+    expect(h.hostElement().style.visibility).toBe("visible");
+  });
+
+  it("unhides after one second when the save's crop never answers", async () => {
+    vi.useFakeTimers();
+
+    const h = harness();
+
+    try {
+      h.overlay.setDesignMode(true);
+      clickPageElement(place(document.getElementById("cta")!));
+      typeDraft(h, "no answer");
+      pressKey(editorInput(h), "Enter");
+
+      expect(h.hostElement().style.visibility).toBe("hidden");
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(h.hostElement().style.visibility).toBe("visible");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an edit immediately — no hide, no second crop", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+    const annotation = {
+      id: "srv-1",
+      index: 1,
+      selector: "#cta",
+      tag: "button",
+      rect: { x: 40, y: 40, width: 40, height: 20 },
+      comment: "original",
+    };
+
+    h.overlay.setDesignMode(true);
+    h.overlay.syncAnnotations([annotation]);
+    clickPageElement(button);
+    typeDraft(h, "edited");
+    pressKey(editorInput(h), "Enter");
+
+    // An edit reaches main at once: the element is already on file, nothing
+    // is being photographed.
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]!.annotation).toMatchObject({ id: "srv-1", comment: "edited" });
+    expect(h.hostElement().style.visibility).not.toBe("hidden");
   });
 
   it("keeps Shift+Enter as a newline instead of saving", () => {
@@ -275,7 +352,30 @@ describe("annotation overlay", () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(editorVisible(h)).toBe(true);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it("ignores Enter and Escape while an IME composition is active", () => {
+    const h = harness();
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
+    typeDraft(h, "half-typed");
+
+    // Enter inside a composition confirms a candidate — saving half a phrase
+    // is the bug this guard exists for. keyCode 229 is Chromium's composition
+    // marker on platforms that do not set isComposing.
+    pressKey(editorInput(h), "Enter", { isComposing: true });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.saved).toHaveLength(0);
+
+    pressKey(editorInput(h), "Enter", { keyCode: 229 });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.saved).toHaveLength(0);
+
+    pressKey(editorInput(h), "Escape", { isComposing: true });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.designModeChanges).toEqual([]);
   });
 
   it("cancels the editor on first Escape and leaves the mode on the second", () => {
@@ -288,19 +388,19 @@ describe("annotation overlay", () => {
 
     expect(editorVisible(h)).toBe(false);
     expect(h.designModeChanges).toEqual([]);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
 
     pressKey(window, "Escape");
 
     expect(h.designModeChanges).toEqual([false]);
   });
 
-  it("reverts an existing annotation's text when its edit is cancelled", () => {
+  it("reverts an existing annotation's text when its edit is cancelled", async () => {
     const h = harness();
     const button = place(document.getElementById("cta")!);
 
     h.overlay.setDesignMode(true);
-    annotate(h, button, "saved text");
+    await annotate(h, button, "saved text");
     clickPageElement(button);
 
     expect(editorInput(h).value).toBe("saved text");
@@ -309,43 +409,42 @@ describe("annotation overlay", () => {
     editorButton(h, "cancel").click();
 
     expect(editorVisible(h)).toBe(false);
-    expect(h.latest()[0]!.comment).toBe("saved text");
-    expect(h.latest()).toHaveLength(1);
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]!.annotation.comment).toBe("saved text");
   });
 
-  it("opens the annotation's own editor when its element or badge is re-clicked", () => {
+  it("opens the annotation's own editor when its element or badge is re-clicked", async () => {
     const h = harness();
     const button = place(document.getElementById("cta")!);
 
     h.overlay.setDesignMode(true);
-    annotate(h, button, "first note");
+    await annotate(h, button, "first note");
     clickPageElement(button);
 
     // Editing, not duplicating: the Delete button only exists for a saved mark.
     expect(editorInput(h).value).toBe("first note");
     expect(editorButton(h, "delete").style.display).not.toBe("none");
-    expect(h.latest()).toHaveLength(1);
+    expect(h.saved).toHaveLength(1);
 
     pressKey(editorInput(h), "Escape");
     badges(h)[0]!.click();
 
     expect(editorInput(h).value).toBe("first note");
-    expect(h.latest()).toHaveLength(1);
+    expect(h.saved).toHaveLength(1);
   });
 
-  it("deletes a mark and renumbers the rest contiguously", () => {
+  it("deletes a mark, reports the id, and renumbers the rest contiguously", async () => {
     const h = harness();
     const cta = place(document.getElementById("cta")!, 40, 40);
     const copy = place(document.getElementById("copy")!, 40, 300);
 
     h.overlay.setDesignMode(true);
-    annotate(h, cta, "first");
-    annotate(h, copy, "second");
+    await annotate(h, cta, "first");
+    await annotate(h, copy, "second");
     clickPageElement(cta);
     editorButton(h, "delete").click();
 
-    expect(h.latest()).toHaveLength(1);
-    expect(h.latest()[0]).toMatchObject({ index: 1, selector: "#copy", comment: "second" });
+    expect(h.deleted).toEqual([h.saved[0]!.annotation.id]);
     expect(badges(h).map((badge) => badge.textContent)).toEqual(["1"]);
   });
 
@@ -362,7 +461,7 @@ describe("annotation overlay", () => {
     // The draft the user was typing survives — a click is not a discard.
     expect(editorVisible(h)).toBe(true);
     expect(editorInput(h).value).toBe("not finished");
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
   });
 
   it("discards an untouched draft when another element is clicked", () => {
@@ -391,7 +490,7 @@ describe("annotation overlay", () => {
     expect(editor(h).style.top).toBe(`${170 - 8}px`);
   });
 
-  it("lets ↑ climb to the parent and ↓ return, and annotates the adjusted target", () => {
+  it("lets ↑ climb to the parent and ↓ return, and annotates the adjusted target", async () => {
     const h = harness();
     const wrap = place(document.querySelector("main")!, 8, 8);
     const button = place(document.getElementById("cta")!, 40, 40);
@@ -404,36 +503,10 @@ describe("annotation overlay", () => {
     clickPageElement(button);
     typeDraft(h, "the whole row");
     pressKey(editorInput(h), "Enter");
+    await nextFrames();
 
-    expect(h.latest()[0]).toMatchObject({ index: 1, tag: "main" });
+    expect(h.saved[0]!.annotation).toMatchObject({ index: 1, tag: "main" });
     expect(button.parentElement).toBe(wrap);
-  });
-
-  it("ignores Enter and Escape while an IME composition is active", () => {
-    const h = harness();
-
-    h.overlay.setDesignMode(true);
-    clickPageElement(place(document.getElementById("cta")!));
-    typeDraft(h, "half-typed");
-
-    // Enter inside a composition confirms a candidate — saving half a phrase
-    // is the bug this guard exists for. keyCode 229 is Chromium's composition
-    // marker on platforms that do not set isComposing.
-    pressKey(editorInput(h), "Enter", { isComposing: true });
-    expect(editorVisible(h)).toBe(true);
-    expect(h.annotationChanges).toHaveLength(0);
-
-    pressKey(editorInput(h), "Enter", { keyCode: 229 });
-    expect(editorVisible(h)).toBe(true);
-    expect(h.annotationChanges).toHaveLength(0);
-
-    pressKey(editorInput(h), "Escape", { isComposing: true });
-    expect(editorVisible(h)).toBe(true);
-    expect(h.designModeChanges).toEqual([]);
-
-    // Once the composition commits, the same keys work again.
-    pressKey(editorInput(h), "Enter");
-    expect(h.latest()[0]!.comment).toBe("half-typed");
   });
 
   it("toggles annotation mode on Cmd/Ctrl+Shift+A and reports it", () => {
@@ -451,7 +524,7 @@ describe("annotation overlay", () => {
     expect(h.designModeChanges).toEqual([true, false]);
   });
 
-  it("falls back per colour when the page cannot parse a palette value", () => {
+  it("falls back per colour when the page cannot parse a palette value", async () => {
     const h = harness();
 
     // jsdom's CSS has no `supports`, which the overlay treats as "unsupported"
@@ -462,7 +535,7 @@ describe("annotation overlay", () => {
     });
 
     h.overlay.setDesignMode(true, fullPalette);
-    annotate(h, place(document.getElementById("cta")!), "hi");
+    await annotate(h, place(document.getElementById("cta")!), "hi");
 
     const badge = badges(h)[0]!;
 
@@ -535,7 +608,7 @@ describe("annotation overlay", () => {
     expect(label.textContent).toBe("button.primary-cta · 40×20 · src/cta.tsx:9");
   });
 
-  it("saves a non-empty draft on prepareCapture and hides all chrome but the marks", () => {
+  it("saves a non-empty draft on prepareCapture and hides all chrome but the marks", async () => {
     const h = harness();
     const button = place(document.getElementById("cta")!);
 
@@ -578,6 +651,10 @@ describe("annotation overlay", () => {
         .display,
     ).not.toBe("none");
 
+    // The freshly saved draft reports to the store once its frames pass.
+    await nextFrames();
+    expect(h.saved).toHaveLength(1);
+
     // The shot is done: the mode chrome comes back, still annotating.
     h.overlay.finishCapture();
     expect(
@@ -593,7 +670,7 @@ describe("annotation overlay", () => {
     h.overlay.prepareCapture();
 
     expect(h.captures[0]?.annotations).toEqual([]);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
   });
 
   it("hides fully offscreen marks and refreshes their positions synchronously for capture", () => {
@@ -709,12 +786,12 @@ describe("annotation overlay", () => {
     expect(badge.style.display).toBe("none");
   });
 
-  it("rebinds a uniquely selected DOM replacement and keeps its stable annotation id", () => {
+  it("rebinds a uniquely selected DOM replacement and keeps its stable annotation id", async () => {
     const h = harness();
     const original = place(document.getElementById("cta")!, 40, 40);
     h.overlay.setDesignMode(true);
-    annotate(h, original, "Original comment");
-    const originalId = h.latest()[0]!.id;
+    await annotate(h, original, "Original comment");
+    const originalId = h.saved[0]!.annotation.id;
     clickPageElement(original);
     expect(editorVisible(h)).toBe(true);
 
@@ -732,8 +809,10 @@ describe("annotation overlay", () => {
     typeDraft(h, "Updated comment");
     pressKey(editorInput(h), "Enter");
 
-    expect(h.latest()).toHaveLength(1);
-    expect(h.latest()[0]).toMatchObject({
+    // The rebind kept the annotation's identity: the edit reports the same id
+    // with the re-measured rect, not a new mark.
+    expect(h.saved).toHaveLength(2);
+    expect(h.saved[h.saved.length - 1]!.annotation).toMatchObject({
       id: originalId,
       index: 1,
       selector: "#cta",
@@ -742,11 +821,11 @@ describe("annotation overlay", () => {
     });
   });
 
-  it("does not rebind a disconnected annotation to an ambiguous selector", () => {
+  it("does not rebind a disconnected annotation to an ambiguous selector", async () => {
     const h = harness();
     const original = place(document.getElementById("cta")!);
     h.overlay.setDesignMode(true);
-    annotate(h, original, "Original comment");
+    await annotate(h, original, "Original comment");
     original.remove();
 
     const first = document.createElement("button");
@@ -762,18 +841,18 @@ describe("annotation overlay", () => {
     expect(editorVisible(h)).toBe(true);
     expect(editorInput(h).value).toBe("");
     expect(editorButton(h, "delete").style.display).toBe("none");
-    expect(h.latest()).toHaveLength(1);
-    expect(h.latest()[0]?.comment).toBe("Original comment");
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]?.annotation.comment).toBe("Original comment");
   });
 
-  it("reclaims the shared badge corner immediately after deleting an earlier mark", () => {
+  it("reclaims the shared badge corner immediately after deleting an earlier mark", async () => {
     const h = harness();
     const button = place(document.getElementById("cta")!, 40, 40);
     const paragraph = place(document.getElementById("copy")!, 40, 40);
 
     h.overlay.setDesignMode(true);
-    annotate(h, button, "first");
-    annotate(h, paragraph, "second");
+    await annotate(h, button, "first");
+    await annotate(h, paragraph, "second");
     const survivingBadge = badges(h)[1]!;
     expect(survivingBadge.style.left).toBe("46px");
 
@@ -782,7 +861,7 @@ describe("annotation overlay", () => {
 
     expect(survivingBadge.textContent).toBe("1");
     expect(survivingBadge.style.left).toBe("70px");
-    expect(h.latest()).toHaveLength(1);
+    expect(badges(h)).toHaveLength(1);
   });
 
   it("drops the hover highlight when the pointer leaves the page", () => {
@@ -826,10 +905,10 @@ describe("annotation overlay", () => {
     clickPageElement(document.querySelector(annotationOverlayHostTag)!);
 
     expect(shadowRoots[0]!.querySelector('[data-slot="annotation-editor"]')).toBeNull();
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
   });
 
-  it("marks the element inside the page's own shadow root, not its host", () => {
+  it("marks the element inside the page's own shadow root, not its host", async () => {
     const h = harness();
     const widget = document.createElement("div");
 
@@ -847,10 +926,11 @@ describe("annotation overlay", () => {
     clickPageElement(inner);
     typeDraft(h, "shadow");
     pressKey(editorInput(h), "Enter");
+    await nextFrames();
 
     // `event.target` is retargeted to the host at the window; the composed
     // path still names what the user actually pointed at.
-    expect(h.latest()[0]).toMatchObject({ tag: "a", text: "Inner link" });
+    expect(h.saved[0]!.annotation).toMatchObject({ tag: "a", text: "Inner link" });
   });
 
   it("keeps a mark on its element as the page scrolls", async () => {
@@ -861,7 +941,7 @@ describe("annotation overlay", () => {
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
     measure.mockReturnValue(rectAt(12, 200));
     h.overlay.setDesignMode(true);
-    annotate(h, button, "scroll test");
+    await annotate(h, button, "scroll test");
 
     const outline = h
       .shadow()
@@ -954,17 +1034,6 @@ describe("annotation overlay", () => {
     ).toBe("auto");
   });
 
-  it("clears every mark on demand", () => {
-    const h = harness();
-
-    h.overlay.setDesignMode(true);
-    annotate(h, place(document.getElementById("cta")!), "gone");
-    h.overlay.clearAnnotations();
-
-    expect(h.latest()).toEqual([]);
-    expect(badges(h)).toHaveLength(0);
-  });
-
   it("takes its overlay and its listeners with it when disposed", () => {
     const h = harness();
 
@@ -974,6 +1043,104 @@ describe("annotation overlay", () => {
     expect(document.querySelector(annotationOverlayHostTag)).toBeNull();
 
     clickPageElement(document.getElementById("cta")!);
-    expect(h.annotationChanges).toHaveLength(0);
+    expect(h.saved).toHaveLength(0);
+  });
+});
+
+describe("annotation overlay — store sync", () => {
+  function serverAnnotation(
+    id: string,
+    index: number,
+    selector = "#cta",
+    comment = "from the store",
+  ): BrowserAnnotationElement {
+    return {
+      id,
+      index,
+      selector,
+      tag: "button",
+      rect: { x: 40, y: 40, width: 40, height: 20 },
+      comment,
+    };
+  }
+
+  it("restores an unknown annotation by selector and reports it present", () => {
+    const h = harness();
+
+    place(document.getElementById("cta")!);
+    h.overlay.syncAnnotations([serverAnnotation("srv-1", 3)]);
+
+    // The mark renders with the Session's index, not a local one.
+    expect(badges(h)[0]?.textContent).toBe("3");
+    expect(h.presence).toEqual([{ id: "srv-1", stale: false }]);
+  });
+
+  it("restores a mark whose element arrives after the sync", async () => {
+    const h = harness();
+
+    h.overlay.syncAnnotations([serverAnnotation("srv-1", 1, "#late")]);
+    expect(badges(h)).toHaveLength(0);
+    expect(h.presence).toEqual([]);
+
+    // An SPA filling its DOM in — the observer keeps watching rather than
+    // declaring the element gone.
+    const late = document.createElement("button");
+    late.id = "late";
+    document.body.append(late);
+    await nextFrames();
+
+    expect(badges(h)[0]?.textContent).toBe("1");
+    expect(h.presence).toEqual([{ id: "srv-1", stale: false }]);
+  });
+
+  it("reports a restore stale when the element never arrives", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+
+    try {
+      h.overlay.syncAnnotations([serverAnnotation("srv-1", 1, "#never")]);
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(h.presence).toEqual([{ id: "srv-1", stale: true }]);
+      expect(badges(h)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes marks the sync no longer knows and renumbers the survivors", async () => {
+    const h = harness();
+    const cta = place(document.getElementById("cta")!, 40, 40);
+    const copy = place(document.getElementById("copy")!, 40, 300);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, cta, "first");
+    await annotate(h, copy, "second");
+
+    const [first, second] = h.saved.map((save) => save.annotation);
+
+    // The store says: the first comment is gone, the second is now #1.
+    h.overlay.syncAnnotations([{ ...second!, index: 1 }]);
+
+    expect(badges(h).map((badge) => badge.textContent)).toEqual(["1"]);
+    expect(first).toBeDefined();
+    // Local removal is silent — the store ordered it, it is not a delete.
+    expect(h.deleted).toEqual([]);
+  });
+
+  it("closes the editor when the annotation it edits is synced away", async () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, button, "edited elsewhere");
+    clickPageElement(button);
+    expect(editorVisible(h)).toBe(true);
+
+    h.overlay.syncAnnotations([]);
+
+    // The comment this draft was writing to no longer exists.
+    expect(editorVisible(h)).toBe(false);
   });
 });

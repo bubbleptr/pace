@@ -2,6 +2,7 @@ import { invoke, onBrowserEvent } from "@/shared/runtime";
 import type {
   BrowserAnnotationCapture,
   BrowserAnnotationPalette,
+  BrowserComment,
   BrowserEvent,
   BrowserSessionState,
   BrowserTabState,
@@ -78,6 +79,30 @@ export function setBrowserAnnotationPalette(
 }
 export function clearBrowserAnnotations(target: BrowserTabTarget) {
   return invoke<BrowserTabState | null>("browser_clear_annotations", target);
+}
+/**
+ * The Session's comment store — every comment across all its tabs, in store
+ * order. A pure read: it never attaches, activates or paints a tab.
+ */
+export function listBrowserComments(sessionId: string) {
+  return invoke<BrowserComment[]>("browser_list_comments", { sessionId });
+}
+/** The save-crops for the given comment ids, `null` where none was taken. */
+export function readBrowserCommentImages(sessionId: string, ids: string[]) {
+  return invoke<Record<string, string | null>>("browser_comment_images", {
+    sessionId,
+    ids,
+  });
+}
+export function deleteBrowserComment(sessionId: string, id: string) {
+  return invoke<null>("browser_delete_comment", { sessionId, id });
+}
+/**
+ * Comments sent onward (to the composer, S3) leave the store exactly once —
+ * removes precisely the given ids and ignores ones already gone.
+ */
+export function consumeBrowserComments(sessionId: string, ids: string[]) {
+  return invoke<null>("browser_consume_comments", { sessionId, ids });
 }
 export function captureBrowser(target: BrowserTabTarget) {
   return invoke<string | null>("browser_capture", target);

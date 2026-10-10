@@ -93,6 +93,39 @@ export type BrowserSessionState = {
   activeTabId: string | null;
 };
 
-export type BrowserEvent = { type: "state-changed"; tab: BrowserTabState };
+/**
+ * A saved annotation as the Session-level comment store hands it out. The
+ * page element it describes (`selector`/`tag`/`rect`/`comment`) is the
+ * annotation's own shape; the fields here pin it to a tab, a document and a
+ * moment. `index` is its 1-based position in the Session's comment order and
+ * is recomputed on every read — a badge number only ever means "the nth
+ * comment kept for this Session".
+ */
+export type BrowserComment = BrowserAnnotationElement & {
+  tabId: string;
+  /** Page URL when saved; documents sharing it (`urlKey`) get the marker back. */
+  url: string;
+  title: string;
+  /** The viewport the rect was measured in. */
+  viewport: BrowserAnnotationViewport;
+  /** The last restore attempt could not find the element in the document. */
+  stale: boolean;
+  /** A cropped screenshot was taken for it. */
+  hasImage: boolean;
+  createdAt: string;
+};
+
+export type BrowserEvent =
+  | { type: "state-changed"; tab: BrowserTabState }
+  /**
+   * The Session's comment store changed — saved, edited, deleted or consumed.
+   * Renderer state for a tab's visible marks still arrives via `state-changed`;
+   * this is for the composer-to-be, which reads the Session, not a document.
+   */
+  | {
+      type: "comments-changed";
+      sessionId: string;
+      comments: BrowserComment[];
+    };
 
 export const browserEventChannel = "pigui:browser-event";

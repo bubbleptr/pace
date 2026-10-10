@@ -25,11 +25,24 @@ import { createAnnotationOverlay } from "./browser-annotation-overlay";
 
 const overlay = createAnnotationOverlay({
   document,
-  onAnnotationsChange(annotations, viewport) {
+  onAnnotationSaved(annotation, viewport) {
     ipcRenderer.send(browserAnnotationChannel, {
-      type: "annotations",
-      annotations,
+      type: "annotation-saved",
+      annotation,
       viewport,
+    });
+  },
+  onAnnotationDeleted(id) {
+    ipcRenderer.send(browserAnnotationChannel, {
+      type: "annotation-deleted",
+      id,
+    });
+  },
+  onAnnotationPresence(id, stale) {
+    ipcRenderer.send(browserAnnotationChannel, {
+      type: "annotation-presence",
+      id,
+      stale,
     });
   },
   onDesignModeChange(enabled) {
@@ -54,8 +67,10 @@ ipcRenderer.on(
       case "set-annotation-palette":
         overlay.setAnnotationPalette(command.palette);
         break;
-      case "clear-annotations":
-        overlay.clearAnnotations();
+      case "sync-annotations":
+        overlay.syncAnnotations(
+          Array.isArray(command.annotations) ? command.annotations : [],
+        );
         break;
       case "prepare-capture":
         overlay.prepareCapture();

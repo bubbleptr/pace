@@ -62,13 +62,14 @@ function installPreload(
         goForward() {},
         setDesignMode() {},
         setAnnotationPalette() {},
-        clearAnnotations() {},
+        syncAnnotations() {},
         prepareCapture() {},
         finishCapture() {},
         reload() {},
         destroy() {},
         readState: () => ({ url, canGoBack: false, canGoForward: false }),
         capture: async () => "data:image/png;base64,SNAP",
+        captureRect: async () => "data:image/png;base64,CROP",
       };
     },
     getContentSize: () => ({ width: 1440, height: 900 }),
@@ -117,10 +118,9 @@ function installPreload(
       })) as import("@/shared/browser-protocol").BrowserSessionState;
       return group.tabs[index]!;
     },
-    mark(target: BrowserTabTarget) {
-      act(() => {
-        host.tab(target).recordAnnotations(marks, viewport);
-        host.notify(target);
+    async mark(target: BrowserTabTarget) {
+      await act(async () => {
+        await host.saveComment(target, marks[0]!, viewport);
       });
     },
   };
@@ -276,7 +276,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       "true",
     );
     await user.click(screen.getByRole("button", { name: "Annotate" }));
-    preload.mark(first);
+    await preload.mark(first);
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(screen.queryByTestId("browser-annotation-count")).toBeNull();
     act(() => {
@@ -324,7 +324,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     const first = await preload.target();
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     await user.click(screen.getByRole("tab", { name: "Browser 1" }));
-    preload.mark(first);
+    await preload.mark(first);
     await act(async () => release());
     expect(
       await screen.findByTestId("browser-annotation-count"),
@@ -335,7 +335,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     const preload = installPreload();
     const view = mount();
     await restored();
-    preload.mark(await preload.target());
+    await preload.mark(await preload.target());
     view.unmount();
     expect(preload.invocations).toContainEqual({
       command: "browser_hide_session",
@@ -387,7 +387,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     mount();
     await restored();
     const first = await preload.target();
-    preload.mark(first);
+    await preload.mark(first);
     await user.clear(screen.getByRole("textbox", { name: "Address" }));
     await user.type(
       screen.getByRole("textbox", { name: "Address" }),
@@ -431,7 +431,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       );
       const view = mount();
       await restored();
-      preload.mark(await preload.target());
+      await preload.mark(await preload.target());
       await user.click(
         screen.getByRole("button", { name: "Send to composer" }),
       );
@@ -456,7 +456,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     const preload = installPreload({ failCapture: true });
     mount();
     await restored();
-    preload.mark(await preload.target());
+    await preload.mark(await preload.target());
     await user.click(screen.getByRole("button", { name: "Send to composer" }));
     expect(
       await screen.findByTestId("browser-surface-notice"),
@@ -579,7 +579,9 @@ describe("SessionBrowserPanel multi-instance", () => {
     const target = await preload.target();
 
     act(() => {
-      preload.host.tab({ sessionId: "s", tabId: target.tabId }).recordDesignMode(true);
+      preload.host
+        .tab({ sessionId: "s", tabId: target.tabId })
+        .recordDesignMode(true);
       preload.host.notify({ sessionId: "s", tabId: target.tabId });
     });
 

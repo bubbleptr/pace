@@ -55,15 +55,24 @@ type EditorState = {
 
 export type BrowserAnnotationOverlay = {
   setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
+  /** Colours alone, when the mode itself must not be touched. */
   setAnnotationPalette(palette: BrowserAnnotationPalette): void;
-  clearAnnotations(): void;
+  /**
+   * The store's answer for this document: the marks to show, in Session
+   * order. Ids the list no longer contains disappear; unknown ones are
+   * restored by selector — or reported stale when their element never shows.
+   */
+  syncAnnotations(annotations: BrowserAnnotationElement[]): void;
   /**
    * Put the overlay out of shot and say what it holds, so main can photograph
    * the page without the overlay's own chrome on it. A draft worth keeping is
    * saved first: asking for the shot is intent to send.
    */
   prepareCapture(): void;
-  /** The shot is done — the mode chrome `prepareCapture` hid comes back. */
+  /**
+   * The shot is done — the mode chrome `prepareCapture` hid comes back, and
+   * an overlay hidden for a save's crop becomes visible again.
+   */
   finishCapture(): void;
   dispose(): void;
 };
@@ -146,10 +155,20 @@ function resolveOverlayPalette(palette: BrowserAnnotationPalette): OverlayColors
 
 export function createAnnotationOverlay(options: {
   document: Document;
-  onAnnotationsChange: (
-    annotations: BrowserAnnotationElement[],
+  /**
+   * One annotation was committed — new (the overlay hid itself for two frames
+   * first so main's crop sees no overlay) or an edit reported by its id.
+   */
+  onAnnotationSaved: (
+    annotation: BrowserAnnotationElement,
     viewport: BrowserAnnotationViewport,
   ) => void;
+  onAnnotationDeleted: (id: string) => void;
+  /**
+   * How a `sync-annotations` restore ended for one id — `stale` when the
+   * element could not be found in time.
+   */
+  onAnnotationPresence: (id: string, stale: boolean) => void;
   onDesignModeChange: (enabled: boolean) => void;
   /** The ack main waits for before it shoots. */
   onCaptureReady: (
@@ -167,6 +186,13 @@ export function createAnnotationOverlay(options: {
   let colors: OverlayColors = { ...defaultColors };
   let designMode = false;
   let host: HTMLElement | null = null;
+  /** Fallback that unhides the overlay when a save's crop never answers. */
+  let visibilityRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Synced-in annotations still waiting for their element to be rendered. */
+  const pendingRestores = new Map<
+    string,
+    { observer: MutationObserver; timer: ReturnType<typeof setTimeout> }
+  >();
   let shadowRoot: ShadowRoot | null = null;
   let highlight: HTMLElement | null = null;
   let highlightLabel: HTMLElement | null = null;
@@ -272,6 +298,11 @@ export function createAnnotationOverlay(options: {
     applyStyles(deleteButton!, { color: colors.muted });
   }
 
+  function applyAnnotationPalette(palette: BrowserAnnotationPalette) {
+    colors = resolveOverlayPalette(palette);
+    restyle();
+  }
+
   function restyle() {
     if (highlight) styleHighlight();
     if (highlightLabel) styleHighlightLabel();
@@ -282,11 +313,6 @@ export function createAnnotationOverlay(options: {
       styleOutline(entry.outline);
       styleBadge(entry.badge);
     }
-  }
-
-  function applyAnnotationPalette(palette: BrowserAnnotationPalette) {
-    colors = resolveOverlayPalette(palette);
-    restyle();
   }
 
   function ensureHost() {
@@ -409,11 +435,54 @@ export function createAnnotationOverlay(options: {
     };
   }
 
-  function notify() {
-    options.onAnnotationsChange(
-      annotations.map((annotation) => ({ ...annotation })),
-      readViewport(),
-    );
+  /**
+   * Main photographs the element a new comment landed on. The whole overlay —
+   * marks included — would appear in that crop, so the host goes invisible
+   * for two frames to let the paint land, and the report only then goes out.
+   * `capture-done` brings the overlay back; the timer is the fallback for a
+   * capture that never answers.
+   */
+  function hideForSaveCapture() {
+    if (host) {
+      applyStyles(host, { visibility: "hidden" });
+    }
+    if (visibilityRestoreTimer) {
+      clearTimeout(visibilityRestoreTimer);
+    }
+    visibilityRestoreTimer = setTimeout(restoreAfterSaveCapture, 1000);
+  }
+
+  function restoreAfterSaveCapture() {
+    if (visibilityRestoreTimer) {
+      clearTimeout(visibilityRestoreTimer);
+      visibilityRestoreTimer = null;
+    }
+    if (host) {
+      applyStyles(host, { visibility: "visible" });
+    }
+  }
+
+  /**
+   * The store in main is the source of truth, so a save is reported per
+   * annotation — a new one only after the hide-and-two-frames above lets the
+   * element paint clean for its crop, an edit immediately (no re-capture).
+   */
+  function reportSaved(annotation: BrowserAnnotationElement, isNew: boolean) {
+    const report = () =>
+      options.onAnnotationSaved({ ...annotation }, readViewport());
+
+    if (!isNew) {
+      report();
+      return;
+    }
+
+    hideForSaveCapture();
+    const view = doc.defaultView;
+    if (view?.requestAnimationFrame) {
+      view.requestAnimationFrame(() => view.requestAnimationFrame(report));
+    } else {
+      report();
+    }
   }
 
   /**
@@ -509,7 +578,10 @@ export function createAnnotationOverlay(options: {
     }
 
     const viewport = readViewport();
-    const reconciled = reconcileEntries();
+    // A re-render that disconnected a marked element gets one rebind attempt
+    // here, so the mark follows its selector instead of staying hidden until
+    // the next sync.
+    reconcileEntries();
     const placed: { x: number; y: number; width: number; height: number }[] = [];
 
     // Annotation order is creation order, so the earlier badge always wins
@@ -571,6 +643,7 @@ export function createAnnotationOverlay(options: {
       // …and shifted left while it would sit on an earlier badge (nested
       // elements share the corner).
       while (
+        badgeX - (badgeWidth + 4) >= minimumX &&
         placed.some(
           (other) =>
             badgeX < other.x + other.width &&
@@ -579,9 +652,6 @@ export function createAnnotationOverlay(options: {
             other.y < badgeY + badgeHeight,
         )
       ) {
-        if (badgeX - badgeWidth - 4 < minimumX) {
-          break;
-        }
         badgeX -= badgeWidth + 4;
       }
 
@@ -592,12 +662,15 @@ export function createAnnotationOverlay(options: {
         top: `${badgeY}px`,
       });
     }
-
-    if (reconciled) {
-      notify();
-    }
   }
 
+  /**
+   * The element's rect clipped to the viewport and every scroll container on
+   * its ancestor chain — `visible` — plus the clipping bounds themselves, so
+   * a badge can stay on the edge of a partially visible mark instead of
+   * dropping under it. An element re-rendering disconnected it measures as
+   * 0,0 or is clipped out entirely: null, and the mark comes off screen.
+   */
   function visibleElementRect(
     element: Element,
     viewport: BrowserAnnotationViewport,
@@ -647,27 +720,29 @@ export function createAnnotationOverlay(options: {
       }
     }
 
-    const left = Math.max(rect.left, clipLeft);
-    const top = Math.max(rect.top, clipTop);
-    const right = Math.min(rect.right, clipRight);
-    const bottom = Math.min(rect.bottom, clipBottom);
+    const left = Math.max(clipLeft, rect.left);
+    const top = Math.max(clipTop, rect.top);
+    const right = Math.min(clipRight, rect.right);
+    const bottom = Math.min(clipBottom, rect.bottom);
 
     return left < right && top < bottom
       ? {
           visible: { left, top, right, bottom },
-          clipping: {
-            left: clipLeft,
-            top: clipTop,
-            right: clipRight,
-            bottom: clipBottom,
-          },
+          clipping: { left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom },
         }
       : null;
   }
 
+  /**
+   * A re-rendered element leaves a rendered entry pointing at a disconnected
+   * node. When its selector still resolves uniquely — and to a node no other
+   * entry owns — the entry rebinds to the replacement, so clicking the new
+   * node edits the mark instead of drafting a duplicate. The stored
+   * annotation is refreshed (rect re-measured) but keeps its id, index and
+   * comment; the store already knows the rest.
+   */
   function reconcileEntries() {
     const owned = new Set<Element>();
-    let changed = false;
 
     for (const entry of entries.values()) {
       if (entry.element.isConnected && entry.element.ownerDocument === doc) {
@@ -678,22 +753,19 @@ export function createAnnotationOverlay(options: {
     for (const annotation of annotations) {
       const entry = entries.get(annotation.id);
 
-      if (!entry || (entry.element.isConnected && entry.element.ownerDocument === doc)) {
+      if (
+        !entry ||
+        (entry.element.isConnected && entry.element.ownerDocument === doc)
+      ) {
         continue;
       }
 
-      let matches: NodeListOf<Element>;
-      try {
-        matches = doc.querySelectorAll(entry.annotation.selector);
-      } catch {
+      const replacement = resolveBySelector(entry.annotation.selector);
+
+      if (!replacement || owned.has(replacement)) {
         continue;
       }
 
-      if (matches.length !== 1 || owned.has(matches[0]!)) {
-        continue;
-      }
-
-      const replacement = matches[0]!;
       const refreshed = describeAnnotatedElement(
         replacement,
         entry.annotation.index,
@@ -713,10 +785,7 @@ export function createAnnotationOverlay(options: {
         editor.element = replacement;
       }
       owned.add(replacement);
-      changed = true;
     }
-
-    return changed;
   }
 
   /**
@@ -800,6 +869,9 @@ export function createAnnotationOverlay(options: {
   }
 
   function entryForElement(element: Element) {
+    // Re-measure first: a re-rendered element may just have been rebound to
+    // this node by the position pass, which is what lets the click below
+    // reopen its editor instead of drafting a duplicate.
     positionEntries();
     if (editor) {
       positionEditor(editor.element);
@@ -831,7 +903,111 @@ export function createAnnotationOverlay(options: {
     entry.badge.remove();
     renumber();
     positionEntries();
-    notify();
+    options.onAnnotationDeleted(entry.annotation.id);
+  }
+
+  // -- Restoring synced annotations -----------------------------------------
+
+  /** One unambiguous hit for the selector, or it did not land. */
+  function resolveBySelector(selector: string) {
+    try {
+      const matches = doc.querySelectorAll(selector);
+
+      return matches.length === 1 ? matches[0]! : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function stopWatchingRestore(id: string) {
+    const pending = pendingRestores.get(id);
+
+    if (pending) {
+      pendingRestores.delete(id);
+      pending.observer.disconnect();
+      clearTimeout(pending.timer);
+    }
+  }
+
+  /**
+   * A comment the store expects on this document but the page has not
+   * rendered yet — an SPA that fills its DOM after load, say. Misses are
+   * watched for a bounded while: absent is not stale until the wait is over.
+   */
+  function restoreAnnotation(annotation: BrowserAnnotationElement) {
+    if (pendingRestores.has(annotation.id)) {
+      return;
+    }
+
+    const found = resolveBySelector(annotation.selector);
+
+    if (found) {
+      renderEntry(annotation, found);
+      options.onAnnotationPresence(annotation.id, false);
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      const element = resolveBySelector(annotation.selector);
+
+      if (element) {
+        stopWatchingRestore(annotation.id);
+        renderEntry(annotation, element);
+        options.onAnnotationPresence(annotation.id, false);
+      }
+    });
+    const timer = setTimeout(() => {
+      stopWatchingRestore(annotation.id);
+      options.onAnnotationPresence(annotation.id, true);
+    }, 5000);
+
+    if (doc.documentElement) {
+      observer.observe(doc.documentElement, { childList: true, subtree: true });
+    }
+    pendingRestores.set(annotation.id, { observer, timer });
+  }
+
+  /**
+   * The store's list is authoritative: marks it no longer knows go away
+   * (an open editor on one of them is a comment on nothing), fields it
+   * renumbered update in place, and ids the document has not carried before
+   * are restored by selector — or reported stale after a bounded wait.
+   */
+  function applySync(list: BrowserAnnotationElement[]) {
+    const incoming = new Map(list.map((annotation) => [annotation.id, annotation]));
+
+    for (const [id, entry] of entries) {
+      if (!incoming.has(id)) {
+        if (editor?.annotationId === id) {
+          closeEditor();
+        }
+        entry.outline.remove();
+        entry.badge.remove();
+        entries.delete(id);
+      }
+    }
+    for (const id of pendingRestores.keys()) {
+      if (!incoming.has(id)) {
+        stopWatchingRestore(id);
+      }
+    }
+
+    annotations.length = 0;
+    for (const annotation of list) {
+      const copy = { ...annotation };
+
+      annotations.push(copy);
+
+      const entry = entries.get(copy.id);
+
+      if (entry) {
+        entry.annotation = copy;
+        entry.badge.textContent = String(copy.index);
+      } else {
+        restoreAnnotation(copy);
+      }
+    }
+    positionEntries();
   }
 
   // -- The comment editor --------------------------------------------------
@@ -958,8 +1134,9 @@ export function createAnnotationOverlay(options: {
 
     const rect = element.getBoundingClientRect();
     const viewport = readViewport();
-    const elementRects = visibleElementRect(element, viewport);
-    const anchor = elementRects?.visible ?? rect;
+    // Anchor on the visible part: a mark clipped by a scroll container would
+    // otherwise park the editor over whatever covers it.
+    const anchor = visibleElementRect(element, viewport)?.visible ?? rect;
     const height =
       editorBox.getBoundingClientRect().height || editorBox.offsetHeight;
 
@@ -1026,10 +1203,14 @@ export function createAnnotationOverlay(options: {
     const existing = editor.annotationId
       ? entries.get(editor.annotationId)
       : undefined;
+    let saved: BrowserAnnotationElement;
 
     if (existing) {
       existing.annotation.comment = comment;
+      saved = existing.annotation;
     } else {
+      // The index is provisional: main numbers comments across the Session
+      // and the sync that answers this save brings the real one.
       const annotation = describeAnnotatedElement(
         editor.element,
         annotations.length + 1,
@@ -1038,10 +1219,11 @@ export function createAnnotationOverlay(options: {
       annotation.comment = comment;
       annotations.push(annotation);
       renderEntry(annotation, editor.element);
+      saved = annotation;
     }
 
     closeEditor();
-    notify();
+    reportSaved(saved, !existing);
   }
 
   function shakeEditor() {
@@ -1324,22 +1506,16 @@ export function createAnnotationOverlay(options: {
     },
 
     finishCapture() {
+      // However the shot ended — full-page or a save's crop — the overlay is
+      // allowed back on screen, mode chrome included.
+      restoreAfterSaveCapture();
       if (designMode) {
         setModeAffordanceVisible(true);
       }
     },
 
-    clearAnnotations() {
-      // No commit on the way out: clearing throws the marks away, comments and
-      // all, so there is nothing left to report but the empty list.
-      closeEditor();
-      annotations.length = 0;
-      for (const entry of entries.values()) {
-        entry.outline.remove();
-        entry.badge.remove();
-      }
-      entries.clear();
-      notify();
+    syncAnnotations(list) {
+      applySync(list.map((annotation) => ({ ...annotation })));
     },
 
     dispose() {
@@ -1351,6 +1527,13 @@ export function createAnnotationOverlay(options: {
       listenerTarget.removeEventListener("keydown", handleKeyDown, true);
       listenerTarget.removeEventListener("scroll", scheduleMarkerSync, true);
       listenerTarget.removeEventListener("resize", scheduleMarkerSync, true);
+      for (const id of pendingRestores.keys()) {
+        stopWatchingRestore(id);
+      }
+      if (visibilityRestoreTimer) {
+        clearTimeout(visibilityRestoreTimer);
+        visibilityRestoreTimer = null;
+      }
       host?.remove();
       host = null;
       shadowRoot = null;

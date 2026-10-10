@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type {
   BrowserAnnotationCapture,
+  BrowserAnnotationElement,
+  BrowserAnnotationPalette,
+  BrowserAnnotationViewport,
+  BrowserComment,
   BrowserEvent,
   BrowserSessionState,
   BrowserTabState,
   BrowserTabTarget,
-  BrowserAnnotationElement,
-  BrowserAnnotationPalette,
-  BrowserAnnotationViewport,
   BrowserViewRect,
   BrowserViewSnapshot,
   BrowserViewState,
@@ -62,6 +63,10 @@ const browserCommands = new Set([
   "browser_set_design_mode",
   "browser_set_annotation_palette",
   "browser_clear_annotations",
+  "browser_list_comments",
+  "browser_comment_images",
+  "browser_delete_comment",
+  "browser_consume_comments",
   "browser_open_external",
 ]);
 const allowedProtocols = new Set(["http:", "https:"]);
@@ -177,6 +182,70 @@ export function resolveBrowserViewBounds(input: {
   };
 }
 
+/**
+ * What "the same document" means for comment restores: the part of a URL a
+ * page's identity survives. The hash is client-side state — jumping to a
+ * section must not lose the document's comments.
+ */
+export function urlKey(url: string) {
+  try {
+    const parsed = new URL(url);
+
+    return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/** Comments a Session may keep at once — beyond it, saves are ignored. */
+export const maxSessionComments = 200;
+
+/**
+ * The crop saved with a comment: the element plus enough surroundings to
+ * read, grown to a useful minimum, kept inside the viewport it was measured
+ * in. Shifted before clipped — a crop near an edge keeps its full size if it
+ * can be moved inside rather than shrunk.
+ */
+export function resolveCommentCropRect(
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number },
+): BrowserViewRect {
+  const margin = 48;
+  let x = rect.x - margin;
+  let y = rect.y - margin;
+  let width = rect.width + margin * 2;
+  let height = rect.height + margin * 2;
+
+  if (width < 320) {
+    x -= (320 - width) / 2;
+    width = 320;
+  }
+  if (height < 200) {
+    y -= (200 - height) / 2;
+    height = 200;
+  }
+
+  if (width <= viewport.width) {
+    x = clamp(x, 0, viewport.width - width);
+  } else {
+    x = 0;
+    width = viewport.width;
+  }
+  if (height <= viewport.height) {
+    y = clamp(y, 0, viewport.height - height);
+  } else {
+    y = 0;
+    height = viewport.height;
+  }
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
 export type BrowserHostSession = {
   setPermissionRequestHandler(handler: (permission: string) => boolean): void;
   setPermissionCheckHandler(handler: (permission: string) => boolean): void;
@@ -226,7 +295,11 @@ export type BrowserHostView = {
   setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
   /** Updates the annotation colours without changing mode. */
   setAnnotationPalette(palette: BrowserAnnotationPalette): void;
-  clearAnnotations(): void;
+  /**
+   * The store's marks for the document it is showing. Replaces the old
+   * clear command: syncing `[]` removes them.
+   */
+  syncAnnotations(annotations: BrowserAnnotationElement[]): void;
   /** Asks the overlay to put itself out of shot and report what it holds. */
   prepareCapture(): void;
   /** The shot is done — the overlay may put its mode chrome back. */
@@ -240,6 +313,11 @@ export type BrowserHostView = {
    * why the annotation capture passes one and the overlay still does not.
    */
   capture(maxWidth?: number): Promise<string | null>;
+  /**
+   * PNG data URL of one region — the crop saved with a comment. `cssWidth`
+   * downsamples device pixels back to CSS like `capture` does.
+   */
+  captureRect(rect: BrowserViewRect, cssWidth: number): Promise<string | null>;
 };
 
 type BrowserTabDependencies = {
@@ -247,6 +325,15 @@ type BrowserTabDependencies = {
   /** Null while no window is open; bounds are then not applicable. */
   getContentSize(): { width: number; height: number } | null;
   openExternal(url: string): void | Promise<void>;
+  /**
+   * The Session comment store's projection for this tab on a given document —
+   * its marks and the viewport they were last measured in. Injected per tab
+   * by the session host; a tab host by itself owns no comments.
+   */
+  snapshotComments?(currentUrl: string): {
+    annotations: BrowserAnnotationElement[];
+    viewport: BrowserAnnotationViewport | null;
+  };
 };
 
 type BrowserTabHost = {
@@ -280,14 +367,17 @@ type BrowserTabHost = {
    * keeps Pace's colours.
    */
   annotationPalette(): BrowserAnnotationPalette | undefined;
+  /** The document's URL the view is showing (or was last asked for). */
+  currentUrl(): string;
+  /** URL and title as the page reported them — stamped on saved comments. */
+  pageInfo(): { url: string; title: string };
+  /** Pushes the store's annotations for this document onto the overlay. */
+  syncAnnotations(annotations: BrowserAnnotationElement[]): void;
   /**
-   * What the page reports as the user marks. Kept so a capture can go ahead
-   * with the last known marks when the page does not answer the prepare.
+   * The save-crop: photograph the comment's region, then always release the
+   * page (`capture-done`), however the shot ended.
    */
-  recordAnnotations(
-    annotations: BrowserAnnotationElement[],
-    viewport: BrowserAnnotationViewport | null,
-  ): void;
+  captureCommentCrop(rect: BrowserViewRect): Promise<string | null>;
   /** The page is out of shot: whatever capture is waiting can go ahead. */
   recordCaptureReady(
     annotations: BrowserAnnotationElement[],
@@ -343,12 +433,28 @@ export function createBrowserTabHost(
   let loading = false;
   let designMode = false;
   let palette: BrowserAnnotationPalette | undefined;
-  let marks: Omit<BrowserAnnotationCapture, "image" | "url"> = {
-    annotations: [],
-    viewport: null,
-  };
   /** Set while a capture is waiting for the page to say it is out of shot. */
-  let pendingCaptureAck: ((settled: typeof marks) => void) | null = null;
+  let pendingCaptureAck:
+    | ((settled: Omit<BrowserAnnotationCapture, "image" | "url">) => void)
+    | null = null;
+
+  /** The document the view is showing, or the one it was last asked for. */
+  function currentUrl() {
+    return view?.readState().url || requestedUrl;
+  }
+
+  /**
+   * The Session comment store is the truth for marks; this tab's slice of it
+   * on the document being shown — the same projection the renderer reads.
+   */
+  function commentsNow() {
+    return (
+      deps.snapshotComments?.(currentUrl()) ?? {
+        annotations: [],
+        viewport: null,
+      }
+    );
+  }
 
   /** The view's own answer, stamped with the navigation the renderer asked for. */
   function readState(): BrowserViewState | null {
@@ -400,8 +506,6 @@ export function createBrowserTabHost(
 
     const active = ensureView();
     loading = true;
-    marks = { annotations: [], viewport: null };
-    active.clearAnnotations();
 
     try {
       await active.loadUrl(target);
@@ -441,9 +545,16 @@ export function createBrowserTabHost(
   function awaitCaptureAck(active: BrowserHostView) {
     active.prepareCapture();
 
-    return new Promise<typeof marks>((resolve) => {
-      const timer = setTimeout(() => settle(marks), browserCaptureAckTimeoutMs);
-      const settle = (settled: typeof marks) => {
+    return new Promise<Omit<BrowserAnnotationCapture, "image" | "url">>((resolve) => {
+      // A page that never answers still gets a shot taken: the store's marks
+      // for this document stand in for what the overlay would have reported.
+      const timer = setTimeout(
+        () => settle(commentsNow()),
+        browserCaptureAckTimeoutMs,
+      );
+      const settle = (
+        settled: Omit<BrowserAnnotationCapture, "image" | "url">,
+      ) => {
         clearTimeout(timer);
         if (pendingCaptureAck === settle) {
           pendingCaptureAck = null;
@@ -512,6 +623,7 @@ export function createBrowserTabHost(
   return {
     snapshot() {
       const state = readState();
+      const comments = commentsNow();
       return {
         url: state?.url || requestedUrl,
         canGoBack: state?.canGoBack ?? false,
@@ -521,8 +633,8 @@ export function createBrowserTabHost(
         loading,
         error: errorMessage,
         designMode,
-        annotations: marks.annotations,
-        viewport: marks.viewport,
+        annotations: comments.annotations,
+        viewport: comments.viewport,
       };
     },
     resetBounds() {
@@ -579,10 +691,6 @@ export function createBrowserTabHost(
           }
           return null;
         }
-        case "browser_clear_annotations":
-          marks = { annotations: [], viewport: null };
-          view?.clearAnnotations();
-          return null;
         case "browser_capture":
           // Full resolution and no handshake: this still stands in for the
           // native view while a DOM overlay is open, so it has to show the page
@@ -628,13 +736,33 @@ export function createBrowserTabHost(
       return palette;
     },
 
-    recordAnnotations(annotations, viewport) {
-      marks = { annotations, viewport };
+    currentUrl,
+
+    pageInfo() {
+      return { url: currentUrl(), title };
+    },
+
+    syncAnnotations(annotations) {
+      view?.syncAnnotations(annotations);
+    },
+
+    async captureCommentCrop(rect) {
+      const active = view;
+      if (!active) {
+        return null;
+      }
+      try {
+        return await active.captureRect(rect, rect.width);
+      } catch {
+        return null;
+      } finally {
+        // However the crop ended, the overlay hidden for it comes back.
+        active.finishCapture();
+      }
     },
 
     recordCaptureReady(annotations, viewport) {
-      marks = { annotations, viewport };
-      pendingCaptureAck?.(marks);
+      pendingCaptureAck?.({ annotations, viewport });
     },
 
     recordLoadFailure(message = "The page could not be opened.") {
@@ -649,10 +777,9 @@ export function createBrowserTabHost(
       bounds = null;
       visibilityRequested = false;
       designMode = false;
-      marks = { annotations: [], viewport: null };
       // A capture waiting on a page that is going away has to be let go, or it
       // sits on its timeout with a view it can no longer photograph.
-      pendingCaptureAck?.(marks);
+      pendingCaptureAck?.({ annotations: [], viewport: null });
     },
   };
 }
@@ -666,19 +793,41 @@ export type BrowserHostDependencies = Omit<
 };
 export type BrowserHost = ReturnType<typeof createBrowserHost>;
 
+/**
+ * A saved comment minus the two fields computed on read: `index` (Session
+ * order changes as comments come and go) and `hasImage` (it answers the
+ * images map, which arrives after the record does).
+ */
+type StoredComment = Omit<BrowserComment, "index" | "hasImage">;
+
+type BrowserSessionGroup = {
+  tabs: Map<string, BrowserTabHost>;
+  activeTabId: string | null;
+  /**
+   * The Session's comment store — the single truth S3's composer will read.
+   * It outlives documents and tabs: navigation never deletes comments, and
+   * closing a tab keeps them (their markers simply vanish with the view).
+   */
+  comments: StoredComment[];
+  /** The save-crop per comment id — null means the shot could not be read. */
+  images: Map<string, string | null>;
+};
+
 /** Session membership owns lifetime; the active target alone owns the native slot. */
 export function createBrowserHost(deps: BrowserHostDependencies) {
-  const sessions = new Map<
-    string,
-    { tabs: Map<string, BrowserTabHost>; activeTabId: string | null }
-  >();
+  const sessions = new Map<string, BrowserSessionGroup>();
   let active: BrowserTabTarget | null = null;
   const revisions = new WeakMap<BrowserTabHost, number>();
 
   function session(sessionId: string) {
     let group = sessions.get(sessionId);
     if (!group) {
-      group = { tabs: new Map(), activeTabId: null };
+      group = {
+        tabs: new Map(),
+        activeTabId: null,
+        comments: [],
+        images: new Map(),
+      };
       sessions.set(sessionId, group);
     }
     return group;
@@ -710,6 +859,129 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       deps.emit?.({ type: "state-changed", tab: readTab(target) });
     }
   }
+
+  // -- The Session comment store ---------------------------------------------
+
+  /**
+   * Comments as the wire reports them: `index` is the position in store
+   * order, recomputed here on every read, and `hasImage` answers the images
+   * map rather than a field that could drift from it.
+   */
+  function publicComments(sessionId: string): BrowserComment[] {
+    const group = sessions.get(sessionId);
+
+    return (group?.comments ?? []).map((comment, position) => ({
+      ...comment,
+      index: position + 1,
+      hasImage: group?.images.get(comment.id) != null,
+    }));
+  }
+
+  /** One comment back in annotation shape — what a tab renders and shoots. */
+  function annotationFor(
+    comment: StoredComment,
+    index: number,
+  ): BrowserAnnotationElement {
+    return {
+      id: comment.id,
+      index,
+      selector: comment.selector,
+      tag: comment.tag,
+      ...(comment.text ? { text: comment.text } : {}),
+      rect: { ...comment.rect },
+      ...(comment.source ? { source: comment.source } : {}),
+      ...(comment.comment ? { comment: comment.comment } : {}),
+    };
+  }
+
+  /**
+   * A tab's marks for a document: its own comments saved under the same
+   * urlKey, numbered by Session order. The viewport answers "where they were
+   * measured" — the most recent matching comment's.
+   */
+  function commentsForTab(
+    group: BrowserSessionGroup,
+    tabId: string,
+    url: string,
+  ) {
+    const key = urlKey(url);
+    const annotations: BrowserAnnotationElement[] = [];
+    let viewport: BrowserAnnotationViewport | null = null;
+
+    group.comments.forEach((comment, position) => {
+      if (comment.tabId === tabId && urlKey(comment.url) === key) {
+        annotations.push(annotationFor(comment, position + 1));
+        viewport = comment.viewport;
+      }
+    });
+
+    return { annotations, viewport };
+  }
+
+  function emitCommentsChanged(sessionId: string) {
+    deps.emit?.({
+      type: "comments-changed",
+      sessionId,
+      comments: publicComments(sessionId),
+    });
+  }
+
+  /**
+   * Every store mutation ends here: the event for whoever reads the store
+   * (S3's composer), the per-tab sync that reconciles each document's marks,
+   * and the state-changed for tabs whose snapshot changed.
+   */
+  function commitCommentChange(sessionId: string, affectedTabIds: Set<string>) {
+    emitCommentsChanged(sessionId);
+
+    const group = sessions.get(sessionId);
+
+    if (!group) {
+      return;
+    }
+    for (const [tabId, controller] of group.tabs) {
+      controller.syncAnnotations(
+        commentsForTab(group, tabId, controller.currentUrl()).annotations,
+      );
+    }
+    for (const tabId of affectedTabIds) {
+      notify({ sessionId, tabId });
+    }
+  }
+
+  /**
+   * The toolbar's Clear: every comment this tab owns goes, and the document's
+   * marks with them. Comments on other tabs are untouched — the button only
+   * means "this page".
+   */
+  function clearTabComments(target: BrowserTabTarget) {
+    const group = sessions.get(target.sessionId);
+
+    if (!group) {
+      return;
+    }
+
+    const removed = new Set(
+      group.comments
+        .filter((comment) => comment.tabId === target.tabId)
+        .map((comment) => comment.id),
+    );
+
+    for (const id of removed) {
+      group.images.delete(id);
+    }
+    group.comments = group.comments.filter(
+      (comment) => comment.tabId !== target.tabId,
+    );
+
+    if (removed.size) {
+      commitCommentChange(target.sessionId, new Set([target.tabId]));
+    } else {
+      // Nothing stored, but the document may still be rendering marks a save
+      // left behind — make sure they go too.
+      group.tabs.get(target.tabId)?.syncAnnotations([]);
+    }
+  }
   function isActive(target: BrowserTabTarget) {
     return (
       active?.sessionId === target.sessionId && active.tabId === target.tabId
@@ -734,6 +1006,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       createBrowserTabHost({
         ...deps,
         createView: () => deps.createView(target),
+        snapshotComments: (url) => commentsForTab(group, target.tabId, url),
       }),
     );
     group.activeTabId = target.tabId;
@@ -742,6 +1015,11 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
     if (typeof args?.sessionId !== "string" || !args.sessionId)
       throw new Error("A Session id is required.");
     return args.sessionId;
+  }
+  function readStringList(value: unknown) {
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
   }
   function readTarget(args?: Record<string, unknown>): BrowserTabTarget {
     const sessionId = readSessionId(args);
@@ -756,6 +1034,8 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
     | BrowserSessionState
     | BrowserTabState
     | BrowserAnnotationCapture
+    | BrowserComment[]
+    | Record<string, string | null>
     | string
     | null
   > {
@@ -828,8 +1108,64 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
           activate({ sessionId, tabId: group.activeTabId });
         return readSession(sessionId);
       }
+      case "browser_list_comments":
+        // A pure read of the store — no tab is attached, activated or painted.
+        return publicComments(sessionId);
+      case "browser_comment_images": {
+        const group = sessions.get(sessionId);
+        const ids = readStringList(args?.ids);
+        const images: Record<string, string | null> = {};
+
+        for (const id of ids) {
+          images[id] = group?.images.get(id) ?? null;
+        }
+        return images;
+      }
+      case "browser_delete_comment": {
+        const group = sessions.get(sessionId);
+        const id = typeof args?.id === "string" ? args.id : "";
+        const comment = group?.comments.find((entry) => entry.id === id);
+
+        if (group && comment) {
+          group.comments = group.comments.filter(
+            (entry) => entry.id !== id,
+          );
+          group.images.delete(id);
+          commitCommentChange(sessionId, new Set([comment.tabId]));
+        }
+        return null;
+      }
+      case "browser_consume_comments": {
+        // Sends to the composer take their comments out of the store exactly
+        // once — unknown ids are simply already gone.
+        const ids = new Set(readStringList(args?.ids));
+        const group = sessions.get(sessionId);
+
+        if (group && ids.size) {
+          const affected = new Set<string>();
+
+          for (const comment of group.comments) {
+            if (ids.has(comment.id)) {
+              affected.add(comment.tabId);
+              group.images.delete(comment.id);
+            }
+          }
+          if (affected.size) {
+            group.comments = group.comments.filter(
+              (comment) => !ids.has(comment.id),
+            );
+            commitCommentChange(sessionId, affected);
+          }
+        }
+        return null;
+      }
     }
     const target = readTarget(args);
+    if (command === "browser_clear_annotations") {
+      tab(target);
+      clearTabComments(target);
+      return readTab(target);
+    }
     const controller = tab(target);
     if (
       ["browser_set_bounds", "browser_set_visible"].includes(command) &&
@@ -875,6 +1211,129 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
     tab,
     readTab,
     notify,
+
+    /**
+     * The page committed an annotation. A fresh id becomes a new comment —
+     * the record first, then the element's crop (the overlay already hid
+     * itself so the shot carries no overlay), the image arriving after the
+     * comment is why `hasImage` is computed on read. An id the store already
+     * has only updates the comment text — and only on the tab that owns it.
+     */
+    async saveComment(
+      target: BrowserTabTarget,
+      annotation: BrowserAnnotationElement,
+      viewport: BrowserAnnotationViewport,
+    ) {
+      const group = sessions.get(target.sessionId);
+      const controller = group?.tabs.get(target.tabId);
+
+      if (!group || !controller) {
+        return;
+      }
+
+      const existing = group.comments.find(
+        (comment) => comment.id === annotation.id,
+      );
+
+      if (existing) {
+        if (existing.tabId !== target.tabId) {
+          return;
+        }
+        existing.comment = annotation.comment ?? "";
+        commitCommentChange(target.sessionId, new Set([target.tabId]));
+        return;
+      }
+
+      if (group.comments.length >= maxSessionComments) {
+        return;
+      }
+
+      const { url, title } = controller.pageInfo();
+      const comment: StoredComment = {
+        id: annotation.id,
+        selector: annotation.selector,
+        tag: annotation.tag,
+        ...(annotation.text ? { text: annotation.text } : {}),
+        rect: { ...annotation.rect },
+        ...(annotation.source ? { source: annotation.source } : {}),
+        comment: annotation.comment ?? "",
+        tabId: target.tabId,
+        url,
+        title,
+        viewport: { ...viewport },
+        stale: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      group.comments.push(comment);
+
+      const image = await controller.captureCommentCrop(
+        resolveCommentCropRect(annotation.rect, viewport),
+      );
+
+      // The comment may have been deleted while its crop was in flight —
+      // keep an orphan image out of the map.
+      if (group.comments.includes(comment)) {
+        group.images.set(comment.id, image);
+      }
+      commitCommentChange(target.sessionId, new Set([target.tabId]));
+    },
+
+    /**
+     * The page deleted one of its marks — scoped to its own tab's comments so
+     * a document can never delete another tab's.
+     */
+    deleteComment(target: BrowserTabTarget, id: string) {
+      const group = sessions.get(target.sessionId);
+      const comment = group?.comments.find(
+        (entry) => entry.id === id && entry.tabId === target.tabId,
+      );
+
+      if (!group || !comment) {
+        return;
+      }
+
+      group.comments = group.comments.filter((entry) => entry.id !== id);
+      group.images.delete(id);
+      commitCommentChange(target.sessionId, new Set([target.tabId]));
+    },
+
+    /**
+     * The overlay's answer to a restore attempt. `stale` lives on the
+     * comment, not the annotation, so it only reaches `comments-changed`
+     * readers — a flag flip alone is not worth re-shooting the document for.
+     */
+    markStale(target: BrowserTabTarget, id: string, stale: boolean) {
+      const group = sessions.get(target.sessionId);
+      const comment = group?.comments.find(
+        (entry) => entry.id === id && entry.tabId === target.tabId,
+      );
+
+      if (!comment || comment.stale === stale) {
+        return;
+      }
+
+      comment.stale = stale;
+      emitCommentsChanged(target.sessionId);
+    },
+
+    /**
+     * What a fresh (or re-synced) document should be showing: this tab's
+     * comments whose urlKey matches the URL the sender is actually on.
+     */
+    syncTabAnnotations(target: BrowserTabTarget, url: string) {
+      const group = sessions.get(target.sessionId);
+      const controller = group?.tabs.get(target.tabId);
+
+      if (!group || !controller) {
+        return;
+      }
+
+      controller.syncAnnotations(
+        commentsForTab(group, target.tabId, url).annotations,
+      );
+    },
+
     detachRenderer() {
       activate(null);
     },

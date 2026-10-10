@@ -335,6 +335,22 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
       "1 comment",
     );
 
+    // The store — not the document — owns comments: reloading rebuilds the
+    // page, and its fresh overlay gets the Session's marks for this URL back.
+    await embedded.reload();
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "1 comment",
+    );
+
+    // Marks also follow the document, not the navigation: away empties the
+    // page, back restores them.
+    await embedded.evaluate(() => window.location.assign("/next"));
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
+    await embedded.evaluate(() => window.location.assign("/csp"));
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "1 comment",
+    );
+
     // Everything the overlay draws stays behind a closed shadow root: the page
     // can find the host and delete it, but never read what is inside.
     expect(

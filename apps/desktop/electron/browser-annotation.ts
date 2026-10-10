@@ -28,10 +28,25 @@ type AnnotationsPayload = {
 };
 
 export type BrowserAnnotationMessage =
-  /** A fresh document's overlay is live: it has no annotations yet. */
+  /** A fresh document's overlay is live: main answers with mode and marks. */
   | { type: "ready" }
   | { type: "design-mode"; enabled: boolean }
-  | ({ type: "annotations" } & AnnotationsPayload)
+  /**
+   * One annotation was committed — a new one (the overlay hid itself for two
+   * frames first, so the crop it triggers contains no overlay) or an edit of
+   * one main already knows, reported by its id.
+   */
+  | {
+      type: "annotation-saved";
+      annotation: BrowserAnnotationElement;
+      viewport: BrowserAnnotationViewport;
+    }
+  | { type: "annotation-deleted"; id: string }
+  /**
+   * How a sync-requested restore ended: `stale` when the element could not be
+   * found in the document in time.
+   */
+  | { type: "annotation-presence"; id: string; stale: boolean }
   /**
    * The overlay has put itself out of shot — comment bubble committed and
    * closed, hover highlight hidden — and states what it holds right now. Main
@@ -46,15 +61,26 @@ export type BrowserAnnotationCommand =
       /** The renderer's theme tokens; the overlay validates each colour itself. */
       palette?: BrowserAnnotationPalette;
     }
+  /**
+   * The store's current answer for this document: annotations to show, in
+   * Session order. The overlay reconciles — marks absent from the list go
+   * away, unknown ones are restored by selector.
+   */
+  | { type: "sync-annotations"; annotations: BrowserAnnotationElement[] }
+  /**
+   * Colours alone — a page that enabled mode itself (Cmd/Ctrl+Shift+A) never
+   * got the renderer's palette with the toggle, so it gets it now without an
+   * echoing mode change.
+   */
   | {
       type: "set-annotation-palette";
       palette: BrowserAnnotationPalette;
     }
-  | { type: "clear-annotations" }
   | { type: "prepare-capture" }
   /**
-   * The screenshot is taken (or abandoned): the overlay may put its mode
-   * chrome — the frame and pill `prepare-capture` hid — back on screen.
+   * The screenshot is taken (or abandoned). For a `prepare-capture` shot the
+   * overlay may put its mode chrome back; for a save's crop it may become
+   * visible again.
    */
   | { type: "capture-done" };
 
@@ -385,8 +411,10 @@ function readAnnotationsPayload(
 
 /**
  * The renderer sends its computed theme tokens with a design-mode or
- * palette-only command. Main validates the shape; the overlay parses colours
- * with `CSS.supports` in the page's CSS engine.
+ * palette-only command. Main accepts only the shape — all six fields present,
+ * each a short string — and drops the palette wholesale otherwise; whether
+ * each colour parses is the overlay's call (`CSS.supports`), since only the
+ * page knows its own CSS engine.
  */
 export function readAnnotationPalette(
   value: unknown,
@@ -441,11 +469,28 @@ export function acceptBrowserAnnotationMessage<Sender>(input: {
       return typeof message.enabled === "boolean"
         ? { type: "design-mode", enabled: message.enabled }
         : null;
-    case "annotations":
+    case "annotation-saved": {
+      const annotation = readAnnotation(message.annotation);
+      const viewport = readViewportValue(message.viewport);
+
+      return annotation && viewport
+        ? { type: "annotation-saved", annotation, viewport }
+        : null;
+    }
+    case "annotation-deleted":
+      return typeof message.id === "string" && annotationIdPattern.test(message.id)
+        ? { type: "annotation-deleted", id: message.id }
+        : null;
+    case "annotation-presence":
+      return typeof message.id === "string" &&
+        annotationIdPattern.test(message.id) &&
+        typeof message.stale === "boolean"
+        ? { type: "annotation-presence", id: message.id, stale: message.stale }
+        : null;
     case "capture-ready": {
       const payload = readAnnotationsPayload(message);
 
-      return payload ? { type: message.type, ...payload } : null;
+      return payload ? { type: "capture-ready", ...payload } : null;
     }
     default:
       return null;

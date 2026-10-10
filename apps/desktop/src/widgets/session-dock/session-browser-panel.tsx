@@ -122,7 +122,11 @@ function BrowserSessionContent({
     alive.current = true;
     // Main can publish while attach restores a fast page, before its reply arrives.
     const early = new Map<string, BrowserTabState>();
-    const unsubscribe = subscribeBrowserEvents(({ tab }) => {
+    const unsubscribe = subscribeBrowserEvents((event) => {
+      // comments-changed is store news for the composer (S3) — the panel's
+      // state is only ever tab snapshots.
+      if (event.type !== "state-changed") return;
+      const { tab } = event;
       if (tab.sessionId !== sessionId || !alive.current) return;
       const current = groupRef.current;
       if (!current) {
