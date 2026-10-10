@@ -51,7 +51,6 @@ import {
 } from "@/entities/session/session-projection";
 import { createSessionRuntimeModel } from "@/entities/session/session-runtime-model";
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
-import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
@@ -1454,6 +1453,12 @@ describe("AgentWorkspaceSessionsPage", () => {
           events: [{ id: "history", seq: 1, sessionId: "persisted-session-1", piSessionId: "pi-session-persisted-1",
             type: "message_update", ts: "2026-07-03T10:00:00.000Z", payload: { kind: "message", role: "assistant", body: "Saved answer without Pi file" } }],
           updatedAt: "2026-07-03T10:00:00.000Z" };
+      }
+      if (
+        command === "browser_list_comments" ||
+        command === "browser_settle_comments"
+      ) {
+        return { revision: 0, comments: [] };
       }
       if (command === "send_prompt") throw new Error("Pi session file is missing");
 
@@ -4240,19 +4245,11 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(screen.queryByLabelText("Project")).not.toBeInTheDocument();
   });
 
-  it("takes an injected block into the draft it already has, screenshot and all", async () => {
-    // The browser surface hands the composer marked-up page annotations from
-    // outside the chat column (#151). jsdom has no object URLs, and the
-    // attachment path makes one for every image preview.
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: () => "blob:annotations",
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: () => {},
-    });
-
+  it("submits what it holds when the page asks the composer to send", async () => {
+    // Cmd/Ctrl+Enter in the page (#448): the request reaches whatever
+    // composer is mounted for that Session — and nothing else.
+    const bridge = createInMemoryPiRuntimeBridge();
+    const send = vi.spyOn(bridge, "sendInitialPrompt");
     let projection = applySessionProjectionEvent(
       createSessionProjection({
         id: "annotated-session",
@@ -4283,9 +4280,34 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveFollowUpDraft("annotated-session", "Half a thought");
 
+    // The request rides the browser event channel — the composer listens on
+    // its own, no Browser panel required.
+    const browserListeners = new Set<(event: unknown) => void>();
+    window.pace = {
+      invoke: vi.fn(async (command: string) => {
+        if (
+          command === "browser_list_comments" ||
+          command === "browser_settle_comments"
+        ) {
+          return { revision: 0, comments: [] };
+        }
+        return null;
+      }) as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn((listener) => {
+        browserListeners.add(listener as (event: unknown) => void);
+        return () =>
+          browserListeners.delete(listener as (event: unknown) => void);
+      }),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+
     render(
       <FixtureSessionsView
         projectId="pig-docs"
+        runtimeBridge={bridge}
         sessionProjection={projection}
         workspace={{
           id: "pig-docs",
@@ -4309,34 +4331,29 @@ describe("AgentWorkspaceSessionsPage", () => {
       />,
     );
 
-    const composer = await findPromptInput(undefined, { placeholder: "What do you want to know?" });
+    await findPromptInput(undefined, { placeholder: "What do you want to know?" });
 
-    act(() => {
-      injectIntoComposer({
-        sessionId: "annotated-session",
-        text: "Browser annotations from the embedded preview",
-        files: [
-          new File(["png"], "browser-annotations.png", { type: "image/png" }),
-        ],
-      });
-      // Another Session's surface must not write into this composer.
-      injectIntoComposer({ sessionId: "other-session", text: "Not for you" });
-    });
+    const publish = (sessionId: string) => {
+      for (const listener of browserListeners) {
+        listener({ type: "submit-requested", sessionId });
+      }
+    };
 
-    // Appended as its own block: whatever the user was already typing is the
-    // point of landing in the draft rather than sending.
+    // A request aimed at a Session this composer is not showing has no taker.
+    act(() => publish("other-session"));
+    await act(async () => {});
+    expect(send).not.toHaveBeenCalled();
+
+    act(() => publish("annotated-session"));
+
     await waitFor(() =>
-      expect(promptValue(composer)).toBe(
-        "Half a thought\n\nBrowser annotations from the embedded preview",
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          piSessionId: "pi-session-annotated",
+          prompt: "Half a thought",
+        }),
       ),
     );
-    // Persisted like any other draft, so leaving the Session does not lose it.
-    expect(getFollowUpDraft("annotated-session")?.message).toBe(
-      "Half a thought\n\nBrowser annotations from the embedded preview",
-    );
-    // The screenshot rides the existing attachment path: drawer preview, size
-    // check and base64 encoding at submit all come with it.
-    expect(await screen.findByAltText("browser-annotations.png")).toBeInTheDocument();
   });
 
   it("steers an active run as a Live Chat control event instead of a queued message", async () => {

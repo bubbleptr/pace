@@ -119,6 +119,27 @@ async function readBrowserViewWidth(app: ElectronApplication) {
   return widths.at(-1) ?? 0;
 }
 
+/**
+ * The comment editor lives in the isolated world's closed shadow root —
+ * unreachable for `evaluate` — so the comment goes in as real input on the
+ * focused textarea (`insertText`), and Enter is a real key press the
+ * overlay's window-capture handler sees.
+ */
+async function typeAndSaveComment(app: ElectronApplication, text: string) {
+  await app.evaluate(({ BrowserWindow }, value) => {
+    const views = (BrowserWindow.getAllWindows()[0]?.contentView.children ?? [])
+      .filter(
+        (child): child is Electron.WebContentsView => "webContents" in child,
+      )
+      .filter((child) => child.webContents.getURL() !== "");
+    const view = views.at(-1);
+
+    view?.webContents.insertText(value);
+    view?.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  }, text);
+}
+
 /** Opens the dock on the Browser surface, with no page loaded yet. */
 async function openBrowserSurface(testApp: PaceTestApplication) {
   const { window } = testApp;
@@ -262,11 +283,81 @@ test("Browser surface loads a page, follows the panel, and keeps popups in place
   }
 });
 
-test("Design mode marks a strict-CSP page, keeps the overlay to itself, and sends the marks to the composer", async () => {
+test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and sends the comments through the composer", async () => {
   const { server, origin } = await startPreviewServer();
+  // The page's Cmd/Ctrl+Enter send goes to a real Pi runtime, so it needs a
+  // provider that can answer — a stub completions endpoint, like the lazy
+  // history spec uses.
+  const provider = createServer(async (request, response) => {
+    for await (const chunk of request) void chunk;
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const base = {
+      id: "reply",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "probe",
+    };
+    response.write(
+      `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "Comments received." }, finish_reason: null }] })}\n\n`,
+    );
+    response.write(
+      `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+    );
+    response.end("data: [DONE]\n\n");
+  });
+  await new Promise<void>((resolve) =>
+    provider.listen(0, "127.0.0.1", resolve),
+  );
+  const providerAddress = provider.address();
+  if (!providerAddress || typeof providerAddress === "string")
+    throw new Error("Missing provider fixture address");
+
   const testApp = await launchPace({
     seedSession: true,
     seedPreflightAuth: true,
+    seedModelControls: true,
+    agentFiles: {
+      "settings.json": JSON.stringify({
+        defaultProvider: "pace-test",
+        defaultModel: "probe",
+        defaultThinkingLevel: "off",
+      }),
+      "models.json": JSON.stringify({
+        providers: {
+          "pace-test": {
+            baseUrl: `http://127.0.0.1:${providerAddress.port}/v1`,
+            api: "openai-completions",
+            apiKey: "local-test-placeholder",
+            models: [
+              {
+                id: "probe",
+                name: "Probe",
+                reasoning: false,
+                input: ["text", "image"],
+                contextWindow: 16000,
+                maxTokens: 1024,
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
+              },
+            ],
+          },
+        },
+      }),
+    },
+    projections: (seeded) => [
+      {
+        ...seeded,
+        modelSelection: {
+          provider: "pace-test",
+          modelId: "probe",
+          thinkingLevel: "off",
+        },
+      },
+    ],
   });
 
   try {
@@ -285,7 +376,7 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
     // Page content can load before the renderer has synchronized native view bounds and visibility.
     await expect.poll(() => readBrowserViewVisible(testApp.app)).toBe(true);
 
-    await aside.getByRole("button", { name: "Design" }).click();
+    await aside.getByRole("button", { name: "Annotate" }).click();
 
     // The toolbar is plain buttons on purpose: a layer would trip the overlay
     // detection and the user would end up marking a frozen screenshot.
@@ -304,10 +395,39 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
 
     // Synthesized input cannot reach a native child view, so the page marks
     // itself; the isolated world's listener still sees the click (S0 spike).
+    // A click opens the draft editor — nothing is a mark until it is saved.
     await embedded.evaluate(() => document.getElementById("cta")!.click());
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
+
+    await typeAndSaveComment(testApp.app, "Needs a bigger hit area");
 
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
+    );
+
+    // A second element, so the send below has two comments and two crops.
+    await embedded.evaluate(() =>
+      document.getElementById("csp-home")!.click(),
+    );
+    await typeAndSaveComment(testApp.app, "Heading sits too low");
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "2 comments",
+    );
+
+    // The store — not the document — owns comments: reloading rebuilds the
+    // page, and its fresh overlay gets the Session's marks for this URL back.
+    await embedded.reload();
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "2 comments",
+    );
+
+    // Marks also follow the document, not the navigation: away empties the
+    // page, back restores them.
+    await embedded.evaluate(() => window.location.assign("/next"));
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
+    await embedded.evaluate(() => window.location.assign("/csp"));
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+      "2 comments",
     );
 
     // Everything the overlay draws stays behind a closed shadow root: the page
@@ -330,20 +450,52 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
       leaksOverlayText: false,
     });
 
-    // What design mode is for: the marks and a screenshot of them land in this
-    // Session's composer as a draft, never as a sent prompt.
-    await aside.getByRole("button", { name: "Send to composer" }).click();
-
+    // Saved comments sit in the composer as structured chips — not text in
+    // the draft — until the page asks for the send.
     const composer = window.getByTestId("full-chat-composer");
+    const chips = composer.getByRole("group", { name: "Browser comments" });
 
-    // No comment was typed — the bubble lives in the closed shadow root, out of
-    // reach of any driver — so this also covers the uncommented row.
-    await expect(composer.getByRole("combobox", { name: "Prompt" })).toHaveText(
-      /#1 `#cta` \(button\) — \(no comment\)/,
+    await expect(chips.getByText("#1 Needs a bigger hit area")).toBeVisible();
+    await expect(chips.getByText("#2 Heading sits too low")).toBeVisible();
+
+    // Cmd/Ctrl+Enter inside the page sends: the whole Session's comments go
+    // out as one block with each element's crop attached.
+    await testApp.app.evaluate(({ BrowserWindow }) => {
+      const view = (BrowserWindow.getAllWindows()[0]?.contentView.children ?? [])
+        .filter(
+          (child): child is Electron.WebContentsView => "webContents" in child,
+        )
+        .filter((child) => child.webContents.getURL() !== "")
+        .at(-1);
+
+      view?.webContents.sendInputEvent({
+        type: "keyDown",
+        keyCode: "Enter",
+        modifiers: ["meta"],
+      });
+      view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+    });
+
+    const messages = window.getByLabel("Live Chat messages");
+
+    // The block Pi reads — index, selector and comment per mark.
+    await expect(messages).toContainText(
+      "Browser comments from the embedded preview",
     );
+    await expect(messages).toContainText("#1 [screenshot] `#cta` (button)");
+    await expect(messages).toContainText("#2 [screenshot] `#csp-home` (h1)");
+    // One crop per comment rides along, in comment order.
     await expect(
-      composer.getByAltText("browser-annotations.png"),
+      messages.getByAltText("browser-comment-1.png"),
     ).toBeVisible();
+    await expect(
+      messages.getByAltText("browser-comment-2.png"),
+    ).toBeVisible();
+
+    // A sent comment is consumed: the chips leave the drawer and the toolbar
+    // counts nothing.
+    await expect(chips).toHaveCount(0);
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
 
     // Escape inside the page leaves design mode, and the toolbar follows.
     await embedded.evaluate(() =>
@@ -356,16 +508,13 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
       ),
     );
 
-    await expect(aside.getByRole("button", { name: "Design" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-
-    await aside.getByRole("button", { name: "Clear marks" }).click();
-    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
+    await expect(
+      aside.getByRole("button", { name: "Annotate" }),
+    ).toHaveAttribute("aria-pressed", "false");
   } finally {
     await testApp.close();
     server.close();
+    provider.close();
   }
 });
 
@@ -397,7 +546,7 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     await window.keyboard.press("Enter");
     const first = await firstPage;
     await expect(first.locator("#cta")).toHaveText("Mark me");
-    await aside.getByRole("button", { name: "Design", exact: true }).click();
+    await aside.getByRole("button", { name: "Annotate", exact: true }).click();
     await expect
       .poll(() =>
         first.evaluate(() =>
@@ -406,8 +555,9 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
       )
       .toBe(true);
     await first.evaluate(() => document.getElementById("cta")!.click());
+    await typeAndSaveComment(testApp.app, "Pinned to tab one");
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
     );
 
     await aside.getByRole("button", { name: "New browser tab" }).click();
@@ -433,12 +583,12 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
       .toEqual([false, true]);
     await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
     await expect(
-      aside.getByRole("button", { name: "Design", exact: true }),
+      aside.getByRole("button", { name: "Annotate", exact: true }),
     ).toHaveAttribute("aria-pressed", "false");
 
     await aside.getByRole("tab", { name: "Browser 1" }).click();
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
     );
     await expect
       .poll(async () =>
@@ -462,10 +612,13 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     });
     await aside.getByTestId("browser-viewport").hover();
     await expect(aside.getByTestId("browser-snapshot")).toHaveCount(0);
-    await aside.getByRole("button", { name: "Send to composer" }).click();
+    // The saved comment rides this Session's composer as a chip, not draft text.
     await expect(
-      window.getByTestId("full-chat-composer").getByRole("combobox", { name: "Prompt" }),
-    ).toHaveText(/#cta/);
+      window
+        .getByTestId("full-chat-composer")
+        .getByRole("group", { name: "Browser comments" })
+        .getByText("#1 Pinned to tab one"),
+    ).toBeVisible();
 
     const before = await readBrowserViews(app);
     await window
@@ -484,11 +637,11 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     const addressBounds = (await aside
       .getByRole("textbox", { name: "Address" })
       .boundingBox())!;
-    const designBounds = (await aside
-      .getByRole("button", { name: "Design", exact: true })
+    const annotateBounds = (await aside
+      .getByRole("button", { name: "Annotate", exact: true })
       .boundingBox())!;
     expect(addressBounds.x + addressBounds.width).toBeLessThanOrEqual(
-      designBounds.x,
+      annotateBounds.x,
     );
 
     // A reload remounts the renderer while main keeps the Session's pages.

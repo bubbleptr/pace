@@ -4,21 +4,18 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  BrowserAnnotationCapture,
   BrowserEvent,
   BrowserTabTarget,
 } from "@/shared/browser-protocol";
 import type { PaceRendererApi } from "@/shared/runtime";
-import {
-  subscribeComposerInjections,
-  type ComposerInjection,
-} from "@/entities/session/composer-injections";
+import { markComposerMounted } from "@/entities/session/composer-presence";
 import { createBrowserHost } from "../../../electron/browser-host";
 import { SessionDockMotionContext } from "@/shared/ui/session-dock/session-dock";
 import { SessionBrowserPanel } from "./session-browser-panel";
 
 const marks = [
   {
+    id: "m1",
     index: 1,
     selector: "#cta",
     tag: "button",
@@ -26,19 +23,11 @@ const marks = [
   },
 ];
 const viewport = { width: 900, height: 820, dpr: 2 };
-const settledCapture: BrowserAnnotationCapture = {
-  image: "data:image/png;base64,SNAP",
-  url: "http://localhost:3000/",
-  viewport,
-  annotations: [{ ...marks[0]!, comment: "Too small to hit" }],
-};
 
 function installPreload(
   options: {
     captureGate?: Promise<void>;
     activateGate?: Promise<void>;
-    annotationGate?: Promise<void>;
-    failCapture?: boolean;
     openGate?: Promise<void>;
     failOpen?: boolean;
   } = {},
@@ -60,12 +49,14 @@ function installPreload(
         goBack() {},
         goForward() {},
         setDesignMode() {},
-        clearAnnotations() {},
-        prepareCapture() {},
+        setAnnotationPalette() {},
+        syncAnnotations() {},
+        finishCapture() {},
         reload() {},
         destroy() {},
         readState: () => ({ url, canGoBack: false, canGoForward: false }),
         capture: async () => "data:image/png;base64,SNAP",
+        captureRect: async () => "data:image/png;base64,CROP",
       };
     },
     getContentSize: () => ({ width: 1440, height: 900 }),
@@ -85,11 +76,6 @@ function installPreload(
         await options.captureGate;
         return "data:image/png;base64,SNAP";
       }
-      if (command === "browser_capture_annotation") {
-        await options.annotationGate;
-        if (options.failCapture) throw new Error("Cannot capture");
-        return settledCapture;
-      }
       const answer = await host.invoke(command, args);
       if (command === "browser_activate") await options.activateGate;
       return answer;
@@ -108,16 +94,23 @@ function installPreload(
   return {
     host,
     invocations,
+    publish(event: BrowserEvent) {
+      listeners.forEach((listener) => listener(event));
+    },
     async target(index = 0, sessionId = "s") {
       const group = (await host.invoke("browser_list", {
         sessionId,
       })) as import("@/shared/browser-protocol").BrowserSessionState;
       return group.tabs[index]!;
     },
-    mark(target: BrowserTabTarget) {
-      act(() => {
-        host.tab(target).recordAnnotations(marks, viewport);
-        host.notify(target);
+    async mark(target: BrowserTabTarget) {
+      await act(async () => {
+        await host.saveComment(
+          target,
+          marks[0]!,
+          viewport,
+          host.readTab(target).url,
+        );
       });
     },
   };
@@ -272,8 +265,8 @@ describe("SessionBrowserPanel multi-instance", () => {
       "aria-busy",
       "true",
     );
-    await user.click(screen.getByRole("button", { name: "Design" }));
-    preload.mark(first);
+    await user.click(screen.getByRole("button", { name: "Annotate" }));
+    await preload.mark(first);
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(screen.queryByTestId("browser-annotation-count")).toBeNull();
     act(() => {
@@ -289,9 +282,9 @@ describe("SessionBrowserPanel multi-instance", () => {
     });
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Design" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "Annotate" })).toHaveAttribute(
         "aria-pressed",
         "true",
       ),
@@ -301,7 +294,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.host.notify(first);
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Design" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "Annotate" })).toHaveAttribute(
         "aria-pressed",
         "false",
       ),
@@ -321,18 +314,18 @@ describe("SessionBrowserPanel multi-instance", () => {
     const first = await preload.target();
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     await user.click(screen.getByRole("tab", { name: "Browser 1" }));
-    preload.mark(first);
+    await preload.mark(first);
     await act(async () => release());
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
   });
 
   it("hides on unmount, preserves marks on reattach, and never commands from a narrow Sheet", async () => {
     const preload = installPreload();
     const view = mount();
     await restored();
-    preload.mark(await preload.target());
+    await preload.mark(await preload.target());
     view.unmount();
     expect(preload.invocations).toContainEqual({
       command: "browser_hide_session",
@@ -342,7 +335,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     await restored();
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
     next.unmount();
     preload.invocations.length = 0;
     const narrow = render(
@@ -369,104 +362,51 @@ describe("SessionBrowserPanel multi-instance", () => {
     expect(screen.queryByText("OLD ERROR")).toBeNull();
   });
 
-  it("sends only the active tab's settled capture once, using the loaded URL", async () => {
-    let release = () => {};
-    const preload = installPreload({
-      annotationGate: new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-    });
-    const user = userEvent.setup();
-    const injections: ComposerInjection[] = [];
-    const unsubscribe = subscribeComposerInjections("s", (injection) =>
-      injections.push(injection),
-    );
+  it("lets a mounted composer answer the page's submit request itself", async () => {
+    const preload = installPreload();
+    const unmount = markComposerMounted("s");
+
     mount();
     await restored();
-    const first = await preload.target();
-    preload.mark(first);
-    await user.clear(screen.getByRole("textbox", { name: "Address" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "Address" }),
-      "draft.local",
-    );
-    const send = screen.getByRole("button", { name: "Send to composer" });
-    await user.click(send);
-    expect(send).toBeDisabled();
-    await user.click(send);
-    await act(async () => release());
-    await waitFor(() => expect(injections).toHaveLength(1));
-    expect(
-      preload.invocations.filter(
-        (i) => i.command === "browser_capture_annotation",
-      ),
-    ).toEqual([
-      {
-        command: "browser_capture_annotation",
-        args: { sessionId: "s", tabId: first.tabId },
-      },
-    ]);
-    expect(injections[0]?.text).toContain("Too small to hit");
-    expect(injections[0]?.text).toContain("http://localhost:3000/");
-    expect(injections[0]?.files?.[0]).toBeInstanceOf(File);
-    unsubscribe();
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "s" });
+    });
+
+    // The composer heard the event on its own channel — the panel only
+    // speaks when nobody was mounted, so nothing surfaces here.
+    await act(async () => {});
+    expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
+    unmount();
   });
 
-  it.each(["tab", "session", "close"])(
-    "discards an in-flight send after a %s switch",
-    async (change) => {
-      let release = () => {};
-      const preload = installPreload({
-        annotationGate: new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-      });
-      const user = userEvent.setup();
-      const injections: ComposerInjection[] = [];
-      const unsubscribe = subscribeComposerInjections("s", (injection) =>
-        injections.push(injection),
-      );
-      const view = mount();
-      await restored();
-      preload.mark(await preload.target());
-      await user.click(
-        screen.getByRole("button", { name: "Send to composer" }),
-      );
-      if (change === "session")
-        view.rerender(
-          <SessionBrowserPanel docked projectId="q" sessionId="next" />,
-        );
-      else
-        await user.click(
-          screen.getByRole("button", {
-            name: change === "tab" ? "New browser tab" : "Close Browser 1",
-          }),
-        );
-      await act(async () => release());
-      expect(injections).toHaveLength(0);
-      unsubscribe();
-    },
-  );
+  it("says nothing was sent when no composer answers the submit request", async () => {
+    const preload = installPreload();
 
-  it("falls back to text on capture failure and reports when no composer is mounted", async () => {
-    const user = userEvent.setup();
-    const preload = installPreload({ failCapture: true });
     mount();
     await restored();
-    preload.mark(await preload.target());
-    await user.click(screen.getByRole("button", { name: "Send to composer" }));
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "s" });
+    });
+
     expect(
       await screen.findByTestId("browser-surface-notice"),
-    ).toHaveTextContent(/No composer/);
-    const injections: ComposerInjection[] = [];
-    const unsubscribe = subscribeComposerInjections("s", (injection) =>
-      injections.push(injection),
-    );
-    await user.click(screen.getByRole("button", { name: "Send to composer" }));
-    await waitFor(() => expect(injections).toHaveLength(1));
-    expect(injections[0]?.files).toEqual([]);
-    expect(injections[0]?.text).toContain("no screenshot could be taken");
-    unsubscribe();
+    ).toHaveTextContent(/No composer is open for this Session/);
+  });
+
+  it("ignores another Session's submit request", async () => {
+    const preload = installPreload();
+
+    mount();
+    await restored();
+
+    act(() => {
+      preload.publish({ type: "submit-requested", sessionId: "other" });
+    });
+
+    await act(async () => {});
+    expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
   });
 
   it("hides the native view behind a still while the dock moves, and reuses that still on the next mount", async () => {
@@ -541,5 +481,155 @@ describe("SessionBrowserPanel multi-instance", () => {
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     await act(async () => release());
     expect(screen.queryByTestId("browser-snapshot")).toBeNull();
+  });
+
+  it("sends the panel's semantic tokens as the overlay palette when annotating starts", async () => {
+    const preload = installPreload();
+    const user = userEvent.setup();
+    mount();
+    await restored();
+
+    await user.click(screen.getByRole("button", { name: "Annotate" }));
+
+    const toggle = preload.invocations.find(
+      (item) => item.command === "browser_set_design_mode" && item.args?.enabled === true,
+    );
+
+    // The overlay lives in a page that cannot read Pace's stylesheets, so the
+    // colours travel as computed values. jsdom resolves none of the tokens —
+    // empty strings are still strings, and the page-side check decides which
+    // of them can actually parse.
+    expect(toggle?.args?.palette).toEqual({
+      accent: expect.any(String),
+      accentForeground: expect.any(String),
+      surface: expect.any(String),
+      foreground: expect.any(String),
+      border: expect.any(String),
+      muted: expect.any(String),
+    });
+  });
+
+  it("tells the tab its comment was refused when the Session is full", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.publish({
+        type: "comment-rejected",
+        sessionId: "s",
+        tabId: target.tabId,
+        reason: "limit",
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        "This Session already keeps 200 browser comments — send or remove some first.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("ignores browser events that are not about this Session", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.publish({
+        type: "comment-rejected",
+        sessionId: "other-session",
+        tabId: target.tabId,
+        reason: "limit",
+      });
+      preload.publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 1,
+        comments: [],
+      });
+    });
+
+    await act(async () => {});
+    expect(
+      screen.queryByText(/This Session already keeps/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sends a palette-only update for page-origin activation without echoing mode", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.host
+        .tab({ sessionId: "s", tabId: target.tabId })
+        .recordDesignMode(true);
+      preload.host.notify({ sessionId: "s", tabId: target.tabId });
+    });
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.filter(
+          (item) => item.command === "browser_set_annotation_palette",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(
+      preload.invocations.some(
+        (item) => item.command === "browser_set_design_mode",
+      ),
+    ).toBe(false);
+  });
+
+  it("toggles annotation mode on Cmd/Ctrl+Shift+A while a live tab is active", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "KeyA",
+        key: "a",
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.some(
+          (item) =>
+            item.command === "browser_set_design_mode" &&
+            item.args?.enabled === true,
+        ),
+      ).toBe(true),
+    );
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "KeyA",
+        key: "a",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.some(
+          (item) =>
+            item.command === "browser_set_design_mode" &&
+            item.args?.enabled === false,
+        ),
+      ).toBe(true),
+    );
   });
 });

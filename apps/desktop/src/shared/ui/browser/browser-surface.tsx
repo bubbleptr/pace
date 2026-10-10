@@ -135,7 +135,7 @@ function BrowserSurfaceTabs({
             className="shrink-0 text-xs tabular-nums text-muted"
             data-testid="browser-annotation-count"
           >
-            {annotationCount} marked
+            {annotationCount === 1 ? "1 comment" : `${annotationCount} comments`}
           </span>
         ) : null
       }
@@ -162,7 +162,6 @@ type BrowserSurfaceToolbarOwnProps = {
   canGoBack: boolean;
   canGoForward: boolean;
   isDesignMode: boolean;
-  isSending?: boolean;
   annotationCount: number;
   onAddressChange: (address: string) => void;
   onAddressSubmit: (address: string) => void;
@@ -172,7 +171,6 @@ type BrowserSurfaceToolbarOwnProps = {
   onOpenExternal: () => void;
   onClearAnnotations: () => void;
   onDesignModeChange: (isDesignMode: boolean) => void;
-  onSendToComposer: () => void;
 };
 
 export type BrowserSurfaceToolbarProps = Omit<
@@ -187,7 +185,6 @@ function BrowserSurfaceToolbar({
   canGoBack,
   canGoForward,
   isDesignMode,
-  isSending,
   annotationCount,
   onAddressChange,
   onAddressSubmit,
@@ -197,7 +194,6 @@ function BrowserSurfaceToolbar({
   onOpenExternal,
   onClearAnnotations,
   onDesignModeChange,
-  onSendToComposer,
   className,
   ...rest
 }: BrowserSurfaceToolbarProps) {
@@ -224,7 +220,7 @@ function BrowserSurfaceToolbar({
             // never reads as pressed there — a pressed, disabled control
             // claims a state the user cannot leave.
             isPressed={isLive && isDesignMode}
-            label="Design"
+            label="Annotate"
             size="sm"
             onPressedChange={onDesignModeChange}
           />
@@ -236,23 +232,6 @@ function BrowserSurfaceToolbar({
             variant="ghost"
             onClick={onClearAnnotations}
           />
-          {/* The action design mode exists for, so it is the one control
-              here that carries its own label. Nothing to send without a
-              mark: the prompt would be a URL and a screenshot with no
-              question on it. */}
-          <Button
-            // Disabled while one is in flight: the page has to settle its
-            // overlay before the shot, and a second click during that would
-            // paste the block into the draft twice. Astryx only dedupes
-            // `clickAction`, and that is a layer-free promise this button
-            // cannot use.
-            isDisabled={!isLive || annotationCount === 0 || isSending}
-            label="Send to composer"
-            size="sm"
-            onClick={onSendToComposer}
-          >
-            To composer
-          </Button>
           <IconButton
             icon={<LinkExternal className="size-4" />}
             isDisabled={!isLive}

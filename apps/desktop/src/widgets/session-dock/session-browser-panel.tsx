@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatBrowserAnnotationPrompt } from "@pace/core";
 import {
   activateBrowserTab,
   attachBrowserSession,
   browserBack,
   browserForward,
   captureBrowser,
-  captureBrowserAnnotation,
   clearBrowserAnnotations,
   closeBrowserTab,
   hideBrowserSession,
@@ -14,14 +12,16 @@ import {
   openBrowserTab,
   openBrowserUrlExternally,
   reloadBrowser,
+  setBrowserAnnotationPalette,
   setBrowserBounds,
   setBrowserDesignMode,
   setBrowserVisible,
   subscribeBrowserEvents,
 } from "@/entities/browser/browser-client";
-import { injectIntoComposer } from "@/entities/session/composer-injections";
+import { isComposerMounted } from "@/entities/session/composer-presence";
 import { isElectronRuntime } from "@/shared/runtime";
 import type {
+  BrowserAnnotationPalette,
   BrowserSessionState,
   BrowserTabState,
   BrowserViewRect,
@@ -79,11 +79,12 @@ function BrowserSessionContent({
     tabId: string;
     image: string;
   } | null>(null);
-  const [sendingTabId, setSendingTabId] = useState<string | null>(null);
   const alive = useRef(false);
   // Every context change invalidates pending captures, even if the user switches back.
   const contextVersion = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
+  /** The panel's own root — the element its semantic tokens are read from. */
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const instancesCallback = useRef(onInstancesChange);
   instancesCallback.current = onInstancesChange;
   const available = isElectronRuntime() && docked;
@@ -118,7 +119,36 @@ function BrowserSessionContent({
     alive.current = true;
     // Main can publish while attach restores a fast page, before its reply arrives.
     const early = new Map<string, BrowserTabState>();
-    const unsubscribe = subscribeBrowserEvents(({ tab }) => {
+    const unsubscribe = subscribeBrowserEvents((event) => {
+      // comments-changed is store news for the composer — the panel's state
+      // is only ever tab snapshots, plus the notices a page could not get on
+      // its own.
+      if (event.type === "submit-requested") {
+        // Cmd/Ctrl+Enter in the page. A mounted composer answers the event
+        // itself, wherever it lives; the panel only says when nobody could.
+        if (event.sessionId !== sessionId || !alive.current) return;
+        if (!isComposerMounted(sessionId)) {
+          const tabId = groupRef.current?.activeTabId ?? "empty";
+          setNotices((current) => ({
+            ...current,
+            [tabId]:
+              "No composer is open for this Session, so nothing was sent. Your comments are kept.",
+          }));
+        }
+        return;
+      }
+      if (event.type === "comment-rejected") {
+        if (event.sessionId === sessionId && alive.current) {
+          setNotices((current) => ({
+            ...current,
+            [event.tabId]:
+              "This Session already keeps 200 browser comments — send or remove some first.",
+          }));
+        }
+        return;
+      }
+      if (event.type !== "state-changed") return;
+      const { tab } = event;
       if (tab.sessionId !== sessionId || !alive.current) return;
       const current = groupRef.current;
       if (!current) {
@@ -169,6 +199,44 @@ function BrowserSessionContent({
     () => (tabId ? { sessionId, tabId } : null),
     [sessionId, tabId],
   );
+
+  /**
+   * The overlay paints in a page that shares nothing with Pace's stylesheets,
+   * so the computed semantic tokens travel with the command and the page
+   * checks each colour itself.
+   */
+  const readAnnotationPalette = useCallback(():
+    | BrowserAnnotationPalette
+    | undefined => {
+    const element = surfaceRef.current;
+    if (!element) return undefined;
+    const styles = getComputedStyle(element);
+    const token = (name: string) => styles.getPropertyValue(name).trim();
+    return {
+      accent: token("--primary"),
+      accentForeground: token("--color-on-accent"),
+      surface: token("--surface"),
+      foreground: token("--foreground"),
+      border: token("--border"),
+      muted: token("--muted"),
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!available || !tabId || !active?.designMode) return;
+    const palette = readAnnotationPalette();
+    if (!palette) return;
+    void setBrowserAnnotationPalette({ sessionId, tabId }, palette).catch((error) => {
+      if (alive.current) setActionError(errorMessage(error));
+    });
+  }, [
+    active?.designMode,
+    available,
+    readAnnotationPalette,
+    sessionId,
+    tabId,
+  ]);
+
   const tabCount = group?.tabs.length ?? 0;
   const state: BrowserSurfaceState = !docked
     ? { kind: "narrow" }
@@ -277,6 +345,37 @@ function BrowserSessionContent({
       if (alive.current) setActionError(errorMessage(error));
     });
   };
+  const changeDesignMode = (tab: BrowserTabState, enabled: boolean) => {
+    runPageCommand(() =>
+      setBrowserDesignMode(
+        { sessionId, tabId: tab.tabId },
+        enabled,
+        // The palette only matters when the overlay comes up; main keeps the
+        // last one it saw for everything else.
+        enabled ? readAnnotationPalette() : undefined,
+      ),
+    );
+  };
+
+  // The in-page overlay listens for the same shortcut — this side covers the
+  // Pace window having focus while a browser tab is live.
+  useEffect(() => {
+    if (!available || state.kind !== "live" || !tabId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.code !== "KeyA" ||
+        !event.shiftKey ||
+        (!event.metaKey && !event.ctrlKey)
+      )
+        return;
+      const tab = groupRef.current?.tabs.find((item) => item.tabId === tabId);
+      if (!tab) return;
+      event.preventDefault();
+      changeDesignMode(tab, !tab.designMode);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [available, state.kind, tabId]);
   const submitAddress = async (url: string) => {
     if (!available || !url.trim()) return;
     const version = ++contextVersion.current;
@@ -309,50 +408,6 @@ function BrowserSessionContent({
         setActionError(errorMessage(error));
     }
   };
-  const sendToComposer = async () => {
-    if (!active?.annotations.length || !active.viewport || sendingTabId) return;
-    const page = { sessionId, tabId: active.tabId };
-    const version = contextVersion.current;
-    const navigationId = active.navigationId;
-    setSendingTabId(page.tabId);
-    setNotices((current) => ({ ...current, [page.tabId]: null }));
-    try {
-      const capture = await captureBrowserAnnotation(page).catch(() => null);
-      const current = groupRef.current;
-      const latest = current?.tabs.find((tab) => tab.tabId === page.tabId);
-      if (
-        !alive.current ||
-        version !== contextVersion.current ||
-        current?.activeTabId !== page.tabId ||
-        latest?.navigationId !== navigationId ||
-        latest.url !== active.url
-      )
-        return;
-      const image = capture?.image ?? null;
-      const delivered = injectIntoComposer({
-        sessionId,
-        text: formatBrowserAnnotationPrompt({
-          url: capture?.url || active.url,
-          viewport: capture?.viewport ?? active.viewport,
-          elements: capture?.annotations ?? active.annotations,
-          capturedAt: new Date().toISOString(),
-          screenshot: image !== null,
-        }),
-        files: image ? [pngFileFromDataUrl(image)] : [],
-      });
-      setNotices((current) => ({
-        ...current,
-        [page.tabId]: !delivered
-          ? "No composer is open for this Session, so nothing was sent. The marks are still on the page."
-          : image
-            ? null
-            : "Sent without a screenshot — the page could not be photographed.",
-      }));
-    } finally {
-      if (alive.current) setSendingTabId(null);
-    }
-  };
-
   const addressKey = tabId ?? "empty";
   const tabs = (group?.tabs ?? []).map((tab, index) => ({
     id: tab.tabId,
@@ -370,7 +425,7 @@ function BrowserSessionContent({
       runPageCommand(() => reloadBrowser({ sessionId, tabId: active.tabId }));
   };
   return (
-    <BrowserSurface state={state}>
+    <BrowserSurface ref={surfaceRef} state={state}>
       <BrowserSurface.Tabs
         tabs={tabs}
         activeTabId={tabId}
@@ -390,7 +445,6 @@ function BrowserSessionContent({
         canGoForward={active?.canGoForward ?? false}
         isDesignMode={active?.designMode ?? false}
         isLoading={active?.loading ?? false}
-        isSending={sendingTabId === tabId && tabId !== null}
         onAddressChange={(address) =>
           setDrafts((current) => ({ ...current, [addressKey]: address }))
         }
@@ -406,10 +460,7 @@ function BrowserSessionContent({
             );
         }}
         onDesignModeChange={(enabled) => {
-          if (active)
-            runPageCommand(() =>
-              setBrowserDesignMode({ sessionId, tabId: active.tabId }, enabled),
-            );
+          if (active) changeDesignMode(active, enabled);
         }}
         onForward={() => {
           if (active)
@@ -421,11 +472,6 @@ function BrowserSessionContent({
           if (active) runPageCommand(() => openBrowserUrlExternally(active.url));
         }}
         onReload={onReload}
-        onSendToComposer={() =>
-          void sendToComposer().catch((error) => {
-            if (alive.current) setActionError(errorMessage(error));
-          })
-        }
       />
       <BrowserSurface.Viewport
         notice={actionError ?? notices[addressKey]}
@@ -438,13 +484,6 @@ function BrowserSessionContent({
   );
 }
 
-function pngFileFromDataUrl(dataUrl: string) {
-  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1)
-    bytes[index] = binary.charCodeAt(index);
-  return new File([bytes], "browser-annotations.png", { type: "image/png" });
-}
 function errorMessage(error: unknown) {
   return error instanceof Error
     ? error.message

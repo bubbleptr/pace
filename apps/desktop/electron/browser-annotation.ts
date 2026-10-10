@@ -1,5 +1,6 @@
 import type {
   BrowserAnnotationElement,
+  BrowserAnnotationPalette,
   BrowserAnnotationViewport,
 } from "@/shared/browser-protocol";
 
@@ -20,36 +21,86 @@ export const browserAnnotationChannel = "pigui:browser-annotation";
 /** Main → page. Design mode is a command, never a page-side decision. */
 export const browserAnnotationCommandChannel = "pigui:browser-annotation-command";
 
-/** Marks, and the space they were measured in — always reported together. */
-type AnnotationsPayload = {
-  annotations: BrowserAnnotationElement[];
-  viewport: BrowserAnnotationViewport;
-};
-
 export type BrowserAnnotationMessage =
-  /** A fresh document's overlay is live: it has no annotations yet. */
+  /** A fresh document's overlay is live: main answers with mode and marks. */
   | { type: "ready" }
   | { type: "design-mode"; enabled: boolean }
-  | ({ type: "annotations" } & AnnotationsPayload)
   /**
-   * The overlay has put itself out of shot — comment bubble committed and
-   * closed, hover highlight hidden — and states what it holds right now. Main
-   * waits for this before `capturePage`.
+   * One annotation was committed — a new one (the overlay hid itself for two
+   * frames first, so the crop it triggers contains no overlay) or an edit of
+   * one main already knows, reported by its id.
    */
-  | ({ type: "capture-ready" } & AnnotationsPayload);
+  | {
+      type: "annotation-saved";
+      annotation: BrowserAnnotationElement;
+      viewport: BrowserAnnotationViewport;
+      /**
+       * `location.href` of the document that saved. Navigation between the
+       * overlay's save and main's read would otherwise file the comment under
+       * whatever URL the tab happens to be on when the message lands.
+       */
+      documentUrl: string;
+    }
+  | { type: "annotation-deleted"; id: string }
+  /**
+   * How a sync-requested restore ended: `stale` when the element could not be
+   * found in the document in time.
+   */
+  | { type: "annotation-presence"; id: string; stale: boolean }
+  /**
+   * Cmd/Ctrl+Enter in the page: send the Session's comments now. Posted only
+   * after every pending `annotation-saved`, so the store is settled first.
+   */
+  | { type: "submit-requested" };
 
 export type BrowserAnnotationCommand =
-  | { type: "set-design-mode"; enabled: boolean }
-  | { type: "clear-annotations" }
-  | { type: "prepare-capture" };
+  | {
+      type: "set-design-mode";
+      enabled: boolean;
+      /** The renderer's theme tokens; the overlay validates each colour itself. */
+      palette?: BrowserAnnotationPalette;
+    }
+  /**
+   * The store's current answer for this document: annotations to show, in
+   * Session order. The overlay reconciles — marks absent from the list go
+   * away, unknown ones are restored by selector.
+   */
+  | { type: "sync-annotations"; annotations: BrowserAnnotationElement[] }
+  /**
+   * Colours alone — a page that enabled mode itself (Cmd/Ctrl+Shift+A) never
+   * got the renderer's palette with the toggle, so it gets it now without an
+   * echoing mode change.
+   */
+  | {
+      type: "set-annotation-palette";
+      palette: BrowserAnnotationPalette;
+    }
+  /**
+   * A save's crop is done (or abandoned): the overlay hidden for it may
+   * become visible again.
+   */
+  | { type: "capture-done" };
 
 const maxTextLength = 120;
-const maxCommentLength = 500;
+/**
+ * The page-side editor caps its textarea at this too — export it so the one
+ * limit lives in one place. (This module is already in the preload bundle.)
+ */
+export const maxCommentLength = 500;
 const maxTagLength = 40;
 const maxSelectorLength = 1_000;
-const maxAnnotations = 200;
 /** `file:line` or `file:line:column`, with a file part that is not empty. */
 const sourcePattern = /^(.+?):(\d+)(?::(\d+))?$/;
+/** What the overlay mints with `crypto.randomUUID()` — short and url-safe. */
+const annotationIdPattern = /^[A-Za-z0-9-]{1,64}$/;
+const paletteFields = [
+  "accent",
+  "accentForeground",
+  "surface",
+  "foreground",
+  "border",
+  "muted",
+] as const;
 
 /**
  * One line, then at most `max` characters of it.
@@ -62,6 +113,19 @@ function clampText(value: string, max: number) {
   const line = value.replace(/[\r\n]+/g, " ");
 
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * A comment may span lines — the editor takes Shift+Enter — so it is not
+ * folded like the other fields. Line endings are normalised and runs of
+ * blank space capped at one empty line; the length cap is `clampText`'s.
+ */
+function clampComment(value: string, max: number) {
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
+
+  return normalized.length > max
+    ? `${normalized.slice(0, max - 1)}…`
+    : normalized;
 }
 
 function resolvesUniquely(element: Element, selector: string) {
@@ -138,11 +202,59 @@ function readText(element: Element) {
 }
 
 /**
+ * Tags that decorate text rather than carry it — pointing at one means the
+ * user aimed at what wraps it.
+ */
+const decorativeTags = new Set(["span", "b", "i", "em", "strong", "small"]);
+
+/**
+ * Controls a click means even when it lands on a child: marking a button's
+ * label is marking the button.
+ */
+const interactiveTargetSelector =
+  'a,button,label,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"]';
+
+/**
+ * What a click on the deepest composed node actually meant. The path names
+ * leaf nodes — a `span`, an SVG `path`, a 1px decorator — so the target
+ * climbs while the element is decorative (decorative tag, an SVG interior,
+ * or too small to have been aimed at), stopping at `document.body`, then
+ * prefers the nearest enclosing interactive control.
+ */
+export function resolveAnnotationTarget(deepest: Element): Element {
+  const body = deepest.ownerDocument.body;
+  let current = deepest;
+
+  while (current !== body) {
+    const tag = current.tagName.toLowerCase();
+    const rect = current.getBoundingClientRect();
+    // `ownerSVGElement` is non-null only inside an SVG — and only on
+    // SVGElements at all, which is why this is not a plain property read.
+    const insideSvg =
+      current instanceof SVGElement && current.ownerSVGElement !== null;
+    const decorative =
+      decorativeTags.has(tag) ||
+      insideSvg ||
+      rect.width < 8 ||
+      rect.height < 8;
+    const parent = current.parentElement;
+
+    if (!decorative || !parent) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return current.closest(interactiveTargetSelector) ?? current;
+}
+
+/**
  * Best-effort source location, read only from `data-*` attributes: either a
  * combined `data-source="file:line:column"` or the separate attributes the
  * React inspector plugins stamp. Anything else is left out rather than guessed.
  */
-function readSource(element: Element) {
+export function readSource(element: Element) {
   const combined = sourcePattern.exec(element.getAttribute("data-source")?.trim() ?? "");
 
   if (combined) {
@@ -172,12 +284,14 @@ function readSource(element: Element) {
 export function describeAnnotatedElement(
   element: Element,
   index: number,
+  id: string,
 ): BrowserAnnotationElement {
   const rect = element.getBoundingClientRect();
   const text = readText(element);
   const source = readSource(element);
 
   return {
+    id,
     index,
     selector: buildElementSelector(element),
     tag: element.tagName.toLowerCase(),
@@ -252,14 +366,14 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     return null;
   }
 
-  const { index, selector, tag, text, rect, source, comment } = value as Record<
-    string,
-    unknown
-  >;
+  const { id, index, selector, tag, text, rect, source, comment } =
+    value as Record<string, unknown>;
   const indexNumber = finiteNumber(index);
   const rectangle = readRect(rect);
 
   if (
+    typeof id !== "string" ||
+    !annotationIdPattern.test(id) ||
     indexNumber === null ||
     typeof selector !== "string" ||
     typeof tag !== "string" ||
@@ -271,6 +385,7 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
   const location = readSourceValue(source);
 
   return {
+    id,
     index: Math.trunc(indexNumber),
     selector: clampText(selector, maxSelectorLength),
     tag: clampText(tag, maxTagLength),
@@ -278,29 +393,39 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     rect: rectangle,
     ...(location ? { source: location } : {}),
     ...(typeof comment === "string" && comment
-      ? { comment: clampText(comment, maxCommentLength) }
+      ? { comment: clampComment(comment, maxCommentLength) }
       : {}),
   };
 }
 
-function readAnnotationsPayload(
-  message: Record<string, unknown>,
-): AnnotationsPayload | null {
-  const viewport = readViewportValue(message.viewport);
-
-  // Rects without the viewport they were measured in describe positions in an
-  // unknown space, so the message is not usable without one.
-  if (!Array.isArray(message.annotations) || !viewport) {
-    return null;
+/**
+ * The renderer sends its computed theme tokens with a design-mode or
+ * palette-only command. Main accepts only the shape — all six fields present,
+ * each a short string — and drops the palette wholesale otherwise; whether
+ * each colour parses is the overlay's call (`CSS.supports`), since only the
+ * page knows its own CSS engine.
+ */
+export function readAnnotationPalette(
+  value: unknown,
+): BrowserAnnotationPalette | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
   }
 
-  return {
-    annotations: message.annotations
-      .slice(0, maxAnnotations)
-      .map(readAnnotation)
-      .filter((annotation): annotation is BrowserAnnotationElement => annotation !== null),
-    viewport,
-  };
+  const record = value as Record<string, unknown>;
+  const palette = {} as Record<(typeof paletteFields)[number], string>;
+
+  for (const field of paletteFields) {
+    const colour = record[field];
+
+    if (typeof colour !== "string" || colour.length > 64) {
+      return undefined;
+    }
+
+    palette[field] = colour;
+  }
+
+  return palette;
 }
 
 /**
@@ -333,12 +458,30 @@ export function acceptBrowserAnnotationMessage<Sender>(input: {
       return typeof message.enabled === "boolean"
         ? { type: "design-mode", enabled: message.enabled }
         : null;
-    case "annotations":
-    case "capture-ready": {
-      const payload = readAnnotationsPayload(message);
+    case "annotation-saved": {
+      const annotation = readAnnotation(message.annotation);
+      const viewport = readViewportValue(message.viewport);
+      const documentUrl = message.documentUrl;
 
-      return payload ? { type: message.type, ...payload } : null;
+      return annotation &&
+        viewport &&
+        typeof documentUrl === "string" &&
+        documentUrl.length <= 2048
+        ? { type: "annotation-saved", annotation, viewport, documentUrl }
+        : null;
     }
+    case "annotation-deleted":
+      return typeof message.id === "string" && annotationIdPattern.test(message.id)
+        ? { type: "annotation-deleted", id: message.id }
+        : null;
+    case "annotation-presence":
+      return typeof message.id === "string" &&
+        annotationIdPattern.test(message.id) &&
+        typeof message.stale === "boolean"
+        ? { type: "annotation-presence", id: message.id, stale: message.stale }
+        : null;
+    case "submit-requested":
+      return { type: "submit-requested" };
     default:
       return null;
   }

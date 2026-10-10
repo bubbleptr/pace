@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserViewState } from "@/shared/browser-protocol";
+import type {
+  BrowserAnnotationElement,
+  BrowserAnnotationViewport,
+  BrowserComment,
+  BrowserViewState,
+} from "@/shared/browser-protocol";
 import {
-  browserCaptureAckTimeoutMs,
   browserTitlebarBandPx,
   createBrowserHost,
   createBrowserTabHost,
   createBrowserSessionProvider,
   isBrowserCommand,
+  maxSessionComments,
   normalizeBrowserUrl,
   resolveBrowserViewBounds,
+  resolveCommentCropRect,
+  urlKey,
   type BrowserHostView,
 } from "./browser-host";
 
@@ -23,12 +30,16 @@ function createFakeView() {
     destroyed: boolean;
     loadRejection: Error | null;
     loadCount: () => number;
+    synced: { id: string }[];
+    cropResult: string | null;
   } = {
     calls,
     bounds: null,
     visible: false,
     destroyed: false,
     loadRejection: null,
+    synced: [],
+    cropResult: "data:image/png;base64,CROP",
     loadCount: () => calls.filter((call) => call.startsWith("loadUrl")).length,
     setBounds(bounds) {
       view.bounds = bounds;
@@ -52,14 +63,22 @@ function createFakeView() {
     goBack() {
       calls.push("goBack");
     },
-    setDesignMode(enabled) {
-      calls.push(`setDesignMode(${enabled})`);
+    setDesignMode(enabled, palette) {
+      calls.push(`setDesignMode(${enabled}${palette ? ",palette" : ""})`);
+      calls.push(`palette(${palette ? JSON.stringify(palette) : ""})`);
     },
-    prepareCapture() {
-      calls.push("prepareCapture");
+    setAnnotationPalette(palette) {
+      calls.push("setAnnotationPalette");
+      calls.push(`palette(${JSON.stringify(palette)})`);
     },
-    clearAnnotations() {
-      calls.push("clearAnnotations");
+    finishCapture() {
+      calls.push("finishCapture");
+    },
+    syncAnnotations(list) {
+      calls.push(
+        `syncAnnotations(${list.map((a: { id: string }) => a.id).join(",")})`,
+      );
+      view.synced = list;
     },
     goForward() {
       calls.push("goForward");
@@ -75,6 +94,12 @@ function createFakeView() {
       calls.push(`capture(${maxWidth ?? ""})`);
       return "data:image/png;base64,SNAPSHOT";
     },
+    async captureRect(rect, cssWidth) {
+      calls.push(
+        `captureRect(${rect.x},${rect.y},${rect.width},${rect.height}@${cssWidth})`,
+      );
+      return view.cropResult;
+    },
     readState() {
       return { url, canGoBack: false, canGoForward: false };
     },
@@ -87,6 +112,10 @@ function createHostHarness(
   contentSize: { width: number; height: number } | null = {
     width: 1440,
     height: 900,
+  },
+  snapshotComments?: (currentUrl: string) => {
+    annotations: BrowserAnnotationElement[];
+    viewport: BrowserAnnotationViewport | null;
   },
 ) {
   const views: ReturnType<typeof createFakeView>[] = [];
@@ -101,6 +130,7 @@ function createHostHarness(
     openExternal(url) {
       externals.push(url);
     },
+    snapshotComments,
   });
 
   return { host, views, externals };
@@ -174,23 +204,6 @@ describe("resolveBrowserViewBounds", () => {
 });
 
 describe("browser host commands", () => {
-  /** What the page reported while marking, and what it acks at capture time. */
-  const marked = {
-    annotations: [
-      {
-        index: 1,
-        selector: "#cta",
-        tag: "button",
-        rect: { x: 0, y: 0, width: 8, height: 8 },
-      },
-    ],
-    viewport: { width: 684, height: 820, dpr: 2 },
-  };
-  const acked = {
-    annotations: [{ ...marked.annotations[0]!, comment: "Too small to hit" }],
-    viewport: { width: 900, height: 820, dpr: 2 },
-  };
-
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -409,86 +422,6 @@ describe("browser host commands", () => {
     );
   });
 
-  it("caps the annotation capture at the panel's own CSS width", async () => {
-    const { host, views } = createHostHarness();
-
-    await expect(host.invoke("browser_capture_annotation")).resolves.toBeNull();
-
-    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-    await host.invoke("browser_set_bounds", {
-      rect: { x: 748, y: 40, width: 684, height: 820 },
-    });
-
-    await host.invoke("browser_capture");
-
-    const capture = host.invoke("browser_capture_annotation");
-
-    host.recordCaptureReady([], marked.viewport);
-    await capture;
-
-    // The still that stands in for the native view keeps every device pixel,
-    // because it is shown at the placeholder's own size. The one that becomes
-    // a prompt attachment does not: a 2x capture of a wide panel is a PNG
-    // approaching the 8 MiB image ceiling, and the model gains nothing from it.
-    expect(views[0]!.calls).toContain("capture()");
-    expect(views[0]!.calls).toContain("capture(684)");
-  });
-
-  it("has the page settle its overlay before the shot, and sends what it acked", async () => {
-    const { host, views } = createHostHarness();
-
-    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-    await host.invoke("browser_set_bounds", {
-      rect: { x: 748, y: 40, width: 684, height: 820 },
-    });
-    // What main heard while the user was still marking.
-    host.recordAnnotations(marked.annotations, marked.viewport);
-
-    const capture = host.invoke("browser_capture_annotation");
-
-    // The page answers the prepare with the comment it has just committed and
-    // a viewport measured now, after the panel was dragged wider.
-    host.recordCaptureReady(acked.annotations, acked.viewport);
-
-    expect(await capture).toEqual({
-      image: "data:image/png;base64,SNAPSHOT",
-      annotations: acked.annotations,
-      viewport: acked.viewport,
-      url: "http://localhost:5173/",
-    });
-    // Order is the whole point: shooting first would print the open comment
-    // bubble and a stale hover box onto what Pi reads.
-    expect(views[0]!.calls.slice(-2)).toEqual([
-      "prepareCapture",
-      "capture(684)",
-    ]);
-  });
-
-  it("shoots anyway when the page never answers, using what main last heard", async () => {
-    vi.useFakeTimers();
-
-    try {
-      const { host, views } = createHostHarness();
-
-      await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
-      host.recordAnnotations(marked.annotations, marked.viewport);
-
-      const capture = host.invoke("browser_capture_annotation");
-
-      // No annotation preload is listening — a page that replaced the document
-      // before its overlay reported in, say. The toolbar must not hang on it.
-      await vi.advanceTimersByTimeAsync(browserCaptureAckTimeoutMs);
-
-      expect(await capture).toMatchObject({
-        annotations: marked.annotations,
-        viewport: marked.viewport,
-      });
-      expect(views[0]!.calls).toContain("capture()");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("drives design mode through the view and remembers it for the next document", async () => {
     const { host, views } = createHostHarness();
 
@@ -500,10 +433,71 @@ describe("browser host commands", () => {
 
     await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
     await host.invoke("browser_set_design_mode", { enabled: true });
-    await host.invoke("browser_clear_annotations");
 
     expect(views[0]!.calls).toContain("setDesignMode(true)");
-    expect(views[0]!.calls).toContain("clearAnnotations");
+  });
+
+  it("stores a valid palette for ready replays and forwards it to the view", async () => {
+    const { host, views } = createHostHarness();
+    const palette = {
+      accent: "#0064E0",
+      accentForeground: "#ffffff",
+      surface: "#1f1f22",
+      foreground: "#dfe2e5",
+      border: "#494d53",
+      muted: "#aaafb5",
+    };
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_design_mode", { enabled: true, palette });
+
+    expect(views[0]!.calls).toContain(
+      `palette(${JSON.stringify(palette)})`,
+    );
+    // Fresh documents get it back when their overlay reports in.
+    expect(host.annotationPalette()).toEqual(palette);
+  });
+
+  it("validates palette-only updates without changing design mode", async () => {
+    const { host, views } = createHostHarness();
+    const palette = {
+      accent: "#0064E0",
+      accentForeground: "#ffffff",
+      surface: "#1f1f22",
+      foreground: "#dfe2e5",
+      border: "#494d53",
+      muted: "#aaafb5",
+    };
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_annotation_palette", { palette });
+
+    expect(host.annotationPalette()).toEqual(palette);
+    expect(host.isDesignModeEnabled()).toBe(false);
+    expect(views[0]!.calls).toContain("setAnnotationPalette");
+    expect(views[0]!.calls).not.toContain("setDesignMode(false)");
+
+    const callCount = views[0]!.calls.length;
+    await host.invoke("browser_set_annotation_palette", {
+      palette: { ...palette, surface: 42 },
+    });
+
+    expect(host.annotationPalette()).toEqual(palette);
+    expect(views[0]!.calls).toHaveLength(callCount);
+    expect(host.isDesignModeEnabled()).toBe(false);
+  });
+
+  it("ignores a malformed palette wholesale instead of forwarding part of it", async () => {
+    const { host, views } = createHostHarness();
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_design_mode", {
+      enabled: true,
+      palette: { accent: "#0064E0", surface: 42 },
+    });
+
+    expect(host.annotationPalette()).toBeUndefined();
+    expect(views[0]!.calls).toContain("palette()");
   });
 
   it("records design mode the page left on its own without commanding it back", async () => {
@@ -526,7 +520,6 @@ describe("browser host commands", () => {
   it("claims only the commands it implements, so the backend keeps the rest", () => {
     for (const command of [
       "browser_capture",
-      "browser_capture_annotation",
       "browser_navigate",
       "browser_back",
       "browser_forward",
@@ -534,7 +527,12 @@ describe("browser host commands", () => {
       "browser_set_bounds",
       "browser_set_visible",
       "browser_set_design_mode",
+      "browser_set_annotation_palette",
       "browser_clear_annotations",
+      "browser_list_comments",
+      "browser_comment_images",
+      "browser_delete_comment",
+      "browser_consume_comments",
       "browser_open_external",
     ]) {
       expect(isBrowserCommand(command)).toBe(true);
@@ -691,15 +689,17 @@ describe("Browser multi-instance host", () => {
     expect(views[0]?.readState().url).toBe("http://localhost:3000/");
   });
 
-  it("keeps annotations per tab and cancels captures when their tab is closed", async () => {
+  it("keeps annotations per tab and drops only the view when a tab is closed", async () => {
     const { host, views } = createHostHarness();
     await host.invoke("browser_open", first);
     await host.invoke("browser_navigate", { ...first, url: "localhost:3000" });
     await host.invoke("browser_set_design_mode", { ...first, enabled: true });
-    host
-      .tab(first)
-      .recordAnnotations([{ index: 1, selector: "#a", tag: "p", rect }], null);
-    const capture = host.invoke("browser_capture_annotation", first);
+    await host.saveComment(
+      first,
+      { id: "a1", index: 1, selector: "#a", tag: "p", rect },
+      { width: 600, height: 700, dpr: 1 },
+      "http://localhost:3000/",
+    );
     await host.invoke("browser_open", second);
     await host.invoke("browser_navigate", { ...second, url: "localhost:4000" });
     expect(host.readTab(second)).toMatchObject({
@@ -710,8 +710,9 @@ describe("Browser multi-instance host", () => {
       designMode: true,
       annotations: [{ selector: "#a" }],
     });
+    // Closing removes the view and its markers — the comment lives in the
+    // Session store and outlives both.
     await host.invoke("browser_close", first);
-    expect(await capture).toBeNull();
     expect(views[0]?.destroyed).toBe(true);
     expect(views[1]?.destroyed).toBe(false);
   });
@@ -766,5 +767,506 @@ describe("Browser multi-instance host", () => {
         url: "localhost:4000",
       }),
     ).rejects.toThrow(/tab/i);
+  });
+});
+
+describe("Session comment store", () => {
+  const first = { sessionId: "s", tabId: "a" };
+  const second = { sessionId: "s", tabId: "b" };
+  const viewport = { width: 800, height: 600, dpr: 1 };
+
+  function annotation(id: string, comment = `note ${id}`) {
+    return {
+      id,
+      index: 1,
+      selector: `#${id}`,
+      tag: "button",
+      rect: { x: 100, y: 100, width: 40, height: 20 },
+      comment,
+    };
+  }
+
+  function harness() {
+    const views: ReturnType<typeof createFakeView>[] = [];
+    const events: {
+      type: string;
+      revision?: number;
+      comments?: unknown[];
+    }[] = [];
+    const host = createBrowserHost({
+      createView() {
+        const view = createFakeView();
+        views.push(view);
+        return view;
+      },
+      getContentSize: () => ({ width: 1440, height: 900 }),
+      openExternal() {},
+      emit: (event) => events.push(event as { type: string }),
+    });
+
+    const list = async () =>
+      ((
+        await host.invoke("browser_list_comments", {
+          sessionId: first.sessionId,
+        })
+      ) as { revision: number; comments: BrowserComment[] }).comments;
+
+    return { host, views, events, list };
+  }
+
+  async function openOn(host: ReturnType<typeof harness>["host"], target: typeof first, url: string) {
+    await host.invoke("browser_open", target);
+    await host.invoke("browser_navigate", { ...target, url });
+  }
+
+  it("stores a saved comment, takes its crop, and publishes the change", async () => {
+    const { host, views, events, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+
+    const comments = await list();
+
+    expect(comments).toHaveLength(1);
+    expect(comments?.[0]).toMatchObject({
+      id: "c1",
+      index: 1,
+      selector: "#c1",
+      tabId: "a",
+      url: "http://localhost:3000/",
+      comment: "note c1",
+      stale: false,
+      hasImage: true,
+      viewport,
+    });
+    // The element's region, expanded and clamped, was photographed — and the
+    // page was always released afterwards.
+    expect(views[0]!.calls).toContain("captureRect(0,10,320,200@320)");
+    expect(views[0]!.calls).toContain("finishCapture");
+    // The sync carries only this tab's marks on this URL.
+    expect(views[0]!.synced).toMatchObject([{ id: "c1", index: 1 }]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "comments-changed",
+        comments: [expect.objectContaining({ id: "c1" })],
+      }),
+    );
+  });
+
+  it("updates only the comment text when the page edits its own annotation", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c1", "edited"), viewport, "http://localhost:3000/");
+
+    const comments = await list();
+
+    expect(comments).toHaveLength(1);
+    expect(comments?.[0]?.comment).toBe("edited");
+    // No second crop: an edit is not a new mark, so nothing is re-shot.
+    expect(
+      views[0]!.calls.filter((call) => call.startsWith("captureRect")),
+    ).toHaveLength(1);
+  });
+
+  it("ignores a save that carries another tab's id", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await openOn(host, second, "localhost:4000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    // Tab b cannot edit a comment that belongs to tab a.
+    await host.saveComment(second, annotation("c1", "hijacked"), viewport, "http://localhost:4000/");
+
+    const comments = await list();
+
+    expect(comments).toHaveLength(1);
+    expect(comments?.[0]?.comment).toBe("note c1");
+    expect(views[1]!.calls.filter((c) => c.startsWith("captureRect"))).toHaveLength(0);
+  });
+
+  it("ignores saves beyond the Session cap", async () => {
+    const { host, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    for (let i = 0; i < maxSessionComments + 3; i += 1) {
+      await host.saveComment(first, annotation(`c${i}`), viewport, "http://localhost:3000/");
+    }
+
+    expect(await list()).toHaveLength(maxSessionComments);
+  });
+
+  it("releases the overlay, resyncs and reports when a save hits the Session cap", async () => {
+    const { host, views, events, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    for (let i = 0; i < maxSessionComments; i += 1) {
+      await host.saveComment(first, annotation(`c${i}`), viewport, "http://localhost:3000/");
+    }
+    views[0]!.calls.length = 0;
+
+    await host.saveComment(first, annotation("over"), viewport, "http://localhost:3000/");
+
+    expect(await list()).toHaveLength(maxSessionComments);
+    // The overlay hid itself for the save's crop: it must come back, and the
+    // store's truth pushed back removes the phantom mark it drew locally.
+    expect(views[0]!.calls).toContain("finishCapture");
+    expect(views[0]!.calls.filter((call) => call.startsWith("captureRect"))).toHaveLength(0);
+    expect(views[0]!.synced).toHaveLength(maxSessionComments);
+    expect(events[events.length - 1]).toMatchObject({
+      type: "comment-rejected",
+      sessionId: "s",
+      tabId: "a",
+      reason: "limit",
+    });
+  });
+
+  it("drops a save filed from a document that already navigated away", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    // The page said where it was when it saved; the tab has since moved.
+    await host.saveComment(
+      first,
+      annotation("c1"),
+      viewport,
+      "http://localhost:3000/older",
+    );
+
+    expect(await list()).toHaveLength(0);
+    // The overlay is still released — but no sync is owed: the document it
+    // hid itself on is gone, its own ready/navigation sync reconciles.
+    expect(views[0]!.calls).toContain("finishCapture");
+    expect(views[0]!.calls.filter((call) => call.startsWith("captureRect"))).toHaveLength(0);
+  });
+
+  it("still finishes the capture handshake when the crop cannot be read", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    views[0]!.cropResult = null;
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+
+    expect((await list())?.[0]?.hasImage).toBe(false);
+    expect(views[0]!.calls).toContain("finishCapture");
+  });
+
+  it("answers comment images by id, null for ones never taken", async () => {
+    const { host, views } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    views[0]!.cropResult = null;
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
+
+    const images = await host.invoke("browser_comment_images", {
+      sessionId: "s",
+      ids: ["c1", "c2", "unknown"],
+    });
+
+    expect(images).toEqual({
+      c1: "data:image/png;base64,CROP",
+      c2: null,
+      unknown: null,
+    });
+  });
+
+  it("answers image ids that collide with an object key", async () => {
+    const { host } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    const images = (await host.invoke("browser_comment_images", {
+      sessionId: "s",
+      ids: ["__proto__"],
+    })) as Record<string, string | null>;
+
+    // "__proto__" must be an own data property — writing into a plain object
+    // literal would mutate its prototype instead of answering the id.
+    expect(Object.keys(images)).toContain("__proto__");
+    expect(Object.getOwnPropertyDescriptor(images, "__proto__")).toEqual({
+      value: null,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
+  it("keeps comments through navigation and scopes a tab's marks by urlKey", async () => {
+    const { host, views } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+
+    // Another document: the comment stays in the store but leaves the page.
+    await host.invoke("browser_navigate", {
+      ...first,
+      url: "localhost:3000/other",
+    });
+
+    expect(host.readTab(first).annotations).toEqual([]);
+    expect(
+      (
+        (await host.invoke("browser_list_comments", {
+          sessionId: "s",
+        })) as { comments: unknown[] }
+      ).comments,
+    ).toHaveLength(1);
+
+    host.syncTabAnnotations(first, "http://localhost:3000/other");
+    expect(views[0]!.synced).toEqual([]);
+
+    // Hash-only differences are the same document: the marks come back.
+    host.syncTabAnnotations(first, "http://localhost:3000/#section");
+    expect(views[0]!.synced).toMatchObject([{ id: "c1" }]);
+  });
+
+  it("keeps a closed tab's comments in the store", async () => {
+    const { host, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.invoke("browser_close", first);
+
+    // Closing removes the view and its markers — never the comment.
+    expect(await list()).toMatchObject([{ id: "c1", tabId: "a" }]);
+  });
+
+  it("clearing removes only the owning tab's comments", async () => {
+    const { host, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await openOn(host, second, "localhost:4000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(second, annotation("c2"), viewport, "http://localhost:4000/");
+    await host.invoke("browser_clear_annotations", first);
+
+    expect(await list()).toMatchObject([{ id: "c2", tabId: "b" }]);
+  });
+
+  it("deletes and consumes exactly the ids given", async () => {
+    const { host, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
+    await host.invoke("browser_delete_comment", { sessionId: "s", id: "gone" });
+    expect(await list()).toHaveLength(2);
+
+    await host.invoke("browser_delete_comment", { sessionId: "s", id: "c1" });
+    expect(await list()).toMatchObject([{ id: "c2", index: 1 }]);
+
+    // Consume removes only what it names — a comment saved since the
+    // composer's snapshot was taken survives.
+    await host.saveComment(first, annotation("c3"), viewport, "http://localhost:3000/");
+    await host.invoke("browser_consume_comments", {
+      sessionId: "s",
+      ids: ["c2", "unknown"],
+    });
+    expect(await list()).toMatchObject([{ id: "c3", index: 1 }]);
+  });
+
+  it("renumbers Session indices after a delete and resyncs every tab", async () => {
+    const { host, views } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await openOn(host, second, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(second, annotation("c2"), viewport, "http://localhost:3000/");
+    await host.invoke("browser_delete_comment", { sessionId: "s", id: "c1" });
+
+    // The deleted comment's successor moves up — the store's numbering is
+    // positional, not a saved field.
+    expect(views[0]!.synced).toEqual([]);
+    expect(views[1]!.synced).toMatchObject([{ id: "c2", index: 1 }]);
+  });
+
+  it("marks stale only for the tab the presence came from", async () => {
+    const { host, list, events } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await openOn(host, second, "localhost:4000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+
+    host.markStale(second, "c1", true);
+    expect((await list())?.[0]?.stale).toBe(false);
+
+    host.markStale(first, "c1", true);
+    expect((await list())?.[0]?.stale).toBe(true);
+    expect(events[events.length - 1]).toMatchObject({ type: "comments-changed" });
+
+    // No second event for the same value.
+    const emitted = events.length;
+    host.markStale(first, "c1", true);
+    expect(events).toHaveLength(emitted);
+  });
+
+  it("stamps every comments-changed with the store's growing revision", async () => {
+    const { host, events } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
+
+    const changes = events.filter(
+      (event) => event.type === "comments-changed",
+    );
+
+    expect(changes.length).toBeGreaterThanOrEqual(2);
+    const last = changes[changes.length - 1]!;
+    const firstChange = changes[0]!;
+    expect(last.revision).toBeGreaterThan(firstChange.revision!);
+
+    const reply = (await host.invoke("browser_list_comments", {
+      sessionId: "s",
+    })) as { revision: number };
+
+    expect(reply.revision).toBe(last.revision);
+  });
+
+  it("settles an in-flight save before answering the send's list", async () => {
+    const { host, views } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    let releaseCrop = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseCrop = resolve;
+    });
+    views[0]!.captureRect = async () => {
+      await gate;
+      return "data:image/png;base64,LATE";
+    };
+
+    // IPC order is what makes this observable: the save's crop is in flight
+    // when the settle request arrives.
+    void host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    const settled = host.invoke("browser_settle_comments", {
+      sessionId: "s",
+    }) as Promise<{ revision: number; comments: BrowserComment[] }>;
+
+    releaseCrop();
+    const reply = await settled;
+
+    // The send's read carries the comment its hook snapshot had not seen yet.
+    expect(reply.comments).toMatchObject([{ id: "c1", hasImage: true }]);
+    expect(reply.revision).toBeGreaterThan(0);
+  });
+
+  it("reads the store without touching tabs, views or activation", async () => {
+    const { host, views } = harness();
+
+    expect(
+      (
+        (await host.invoke("browser_list_comments", {
+          sessionId: "s",
+        })) as { comments: unknown[] }
+      ).comments,
+    ).toEqual([]);
+    expect(views).toHaveLength(0);
+  });
+
+  it("waits for a pending save crop before publishing the page's send", async () => {
+    const { host, views, events } = harness();
+    let releaseCrop = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseCrop = resolve;
+    });
+
+    await openOn(host, first, "localhost:3000");
+    views[0]!.captureRect = async () => {
+      await gate;
+      return "data:image/png;base64,LATE";
+    };
+
+    // IPC order is what makes this observable: the save's crop is pending
+    // before the page can ask for the send that depends on it.
+    void host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    const submit = host.requestSubmit(first);
+
+    // The request holds until the crop resolves: emitting now would publish a
+    // send whose comments-changed has not gone out — and hasImage is not yet
+    // known.
+    await Promise.resolve();
+    expect(events.some((event) => event.type === "submit-requested")).toBe(false);
+
+    releaseCrop();
+    await submit;
+
+    const types = events.map((event) => event.type);
+    const changed = types.lastIndexOf("comments-changed");
+    const submitted = types.indexOf("submit-requested");
+
+    expect(changed).toBeGreaterThanOrEqual(0);
+    expect(submitted).toBeGreaterThan(changed);
+    expect(events[changed]).toMatchObject({
+      sessionId: "s",
+      comments: [expect.objectContaining({ id: "c1", hasImage: true })],
+    });
+    expect(events[submitted]).toEqual({ type: "submit-requested", sessionId: "s" });
+  });
+
+  it("emits the send request at once with no crop pending, and ignores stray tabs", async () => {
+    const { host, events } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    await host.requestSubmit({ sessionId: "other", tabId: "z" });
+    await host.requestSubmit({ sessionId: "s", tabId: "zzz" });
+    expect(events.some((event) => event.type === "submit-requested")).toBe(false);
+
+    await host.requestSubmit(first);
+    expect(events).toContainEqual({ type: "submit-requested", sessionId: "s" });
+  });
+});
+
+describe("urlKey", () => {
+  it("identifies a document by origin, path and search — never hash", () => {
+    expect(urlKey("http://localhost:3000/a?x=1#top")).toBe(
+      "http://localhost:3000/a?x=1",
+    );
+    expect(urlKey("https://example.com/")).toBe("https://example.com/");
+    // A URL that fails to parse falls back to itself — still a stable key.
+    expect(urlKey("")).toBe("");
+  });
+});
+
+describe("resolveCommentCropRect", () => {
+  it("expands the element by 48px and grows to the minimum size", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 400, y: 300, width: 40, height: 20 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 260, y: 210, width: 320, height: 200 });
+  });
+
+  it("keeps a large element's expanded bounds", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 400, y: 300, width: 500, height: 400 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 352, y: 252, width: 596, height: 496 });
+  });
+
+  it("shifts an off-edge crop inside before shrinking it", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 1380, y: 10, width: 40, height: 20 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 1120, y: 0, width: 320, height: 200 });
+  });
+
+  it("clips a crop bigger than the viewport to it", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 100, y: 100, width: 900, height: 800 },
+        { width: 400, height: 300 },
+      ),
+    ).toEqual({ x: 0, y: 0, width: 400, height: 300 });
   });
 });

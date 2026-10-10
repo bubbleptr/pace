@@ -24,6 +24,11 @@ export type BrowserAnnotationViewport = {
  * read from whatever `data-*` attributes the dev server stamped.
  */
 export type BrowserAnnotationElement = {
+  /**
+   * Stable identity for the annotation's lifetime, minted by the overlay
+   * (`crypto.randomUUID()`). `index` renumbers on delete; `id` never changes.
+   */
+  id: string;
   /** 1-based; the number the marker shows in the page and on the screenshot. */
   index: number;
   selector: string;
@@ -35,25 +40,30 @@ export type BrowserAnnotationElement = {
   comment?: string;
 };
 
-export type BrowserAnnotationPayload = {
+/**
+ * A saved annotation as the Session-level comment store hands it out. The
+ * page element it describes (`selector`/`tag`/`rect`/`comment`) is the
+ * annotation's own shape; the fields here pin it to a tab, a document and a
+ * moment. `index` is its 1-based position in the Session's comment order and
+ * is recomputed on every read — a badge number only ever means "the nth
+ * comment kept for this Session".
+ *
+ * In the composer, `hasImage` means "a screenshot of this comment is attached
+ * to the message about to be sent" — the composer overrides it with what it
+ * actually fetched.
+ */
+export type BrowserComment = BrowserAnnotationElement & {
+  tabId: string;
+  /** Page URL when saved; documents sharing it (`urlKey`) get the marker back. */
   url: string;
-  title?: string;
+  title: string;
+  /** The viewport the rect was measured in. */
   viewport: BrowserAnnotationViewport;
-  elements: BrowserAnnotationElement[];
-  capturedAt: string;
-  /**
-   * Whether a screenshot goes with this text. It changes what the prompt can
-   * claim and how an element is located, so it is not the caller's to describe
-   * in prose.
-   */
-  screenshot: boolean;
-};
-
-const headings = {
-  withScreenshot:
-    "Browser annotations from the embedded preview — the attached screenshot shows the same numbered markers.",
-  withoutScreenshot:
-    "Browser annotations from the embedded preview — no screenshot could be taken, so each mark carries its viewport rect instead.",
+  /** The last restore attempt could not find the element in the document. */
+  stale: boolean;
+  /** A cropped screenshot was taken for it. */
+  hasImage: boolean;
+  createdAt: string;
 };
 
 /**
@@ -76,53 +86,71 @@ function formatRect(rect: BrowserAnnotationElement["rect"]) {
 }
 
 /**
- * The markdown block the `Send to composer` action drops into the draft.
- *
- * Fixed on purpose: this is the contract Pi reads, so the shape of it is
- * pinned by tests rather than tuned per call site. Text and comments arrive
- * already clamped (main rebuilds every annotation field by field), so nothing
- * is truncated a second time here.
- *
- * Rects appear only when the screenshot does not. With one, the numbered
- * markers are what locate an element and a rect measured before a scroll would
- * point somewhere else; without one, the rect is the only locator left.
+ * The comment body as indented lines: blank lines dropped, the rest kept in
+ * the commenter's own spacing. A comment that reduces to nothing is still
+ * said about — the mark exists whether or not the text does.
  */
-export function formatBrowserAnnotationPrompt(payload: BrowserAnnotationPayload) {
+function commentBodyLines(comment: string | undefined) {
+  const lines = (comment ?? "")
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  return lines.length
+    ? lines.map((line) => `  ${line}`)
+    : ["  (no comment)"];
+}
+
+/**
+ * The text block the composer appends to a message that carries browser
+ * comments. Fixed on purpose: this is the contract Pi reads, so its shape is
+ * pinned by tests rather than tuned per call site.
+ *
+ * Comments arrive in store order — they are rendered exactly so, grouped by
+ * nothing, with a `Page:` block reopening whenever the URL changes so a
+ * comment going back to an earlier page gets its own context again. A rect is
+ * only printed when no screenshot can say where the element is better; a
+ * stale comment is flagged rather than presented as current truth.
+ */
+export function formatBrowserComments(comments: readonly BrowserComment[]) {
   const lines = [
-    payload.screenshot ? headings.withScreenshot : headings.withoutScreenshot,
-    "",
-    `- URL: ${payload.url}`,
+    comments.some((comment) => comment.hasImage)
+      ? "Browser comments from the embedded preview. A comment marked [screenshot] has a cropped screenshot of its element attached; those screenshots are the last images in this message, in comment order."
+      : "Browser comments from the embedded preview.",
   ];
+  let previousUrl: string | null = null;
 
-  if (payload.title) {
-    lines.push(`- Title: ${payload.title}`);
-  }
+  for (const comment of comments) {
+    if (comment.url !== previousUrl) {
+      previousUrl = comment.url;
+      lines.push(
+        "",
+        comment.title
+          ? `Page: ${oneLine(comment.title)} — ${oneLine(comment.url)}`
+          : `Page: ${oneLine(comment.url)}`,
+        `Viewport: ${comment.viewport.width}×${comment.viewport.height} @${comment.viewport.dpr}x`,
+      );
+    }
 
-  lines.push(
-    `- Viewport: ${payload.viewport.width}×${payload.viewport.height} @${payload.viewport.dpr}x`,
-    `- Captured: ${payload.capturedAt}`,
-  );
-
-  for (const element of payload.elements) {
-    // A mark with nothing said about it is still a mark: the user pointed at
-    // it, and dropping the row would silently lose that.
     lines.push(
       "",
-      `#${element.index} \`${oneLine(element.selector)}\` (${oneLine(element.tag)}) — ${
-        element.comment ? oneLine(element.comment) : "(no comment)"
-      }`,
+      `#${comment.index}${comment.hasImage ? " [screenshot]" : ""} \`${oneLine(comment.selector)}\` (${oneLine(comment.tag)})`,
+      ...commentBodyLines(comment.comment),
     );
 
-    if (!payload.screenshot) {
-      lines.push(`  - rect: ${formatRect(element.rect)}`);
+    if (comment.text) {
+      lines.push(`  - text: "${oneLine(comment.text)}"`);
     }
-
-    if (element.text) {
-      lines.push(`  - text: "${oneLine(element.text)}"`);
+    if (comment.source) {
+      lines.push(`  - source: \`${formatSource(comment.source)}\``);
     }
-
-    if (element.source) {
-      lines.push(`  - source: \`${formatSource(element.source)}\``);
+    if (!comment.hasImage) {
+      lines.push(`  - rect: ${formatRect(comment.rect)}`);
+    }
+    if (comment.stale) {
+      lines.push(
+        "  - stale: not found on the page when last checked; described as it was when saved",
+      );
     }
   }
 

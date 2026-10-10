@@ -170,10 +170,10 @@ export {
 } from "./model-capabilities";
 
 export {
-  formatBrowserAnnotationPrompt,
+  formatBrowserComments,
   type BrowserAnnotationElement,
-  type BrowserAnnotationPayload,
   type BrowserAnnotationViewport,
+  type BrowserComment,
 } from "./browser-annotation";
 
 export type {

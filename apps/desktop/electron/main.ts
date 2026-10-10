@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { autoUpdater } from "electron-updater";
 import type { BackendRpcEvent, BackendRpcResponse } from "@pace/backend";
-import { browserEventChannel, type BrowserEvent, type BrowserTabTarget } from "@/shared/browser-protocol";
+import { browserEventChannel, type BrowserAnnotationElement, type BrowserAnnotationPalette, type BrowserEvent, type BrowserTabTarget, type BrowserViewRect } from "@/shared/browser-protocol";
 import { updateEventChannel } from "@/shared/update-protocol";
 import {
   acceptBrowserAnnotationMessage,
@@ -505,6 +505,9 @@ function createBrowserView(target: BrowserTabTarget) {
   webContents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
     if (isMainFrame) {
       emitNavigation();
+      // A client-side navigation reuses the overlay — no `ready` comes — so
+      // the document's marks are re-synced for wherever it just landed.
+      getBrowserHost().syncTabAnnotations(target, webContents.getURL());
     }
   });
   webContents.on(
@@ -543,12 +546,24 @@ function createBrowserView(target: BrowserTabTarget) {
       ),
     goBack: () => webContents.navigationHistory.goBack(),
     goForward: () => webContents.navigationHistory.goForward(),
-    setDesignMode: (enabled: boolean) =>
-      sendAnnotationCommand(webContents, { type: "set-design-mode", enabled }),
-    clearAnnotations: () =>
-      sendAnnotationCommand(webContents, { type: "clear-annotations" }),
-    prepareCapture: () =>
-      sendAnnotationCommand(webContents, { type: "prepare-capture" }),
+    setDesignMode: (enabled: boolean, palette?: BrowserAnnotationPalette) =>
+      sendAnnotationCommand(webContents, {
+        type: "set-design-mode",
+        enabled,
+        ...(palette ? { palette } : {}),
+      }),
+    syncAnnotations: (annotations: BrowserAnnotationElement[]) =>
+      sendAnnotationCommand(webContents, {
+        type: "sync-annotations",
+        annotations,
+      }),
+    setAnnotationPalette: (palette: BrowserAnnotationPalette) =>
+      sendAnnotationCommand(webContents, {
+        type: "set-annotation-palette",
+        palette,
+      }),
+    finishCapture: () =>
+      sendAnnotationCommand(webContents, { type: "capture-done" }),
     reload: () => webContents.reload(),
     destroy: () => {
       browserAnnotationSenders.delete(webContents);
@@ -576,11 +591,19 @@ function createBrowserView(target: BrowserTabTarget) {
         return null;
       }
 
-      // Resizing by width alone keeps the aspect ratio; who asks for a cap,
-      // and why, is `browser_capture_annotation` in browser-host.ts. The
-      // downsample itself lives in capture-downsample.ts so it can be unit
-      // tested at both 1x and 2x scale without a real HiDPI display.
+      // Resizing by width alone keeps the aspect ratio. The downsample itself
+      // lives in capture-downsample.ts so it can be unit tested at both 1x
+      // and 2x scale without a real HiDPI display.
       return downsampleToCssWidth(image, maxWidth).toDataURL();
+    },
+    async captureRect(rect: BrowserViewRect, cssWidth: number) {
+      // The comment's save-crop: `capturePage` takes CSS coordinates and
+      // answers in device pixels, so it is downsampled back to the CSS width.
+      const image = await webContents.capturePage(rect);
+
+      return image.isEmpty()
+        ? null
+        : downsampleToCssWidth(image, cssWidth).toDataURL();
     },
   };
 }
@@ -598,9 +621,15 @@ function sendAnnotationCommand(
  * The embedded page's one way in. Everything it says is checked twice: the
  * sender must be this window's own view (`pigui:invoke` now also checks its
  * sender, but annotations still get their own channel rather than sharing
- * one), and the message must be one of the three shapes the protocol knows.
+ * one), and the message must be one of the shapes the protocol knows.
  */
 ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
+  // The annotation preload only runs in the main frame today; pinning the
+  // channel to it keeps subframe preloads from reaching the store if they
+  // are ever enabled.
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) {
+    return;
+  }
   const target = browserAnnotationSenders.get(event.sender);
   if (!target) return;
   const message = acceptBrowserAnnotationMessage({
@@ -616,27 +645,39 @@ ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
   const host = getBrowserHost().tab(target);
 
   switch (message.type) {
-    case "ready":
-      // A new document carries a new overlay: no marks on it, and design mode
-      // has to be put back if the user never left it.
+    case "ready": {
+      // A new document carries a new overlay: design mode — with the tab's
+      // last palette — is put back if the user never left it, and the Session
+      // store answers which of this tab's comments the document should show.
+      const palette = host.annotationPalette();
       sendAnnotationCommand(event.sender, {
         type: "set-design-mode",
         enabled: host.isDesignModeEnabled(),
+        ...(palette ? { palette } : {}),
       });
-      host.recordAnnotations([], null);
+      getBrowserHost().syncTabAnnotations(target, event.sender.getURL());
       getBrowserHost().notify(target);
       break;
-    case "annotations":
-      // Kept on the host as well as forwarded: a capture whose prepare goes
-      // unanswered falls back to the last marks that arrived here.
-      host.recordAnnotations(message.annotations, message.viewport);
-      getBrowserHost().notify(target);
+    }
+    case "annotation-saved":
+      // The store records it and takes the element's crop; the overlay hid
+      // itself for two frames before this, so the shot carries no overlay.
+      void getBrowserHost().saveComment(
+        target,
+        message.annotation,
+        message.viewport,
+        message.documentUrl,
+      );
       break;
-    case "capture-ready":
-      // The answer to a prepare — it releases the capture waiting on it. The
-      // renderer hears about these marks in the capture's own result, not as
-      // an event, so the two cannot disagree.
-      host.recordCaptureReady(message.annotations, message.viewport);
+    case "annotation-deleted":
+      getBrowserHost().deleteComment(target, message.id);
+      break;
+    case "annotation-presence":
+      getBrowserHost().markStale(target, message.id, message.stale);
+      break;
+    case "submit-requested":
+      // Cmd/Ctrl+Enter: send the Session's comments once pending crops settle.
+      void getBrowserHost().requestSubmit(target);
       break;
     case "design-mode":
       host.recordDesignMode(message.enabled);

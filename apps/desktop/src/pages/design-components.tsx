@@ -429,7 +429,6 @@ function GalleryBrowserSurface({
   canGoForward = false,
   isDesignMode = false,
   isLoading,
-  isSending,
   notice,
   snapshot,
   onAddressChange,
@@ -443,7 +442,6 @@ function GalleryBrowserSurface({
   canGoForward?: boolean;
   isDesignMode?: boolean;
   isLoading?: boolean;
-  isSending?: boolean;
   notice?: string;
   snapshot?: string;
   onAddressChange?: (address: string) => void;
@@ -466,7 +464,6 @@ function GalleryBrowserSurface({
         canGoForward={canGoForward}
         isDesignMode={isDesignMode}
         isLoading={isLoading}
-        isSending={isSending}
         onAddressChange={onAddressChange ?? noop}
         onAddressSubmit={noop}
         onBack={noop}
@@ -475,7 +472,6 @@ function GalleryBrowserSurface({
         onForward={noop}
         onOpenExternal={noop}
         onReload={noop}
-        onSendToComposer={noop}
       />
       <BrowserSurface.Viewport notice={notice} snapshot={snapshot} onAddTab={noop} onReload={noop} />
     </BrowserSurface>
@@ -499,7 +495,7 @@ function BrowserSurfaceGallery() {
             />
           </div>
         </Variant>
-        <Variant caption="design mode on, two elements marked — the marks live in the page's own overlay, and Send to composer drops them plus a screenshot into the chat draft">
+        <Variant caption="annotate mode on, two comments — the marks live in the page's own overlay, and Cmd/Ctrl+Enter sends them from inside the page">
           <div className="h-56 w-[30rem] overflow-hidden rounded-md border border-separator px-2">
             <GalleryBrowserSurface
               address="http://localhost:5173/"
@@ -510,24 +506,13 @@ function BrowserSurfaceGallery() {
             />
           </div>
         </Variant>
-        <Variant caption="sending — the page is settling its overlay for the shot, so the action is out of reach until it answers">
+        <Variant caption="notice — one line about the last page request, in plain text: a layer here would swap the live page for a still">
           <div className="h-56 w-[30rem] overflow-hidden rounded-md border border-separator px-2">
             <GalleryBrowserSurface
               address="http://localhost:5173/"
               annotationCount={2}
               isDesignMode
-              isSending
-              state={{ kind: "live" }}
-            />
-          </div>
-        </Variant>
-        <Variant caption="notice — one line about the last send, in plain text: a layer here would swap the live page for a still">
-          <div className="h-56 w-[30rem] overflow-hidden rounded-md border border-separator px-2">
-            <GalleryBrowserSurface
-              address="http://localhost:5173/"
-              annotationCount={2}
-              isDesignMode
-              notice="Sent without a screenshot — the page could not be photographed."
+              notice="No composer is open for this Session, so nothing was sent. Your comments are kept."
               state={{ kind: "live" }}
             />
           </div>
@@ -2806,6 +2791,63 @@ function ComposerAttachmentDrawerGallery() {
                     { id: "b", kind: "text", name: "very-long-path-name.md" },
                   ]}
                   onRemove={() => {}}
+                />
+              }
+              hasAttachments
+              placeholder="Ask anything"
+              value=""
+              onSubmit={() => {}}
+              onValueChange={() => {}}
+            />
+          </div>
+        </Variant>
+        <Variant caption="with comment chips — one stale">
+          <div className="w-96">
+            <ChatPromptInput
+              drawer={
+                <ComposerAttachmentDrawer
+                  comments={[
+                    { id: "c1", label: "#1 Check the button radius" },
+                    {
+                      id: "c2",
+                      label: "#2 Footer spacing feels off",
+                      warning:
+                        "No longer on the page — sent as it was when saved",
+                    },
+                  ]}
+                  commentsLabel="Browser comments"
+                  items={[
+                    {
+                      id: "img",
+                      kind: "image",
+                      name: "shot.png",
+                      src: galleryThumb,
+                    },
+                  ]}
+                  onRemove={() => {}}
+                  onRemoveComment={() => {}}
+                />
+              }
+              hasAttachments
+              placeholder="Ask anything"
+              value=""
+              onSubmit={() => {}}
+              onValueChange={() => {}}
+            />
+          </div>
+        </Variant>
+        <Variant caption="comments only — no file attachments">
+          <div className="w-96">
+            <ChatPromptInput
+              drawer={
+                <ComposerAttachmentDrawer
+                  comments={[
+                    { id: "c1", label: "#1 Check the button radius" },
+                  ]}
+                  commentsLabel="Browser comments"
+                  items={[]}
+                  onRemove={() => {}}
+                  onRemoveComment={() => {}}
                 />
               }
               hasAttachments

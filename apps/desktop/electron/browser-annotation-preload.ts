@@ -25,22 +25,34 @@ import { createAnnotationOverlay } from "./browser-annotation-overlay";
 
 const overlay = createAnnotationOverlay({
   document,
-  onAnnotationsChange(annotations, viewport) {
+  onAnnotationSaved(annotation, viewport) {
     ipcRenderer.send(browserAnnotationChannel, {
-      type: "annotations",
-      annotations,
+      type: "annotation-saved",
+      annotation,
       viewport,
+      // Filed against the document that saved — the tab may have navigated
+      // by the time main reads this.
+      documentUrl: location.href,
+    });
+  },
+  onAnnotationDeleted(id) {
+    ipcRenderer.send(browserAnnotationChannel, {
+      type: "annotation-deleted",
+      id,
+    });
+  },
+  onAnnotationPresence(id, stale) {
+    ipcRenderer.send(browserAnnotationChannel, {
+      type: "annotation-presence",
+      id,
+      stale,
     });
   },
   onDesignModeChange(enabled) {
     ipcRenderer.send(browserAnnotationChannel, { type: "design-mode", enabled });
   },
-  onCaptureReady(annotations, viewport) {
-    ipcRenderer.send(browserAnnotationChannel, {
-      type: "capture-ready",
-      annotations,
-      viewport,
-    });
+  onSubmitRequested() {
+    ipcRenderer.send(browserAnnotationChannel, { type: "submit-requested" });
   },
 });
 
@@ -49,13 +61,18 @@ ipcRenderer.on(
   (_event, command: BrowserAnnotationCommand) => {
     switch (command?.type) {
       case "set-design-mode":
-        overlay.setDesignMode(command.enabled === true);
+        overlay.setDesignMode(command.enabled === true, command.palette);
         break;
-      case "clear-annotations":
-        overlay.clearAnnotations();
+      case "set-annotation-palette":
+        overlay.setAnnotationPalette(command.palette);
         break;
-      case "prepare-capture":
-        overlay.prepareCapture();
+      case "sync-annotations":
+        overlay.syncAnnotations(
+          Array.isArray(command.annotations) ? command.annotations : [],
+        );
+        break;
+      case "capture-done":
+        overlay.finishCapture();
         break;
     }
   },

@@ -189,6 +189,68 @@ describe("buildPromptWithAttachments", () => {
     });
   });
 
+  it("orders the appendix after the draft and its images after the attachments", async () => {
+    const built = await buildPromptWithAttachments(
+      "look at this",
+      [
+        {
+          id: "1",
+          kind: "image",
+          name: "attached.png",
+          sizeLabel: "5 B",
+          file: file("attached.png", "image/png"),
+        },
+        {
+          id: "2",
+          kind: "text",
+          name: "notes.md",
+          sizeLabel: "5 B",
+          file: file("notes.md", "text/markdown"),
+        },
+      ],
+      {
+        text: "Browser comments from the embedded preview.",
+        images: [
+          { mimeType: "image/png", data: "Q09NTUVOVA==", name: "browser-comment-1.png" },
+        ],
+      },
+    );
+
+    expect(built).toEqual({
+      ok: true,
+      // The appendix follows the draft but precedes the file blocks — Pi reads
+      // the comments as part of the ask, not as user-chosen attachments.
+      prompt: [
+        "look at this",
+        "",
+        "Browser comments from the embedded preview.",
+        "",
+        "[Attached file: notes.md]",
+        "",
+        "```",
+        "hello",
+        "```",
+      ].join("\n"),
+      images: [
+        expect.objectContaining({ name: "attached.png" }),
+        { mimeType: "image/png", data: "Q09NTUVOVA==", name: "browser-comment-1.png" },
+      ],
+    });
+  });
+
+  it("lets an appendix alone carry a message", async () => {
+    await expect(
+      buildPromptWithAttachments("", [], {
+        text: "Browser comments from the embedded preview.",
+        images: [],
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      prompt: "Browser comments from the embedded preview.",
+      images: [],
+    });
+  });
+
   it("exports the reject copy used by intake", () => {
     expect(ATTACHMENT_REJECT_COPY).toBe(
       "Pace can only attach images and text files.",

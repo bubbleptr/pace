@@ -88,9 +88,21 @@ async function fileToBase64(file: File) {
   return btoa(binary);
 }
 
+/**
+ * A baked block that joins the message whole rather than as user-chosen
+ * attachments — today the Session's browser comments, whose text belongs
+ * after the draft and before any attached files, and whose images trail
+ * the attachment images so their comment order is the image order Pi sees.
+ */
+export type PromptAppendix = {
+  text: string;
+  images: RuntimePromptImage[];
+};
+
 export async function buildPromptWithAttachments(
   draft: string,
   items: ComposerAttachment[],
+  appendix?: PromptAppendix,
 ): Promise<
   | { ok: true; prompt: string; images: RuntimePromptImage[] }
   | { ok: false; error: string }
@@ -104,6 +116,10 @@ export async function buildPromptWithAttachments(
 
   if (trimmed) {
     chunks.push(trimmed);
+  }
+
+  if (appendix?.text) {
+    chunks.push(appendix.text);
   }
 
   for (const item of items) {
@@ -126,6 +142,10 @@ export async function buildPromptWithAttachments(
 
     const body = await item.file.text();
     chunks.push(`[Attached file: ${item.name}]\n\n\`\`\`\n${body}\n\`\`\``);
+  }
+
+  if (appendix) {
+    images.push(...appendix.images);
   }
 
   const prompt = chunks.join("\n\n");

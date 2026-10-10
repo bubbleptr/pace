@@ -1,16 +1,29 @@
-import { describeAnnotatedElement } from "./browser-annotation";
+import {
+  describeAnnotatedElement,
+  maxCommentLength,
+  readSource,
+  resolveAnnotationTarget,
+} from "./browser-annotation";
 import type {
   BrowserAnnotationElement,
+  BrowserAnnotationPalette,
   BrowserAnnotationViewport,
 } from "@/shared/browser-protocol";
 
 /**
- * The design-mode overlay, as it runs inside the embedded page's isolated
+ * The annotation-mode overlay, as it runs inside the embedded page's isolated
  * world: a host element under `<html>` with a **closed** shadow root holding
- * the hover highlight, the numbered markers and their comment bubbles.
+ * the hover highlight, the mode chrome (frame + pill), the saved marks
+ * (outline + numbered badge) and the comment editor.
  *
  * Electron-free on purpose — the preload only wires it to IPC — so every
  * interaction rule below is testable in jsdom.
+ *
+ * Lifecycle (decision 1 of `.scratch/browser-annotation-v2/PRD.md`): a click
+ * opens a focused *draft* editor — not yet an annotation, and main hears
+ * nothing until Save/Enter commits it. Cancel/Esc discards without a trace.
+ * Clicking a saved element or its badge re-opens that annotation's editor
+ * (with Delete); an empty comment can never be saved.
  *
  * Two properties of the host page drive the implementation:
  *
@@ -25,26 +38,57 @@ import type {
 
 export const annotationOverlayHostTag = "pigui-annotation-overlay";
 
-type MarkerEntry = {
+type AnnotationEntry = {
   annotation: BrowserAnnotationElement;
-  /** Kept so the marker can be re-measured; the rect it reported cannot. */
+  /** Kept so outline and badge can be re-measured; the rect it reported cannot. */
   element: Element;
-  marker: HTMLElement;
-  comment: HTMLInputElement;
+  outline: HTMLElement;
+  badge: HTMLButtonElement;
+};
+
+/** The one open editor: what it annotates, and what it started with. */
+type EditorState = {
+  element: Element;
+  annotationId: string | null;
+  savedText: string;
 };
 
 export type BrowserAnnotationOverlay = {
-  setDesignMode(enabled: boolean): void;
-  clearAnnotations(): void;
+  setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
+  /** Colours alone, when the mode itself must not be touched. */
+  setAnnotationPalette(palette: BrowserAnnotationPalette): void;
   /**
-   * Put the overlay out of shot and say what it holds, so main can photograph
-   * the page without the overlay's own chrome on it.
+   * The store's answer for this document: the marks to show, in Session
+   * order. Ids the list no longer contains disappear; unknown ones are
+   * restored by selector — or reported stale when their element never shows.
    */
-  prepareCapture(): void;
+  syncAnnotations(annotations: BrowserAnnotationElement[]): void;
+  /**
+   * A save's crop is done — the mode chrome and the overlay hidden for the
+   * shot are allowed back on screen.
+   */
+  finishCapture(): void;
   dispose(): void;
 };
 
-const accent = "#6d28d9";
+type OverlayColors = {
+  accent: string;
+  accentForeground: string;
+  surface: string;
+  foreground: string;
+  border: string;
+  muted: string;
+};
+
+const defaultColors: OverlayColors = {
+  accent: "#6d28d9",
+  accentForeground: "#ffffff",
+  surface: "#ffffff",
+  foreground: "#111827",
+  border: "#e5e7eb",
+  muted: "#6b7280",
+};
+
 const overlayFont =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 /**
@@ -60,6 +104,12 @@ const pointerEvents = [
   "contextmenu",
 ];
 
+const editorWidthPx = 280;
+
+function clampValue(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
 function applyStyles(element: HTMLElement, styles: Record<string, string>) {
   for (const [property, value] of Object.entries(styles)) {
     // Important throughout: the host element sits in the page's own tree, so
@@ -68,32 +118,197 @@ function applyStyles(element: HTMLElement, styles: Record<string, string>) {
   }
 }
 
+/** A palette colour is honoured only if this page's CSS engine can parse it. */
+function supportsColor(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    typeof CSS !== "undefined" &&
+    typeof CSS.supports === "function" &&
+    CSS.supports("color", value)
+  );
+}
+
+/**
+ * The renderer's palette, field by field against the defaults: a token the
+ * page cannot parse falls back alone, so one bad colour never costs the rest.
+ */
+function resolveOverlayPalette(palette: BrowserAnnotationPalette): OverlayColors {
+  return {
+    accent: supportsColor(palette.accent) ? palette.accent : defaultColors.accent,
+    accentForeground: supportsColor(palette.accentForeground)
+      ? palette.accentForeground
+      : defaultColors.accentForeground,
+    surface: supportsColor(palette.surface) ? palette.surface : defaultColors.surface,
+    foreground: supportsColor(palette.foreground)
+      ? palette.foreground
+      : defaultColors.foreground,
+    border: supportsColor(palette.border) ? palette.border : defaultColors.border,
+    muted: supportsColor(palette.muted) ? palette.muted : defaultColors.muted,
+  };
+}
+
 export function createAnnotationOverlay(options: {
   document: Document;
-  onAnnotationsChange: (
-    annotations: BrowserAnnotationElement[],
+  /**
+   * One annotation was committed — new (the overlay hid itself for two frames
+   * first so main's crop sees no overlay) or an edit reported by its id.
+   */
+  onAnnotationSaved: (
+    annotation: BrowserAnnotationElement,
     viewport: BrowserAnnotationViewport,
   ) => void;
+  onAnnotationDeleted: (id: string) => void;
+  /**
+   * How a `sync-annotations` restore ended for one id — `stale` when the
+   * element could not be found in time.
+   */
+  onAnnotationPresence: (id: string, stale: boolean) => void;
   onDesignModeChange: (enabled: boolean) => void;
-  /** The ack main waits for before it shoots. */
-  onCaptureReady: (
-    annotations: BrowserAnnotationElement[],
-    viewport: BrowserAnnotationViewport,
-  ) => void;
+  /**
+   * Cmd/Ctrl+Enter in the page: send the Session's comments now. Posted only
+   * after a pending `annotation-saved` report, so the store hears about the
+   * comment before the send.
+   */
+  onSubmitRequested: () => void;
 }): BrowserAnnotationOverlay {
   const doc = options.document;
   // The earliest node in the capture path, so page handlers registered later
   // cannot swallow the events design mode needs.
   const listenerTarget: EventTarget = doc.defaultView ?? doc;
   const annotations: BrowserAnnotationElement[] = [];
-  const markers = new Map<number, MarkerEntry>();
+  const entries = new Map<string, AnnotationEntry>();
 
+  let colors: OverlayColors = { ...defaultColors };
   let designMode = false;
   let host: HTMLElement | null = null;
+  /** Fallback that unhides the overlay when a save's crop never answers. */
+  let visibilityRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Synced-in annotations still waiting for their element to be rendered. */
+  const pendingRestores = new Map<
+    string,
+    { observer: MutationObserver; timer: ReturnType<typeof setTimeout> }
+  >();
+  let shadowRoot: ShadowRoot | null = null;
   let highlight: HTMLElement | null = null;
+  let highlightLabel: HTMLElement | null = null;
   let markerLayer: HTMLElement | null = null;
-  let openComment: number | null = null;
+  let frame: HTMLElement | null = null;
+  let pill: HTMLElement | null = null;
+  let editorBox: HTMLElement | null = null;
+  let editorText: HTMLTextAreaElement | null = null;
+  let saveButton: HTMLButtonElement | null = null;
+  let deleteButton: HTMLButtonElement | null = null;
+  let editor: EditorState | null = null;
+  /** The resolved target of the last pointermove — the base ↑ climbs from. */
+  let resolvedTarget: Element | null = null;
+  /** What is actually framed now: the resolved target, or an ancestor ↑ chose. */
+  let hoverTarget: Element | null = null;
   let markerSyncFrame = 0;
+
+  function applyDesignMode(enabled: boolean) {
+    designMode = enabled;
+
+    if (enabled) {
+      ensureHost();
+      setModeAffordanceVisible(true);
+    } else {
+      hideHighlight();
+      closeEditor();
+      resolvedTarget = null;
+      hoverTarget = null;
+      setModeAffordanceVisible(false);
+    }
+
+    // Marks only take pointer events while marking; once annotation mode is
+    // off the page has to be fully usable again with the marks still on it.
+    if (markerLayer) {
+      applyStyles(markerLayer, { "pointer-events": enabled ? "auto" : "none" });
+    }
+  }
+
+  function setModeAffordanceVisible(visible: boolean) {
+    if (frame) {
+      applyStyles(frame, { display: visible ? "block" : "none" });
+    }
+    if (pill) {
+      applyStyles(pill, { display: visible ? "block" : "none" });
+    }
+  }
+
+  // -- Colour-dependent styles, reapplied whenever a new palette lands.
+
+  function styleHighlight() {
+    applyStyles(highlight!, {
+      border: `2px solid ${colors.accent}`,
+      background: `color-mix(in srgb, ${colors.accent} 12%, transparent)`,
+    });
+  }
+
+  function styleHighlightLabel() {
+    applyStyles(highlightLabel!, {
+      background: colors.foreground,
+      color: colors.surface,
+    });
+  }
+
+  function styleFrame() {
+    applyStyles(frame!, {
+      "box-shadow": `inset 0 0 0 2px ${colors.accent}`,
+    });
+  }
+
+  function stylePill() {
+    applyStyles(pill!, {
+      background: colors.surface,
+      color: colors.foreground,
+      border: `1px solid ${colors.border}`,
+    });
+  }
+
+  function styleOutline(outline: HTMLElement) {
+    applyStyles(outline, { border: `1.5px solid ${colors.accent}` });
+  }
+
+  function styleBadge(badge: HTMLButtonElement) {
+    applyStyles(badge, {
+      background: colors.accent,
+      color: colors.accentForeground,
+    });
+  }
+
+  function styleEditor() {
+    applyStyles(editorBox!, {
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+    });
+    applyStyles(editorText!, {
+      background: colors.surface,
+      color: colors.foreground,
+      border: `1px solid ${colors.border}`,
+    });
+    applyStyles(saveButton!, {
+      background: colors.accent,
+      color: colors.accentForeground,
+    });
+    applyStyles(deleteButton!, { color: colors.muted });
+  }
+
+  function applyAnnotationPalette(palette: BrowserAnnotationPalette) {
+    colors = resolveOverlayPalette(palette);
+    restyle();
+  }
+
+  function restyle() {
+    if (highlight) styleHighlight();
+    if (highlightLabel) styleHighlightLabel();
+    if (frame) styleFrame();
+    if (pill) stylePill();
+    if (editorBox) styleEditor();
+    for (const entry of entries.values()) {
+      styleOutline(entry.outline);
+      styleBadge(entry.badge);
+    }
+  }
 
   function ensureHost() {
     if (host) {
@@ -122,6 +337,38 @@ export function createAnnotationOverlay(options: {
     });
 
     const root = host.attachShadow({ mode: "closed" });
+    shadowRoot = root;
+
+    // The frame and pill are how the user knows the page is being annotated
+    // at all — they only exist while the mode is on, and never take events.
+    frame = doc.createElement("div");
+    frame.dataset.slot = "annotation-frame";
+    applyStyles(frame, {
+      position: "fixed",
+      inset: "0",
+      display: designMode ? "block" : "none",
+      "pointer-events": "none",
+    });
+    styleFrame();
+
+    pill = doc.createElement("div");
+    pill.dataset.slot = "annotation-pill";
+    pill.textContent = "Annotating · Esc to exit";
+    applyStyles(pill, {
+      position: "fixed",
+      top: "10px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      margin: "0",
+      padding: "4px 12px",
+      "border-radius": "999px",
+      display: designMode ? "block" : "none",
+      font: `600 11px/16px ${overlayFont}`,
+      "white-space": "nowrap",
+      "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.35)",
+      "pointer-events": "none",
+    });
+    stylePill();
 
     highlight = doc.createElement("div");
     highlight.dataset.slot = "annotation-highlight";
@@ -129,11 +376,26 @@ export function createAnnotationOverlay(options: {
     applyStyles(highlight, {
       position: "fixed",
       "box-sizing": "border-box",
-      border: `2px solid ${accent}`,
       "border-radius": "2px",
-      background: "rgba(109, 40, 217, 0.12)",
       "pointer-events": "none",
     });
+    styleHighlight();
+
+    // The element under the pointer, named: `tag.firstClass · W×H`, with the
+    // dev-server source location when one was stamped.
+    highlightLabel = doc.createElement("div");
+    highlightLabel.dataset.slot = "annotation-highlight-label";
+    highlightLabel.hidden = true;
+    applyStyles(highlightLabel, {
+      position: "fixed",
+      margin: "0",
+      padding: "1px 6px",
+      "border-radius": "3px",
+      font: `500 10px/14px ${overlayFont}`,
+      "white-space": "nowrap",
+      "pointer-events": "none",
+    });
+    styleHighlightLabel();
 
     markerLayer = doc.createElement("div");
     markerLayer.dataset.slot = "annotation-markers";
@@ -141,13 +403,13 @@ export function createAnnotationOverlay(options: {
       position: "absolute",
       top: "0",
       left: "0",
-      // Design mode can be turned on before the document has a root element to
-      // hang this on, so the layer arms itself from the current state rather
+      // Annotation mode can be turned on before the document has a root element
+      // to hang this on, so the layer arms itself from the current state rather
       // than waiting for the next toggle.
       "pointer-events": designMode ? "auto" : "none",
     });
 
-    root.append(highlight, markerLayer);
+    root.append(frame, highlight, highlightLabel, markerLayer, pill);
     parent.append(host);
 
     return host;
@@ -168,33 +430,112 @@ export function createAnnotationOverlay(options: {
     };
   }
 
-  function notify() {
-    options.onAnnotationsChange(
-      annotations.map((annotation) => ({ ...annotation })),
-      readViewport(),
+  /**
+   * Main photographs the element a new comment landed on. The whole overlay —
+   * marks included — would appear in that crop, so the host goes invisible
+   * for two frames to let the paint land, and the report only then goes out.
+   * `capture-done` brings the overlay back; the timer is the fallback for a
+   * capture that never answers.
+   */
+  function hideForSaveCapture() {
+    if (host) {
+      applyStyles(host, { visibility: "hidden" });
+    }
+    if (visibilityRestoreTimer) {
+      clearTimeout(visibilityRestoreTimer);
+    }
+    visibilityRestoreTimer = setTimeout(restoreAfterSaveCapture, 1000);
+  }
+
+  function restoreAfterSaveCapture() {
+    if (visibilityRestoreTimer) {
+      clearTimeout(visibilityRestoreTimer);
+      visibilityRestoreTimer = null;
+    }
+    if (host) {
+      applyStyles(host, { visibility: "visible" });
+    }
+  }
+
+  /**
+   * The store in main is the source of truth, so a save is reported per
+   * annotation — a new one only after the hide-and-two-frames above lets the
+   * element paint clean for its crop, an edit immediately (no re-capture).
+   */
+  function reportSaved(
+    annotation: BrowserAnnotationElement,
+    isNew: boolean,
+    afterReport?: () => void,
+  ) {
+    const report = () => {
+      options.onAnnotationSaved({ ...annotation }, readViewport());
+      // A submit request rides the report it belongs to: main must store the
+      // comment before it can send the batch it is part of.
+      afterReport?.();
+    };
+
+    if (!isNew) {
+      report();
+      return;
+    }
+
+    hideForSaveCapture();
+    const view = doc.defaultView;
+    if (view?.requestAnimationFrame) {
+      view.requestAnimationFrame(() => view.requestAnimationFrame(report));
+    } else {
+      report();
+    }
+  }
+
+  /**
+   * True when the event began inside our own closed shadow tree — or above
+   * the page entirely (window/document), which is where synthetic key events
+   * land. `composedPath()` stops at the host for a closed root where the spec
+   * is honoured, but Chromium has historically exposed the internals too, so
+   * the root itself is what decides, not the first path entry's name.
+   */
+  function isOverlayEvent(event: Event) {
+    const [target] = event.composedPath();
+
+    return (
+      !(target instanceof Element) ||
+      target === host ||
+      (shadowRoot !== null && target.getRootNode() === shadowRoot)
     );
   }
 
   /** The element the user is pointing at, or null when it is our own overlay. */
   function pageTarget(event: Event) {
-    // `event.target` is retargeted to the shadow host at the window, which for
-    // a page's own (open) shadow DOM would name the wrapper instead of what
-    // the user pointed at. The composed path names the real element — and
-    // stops at our host for our own closed root, which is how clicks on a
-    // badge or a bubble are still told apart from clicks on the page.
-    const [target] = event.composedPath();
-
-    return target instanceof Element && target !== host ? target : null;
+    return isOverlayEvent(event) ? null : (event.composedPath()[0] as Element);
   }
+
+  // -- Hover highlight ----------------------------------------------------
 
   function hideHighlight() {
     if (highlight) {
       highlight.hidden = true;
     }
+    if (highlightLabel) {
+      highlightLabel.hidden = true;
+    }
+  }
+
+  function describeHoverTarget(element: Element) {
+    const rect = element.getBoundingClientRect();
+    const tag = element.tagName.toLowerCase();
+    const firstClass = element.classList.item(0);
+    const size = `${Math.round(rect.width)}×${Math.round(rect.height)}`;
+    const source = readSource(element);
+
+    return (
+      `${tag}${firstClass ? `.${firstClass.slice(0, 24)}` : ""} · ${size}` +
+      (source ? ` · ${source.file}:${source.line}` : "")
+    );
   }
 
   function showHighlight(element: Element) {
-    if (!ensureHost() || !highlight) {
+    if (!ensureHost() || !highlight || !highlightLabel) {
       return;
     }
 
@@ -207,98 +548,299 @@ export function createAnnotationOverlay(options: {
       height: `${rect.height}px`,
     });
     highlight.hidden = false;
-  }
 
-  /**
-   * A comment reaches main when the bubble is committed — Enter, a blur, or the
-   * bubble closing — never per keystroke: every notification is a full IPC
-   * round trip carrying the whole list.
-   */
-  function commitComment(entry: MarkerEntry) {
-    const value = entry.comment.value;
+    highlightLabel.textContent = describeHoverTarget(element);
 
-    if (value === (entry.annotation.comment ?? "")) {
-      return;
-    }
+    // Above the box by default; when there is no room up there the label goes
+    // below rather than under the toolbar.
+    const labelRect = highlightLabel.getBoundingClientRect();
+    const labelHeight = labelRect.height || highlightLabel.offsetHeight;
+    const labelWidth = labelRect.width || highlightLabel.offsetWidth;
+    const viewport = readViewport();
+    const top =
+      rect.top - labelHeight - 4 >= 4 ? rect.top - labelHeight - 4 : rect.bottom + 4;
 
-    if (value) {
-      entry.annotation.comment = value;
-    } else {
-      delete entry.annotation.comment;
-    }
-    notify();
-  }
-
-  function setCommentOpen(index: number | null) {
-    const open = openComment === null ? null : markers.get(openComment);
-
-    if (open) {
-      commitComment(open);
-    }
-
-    openComment = index;
-    for (const [markerIndex, entry] of markers) {
-      entry.comment.hidden = markerIndex !== index;
-    }
-    if (index !== null) {
-      markers.get(index)?.comment.focus();
-    }
-  }
-
-  /**
-   * Markers are fixed to the viewport and re-measured, not pinned to where the
-   * element was when it was marked: a scroll — of the window or of any nested
-   * container — or a reflow would otherwise leave the number sitting over
-   * something else, in the page and on S3's screenshot alike.
-   */
-  function positionMarker(entry: MarkerEntry) {
-    // `hidden` cannot win against the important display below, and an element
-    // a re-render took away measures as 0,0 — which would park the number in
-    // the corner of the viewport rather than take it off screen.
-    if (!entry.element.isConnected) {
-      applyStyles(entry.marker, { display: "none" });
-      return;
-    }
-
-    const rect = entry.element.getBoundingClientRect();
-
-    applyStyles(entry.marker, {
-      display: "flex",
-      left: `${rect.x}px`,
-      top: `${rect.y}px`,
+    applyStyles(highlightLabel, {
+      left: `${clampValue(rect.left, 4, Math.max(4, viewport.width - labelWidth - 4))}px`,
+      top: `${top}px`,
     });
+    highlightLabel.hidden = false;
+  }
+
+  // -- Saved marks: outline + badge ---------------------------------------
+
+  /**
+   * Marks are fixed to the viewport and re-measured, not pinned to where the
+   * element was when it was marked: a scroll — of the window or of any nested
+   * container — or a reflow would otherwise leave the badge sitting over
+   * something else, in the page and on the screenshot alike.
+   */
+  function positionEntries() {
+    if (!markerLayer) {
+      return;
+    }
+
+    const viewport = readViewport();
+    // A re-render that disconnected a marked element gets one rebind attempt
+    // here, so the mark follows its selector instead of staying hidden until
+    // the next sync.
+    reconcileEntries();
+    const placed: { x: number; y: number; width: number; height: number }[] = [];
+
+    // Annotation order is creation order, so the earlier badge always wins
+    // the corner and the later one steps aside.
+    for (const annotation of annotations) {
+      const entry = entries.get(annotation.id);
+
+      if (!entry) {
+        continue;
+      }
+
+      const elementRects = visibleElementRect(entry.element, viewport);
+
+      if (!elementRects) {
+        applyStyles(entry.outline, { display: "none" });
+        applyStyles(entry.badge, { display: "none" });
+        continue;
+      }
+      const { visible, clipping } = elementRects;
+
+      applyStyles(entry.outline, {
+        display: "block",
+        left: `${visible.left}px`,
+        top: `${visible.top}px`,
+        width: `${visible.right - visible.left}px`,
+        height: `${visible.bottom - visible.top}px`,
+      });
+
+      const badgeWidth = entry.badge.offsetWidth || 20;
+      const badgeHeight = entry.badge.offsetHeight || 20;
+      const clippedX = clipping.left > 0 || clipping.right < viewport.width;
+      const clippedY = clipping.top > 0 || clipping.bottom < viewport.height;
+      const minimumX = clippedX ? clipping.left : 8;
+      const minimumY = clippedY ? clipping.top : 8;
+      const maximumX = clippedX
+        ? clipping.right - badgeWidth
+        : viewport.width - badgeWidth - 8;
+      const maximumY = clippedY
+        ? clipping.bottom - badgeHeight
+        : viewport.height - badgeHeight - 8;
+      if (maximumX < minimumX || maximumY < minimumY) {
+        applyStyles(entry.badge, { display: "none" });
+        continue;
+      }
+
+      // Centre the badge on the visible top-right corner, then keep it within
+      // the viewport or scroll-container clipping bounds.
+      let badgeX = clampValue(
+        visible.right - badgeWidth / 2,
+        minimumX,
+        maximumX,
+      );
+      const badgeY = clampValue(
+        visible.top - badgeHeight / 2,
+        minimumY,
+        maximumY,
+      );
+
+      // …and shifted left while it would sit on an earlier badge (nested
+      // elements share the corner).
+      while (
+        badgeX - (badgeWidth + 4) >= minimumX &&
+        placed.some(
+          (other) =>
+            badgeX < other.x + other.width &&
+            other.x < badgeX + badgeWidth &&
+            badgeY < other.y + other.height &&
+            other.y < badgeY + badgeHeight,
+        )
+      ) {
+        badgeX -= badgeWidth + 4;
+      }
+
+      placed.push({ x: badgeX, y: badgeY, width: badgeWidth, height: badgeHeight });
+      applyStyles(entry.badge, {
+        display: "flex",
+        left: `${badgeX}px`,
+        top: `${badgeY}px`,
+      });
+    }
+  }
+
+  /**
+   * The element's rect clipped to the viewport and every scroll container on
+   * its ancestor chain — `visible` — plus the clipping bounds themselves, so
+   * a badge can stay on the edge of a partially visible mark instead of
+   * dropping under it. An element re-rendering disconnected it measures as
+   * 0,0 or is clipped out entirely: null, and the mark comes off screen.
+   */
+  function visibleElementRect(
+    element: Element,
+    viewport: BrowserAnnotationViewport,
+  ) {
+    if (!element.isConnected || element.ownerDocument !== doc) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    let clipLeft = 0;
+    let clipTop = 0;
+    let clipRight = viewport.width;
+    let clipBottom = viewport.height;
+    const view = doc.defaultView;
+
+    for (
+      let ancestor = element.parentElement;
+      ancestor && clipLeft < clipRight && clipTop < clipBottom;
+      ancestor = ancestor.parentElement
+    ) {
+      if (!view) {
+        break;
+      }
+
+      const style = view.getComputedStyle(ancestor);
+      const ancestorRect = ancestor.getBoundingClientRect();
+      const overflowX = style.overflowX || style.overflow;
+      const overflowY = style.overflowY || style.overflow;
+
+      if (["hidden", "clip", "auto", "scroll"].includes(overflowX)) {
+        clipLeft = Math.max(clipLeft, ancestorRect.left + ancestor.clientLeft);
+        clipRight = Math.min(
+          clipRight,
+          ancestorRect.left + ancestor.clientLeft + ancestor.clientWidth,
+        );
+      }
+      if (["hidden", "clip", "auto", "scroll"].includes(overflowY)) {
+        clipTop = Math.max(clipTop, ancestorRect.top + ancestor.clientTop);
+        clipBottom = Math.min(
+          clipBottom,
+          ancestorRect.top + ancestor.clientTop + ancestor.clientHeight,
+        );
+      }
+    }
+
+    const left = Math.max(clipLeft, rect.left);
+    const top = Math.max(clipTop, rect.top);
+    const right = Math.min(clipRight, rect.right);
+    const bottom = Math.min(clipBottom, rect.bottom);
+
+    return left < right && top < bottom
+      ? {
+          visible: { left, top, right, bottom },
+          clipping: { left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom },
+        }
+      : null;
+  }
+
+  /**
+   * A mark may not steal another mark's element: two entries on one node is
+   * exactly the duplicate a re-rendered replacement could otherwise create.
+   */
+  function elementOwned(element: Element) {
+    for (const entry of entries.values()) {
+      if (entry.element === element) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A re-rendered element leaves a rendered entry pointing at a disconnected
+   * node. When its selector still resolves uniquely — and to a node no other
+   * entry owns — the entry rebinds to the replacement, so clicking the new
+   * node edits the mark instead of drafting a duplicate. The stored
+   * annotation is refreshed (rect re-measured) but keeps its id, index and
+   * comment; the store already knows the rest.
+   */
+  function reconcileEntries() {
+    for (const annotation of annotations) {
+      const entry = entries.get(annotation.id);
+
+      if (
+        !entry ||
+        (entry.element.isConnected && entry.element.ownerDocument === doc)
+      ) {
+        continue;
+      }
+
+      const replacement = resolveBySelector(entry.annotation.selector);
+
+      if (!replacement || elementOwned(replacement)) {
+        continue;
+      }
+
+      const refreshed = describeAnnotatedElement(
+        replacement,
+        entry.annotation.index,
+        entry.annotation.id,
+      );
+      if (entry.annotation.comment) {
+        refreshed.comment = entry.annotation.comment;
+      }
+      const annotationIndex = annotations.indexOf(entry.annotation);
+
+      if (annotationIndex !== -1) {
+        annotations[annotationIndex] = refreshed;
+      }
+      entry.annotation = refreshed;
+      entry.element = replacement;
+      if (editor?.annotationId === refreshed.id) {
+        editor.element = replacement;
+      }
+    }
+  }
+
+  /**
+   * Anything anchored to an element re-measures in one frame: the marks, the
+   * open editor, and the hover box. Scrolling is not blocked while an editor
+   * is open, so it is not only the badges that would otherwise be left behind.
+   */
+  function syncOverlayPositions() {
+    positionEntries();
+    if (editor) {
+      positionEditor(editor.element);
+    }
+    if (highlight && !highlight.hidden && hoverTarget) {
+      showHighlight(hoverTarget);
+    }
   }
 
   function scheduleMarkerSync() {
     const view = doc.defaultView;
+    const hoverVisible = highlight !== null && !highlight.hidden;
 
-    if (!view || markerSyncFrame || markers.size === 0) {
+    if (!view || markerSyncFrame || (entries.size === 0 && !editor && !hoverVisible)) {
       return;
     }
 
     markerSyncFrame = view.requestAnimationFrame(() => {
       markerSyncFrame = 0;
-      for (const entry of markers.values()) {
-        positionMarker(entry);
-      }
+      syncOverlayPositions();
     });
   }
 
-  function renderMarker(annotation: BrowserAnnotationElement, element: Element) {
+  function renderEntry(annotation: BrowserAnnotationElement, element: Element) {
     if (!ensureHost() || !markerLayer) {
       return;
     }
 
-    const marker = doc.createElement("div");
+    const outline = doc.createElement("div");
 
-    marker.dataset.slot = "annotation-marker";
-    // Placement and display both come from positionMarker below, which is the
-    // only thing that knows whether the element is still on the page.
-    applyStyles(marker, {
+    outline.dataset.slot = "annotation-outline";
+    // Position and display both come from positionEntries, which is the only
+    // thing that knows whether the element is still on the page.
+    applyStyles(outline, {
       position: "fixed",
-      "align-items": "flex-start",
-      gap: "4px",
+      "box-sizing": "border-box",
+      "border-radius": "2px",
+      "pointer-events": "none",
     });
+    styleOutline(outline);
 
     const badge = doc.createElement("button");
 
@@ -306,7 +848,7 @@ export function createAnnotationOverlay(options: {
     badge.dataset.slot = "annotation-badge";
     badge.textContent = String(annotation.index);
     applyStyles(badge, {
-      display: "flex",
+      position: "fixed",
       "align-items": "center",
       "justify-content": "center",
       "min-width": "20px",
@@ -315,71 +857,460 @@ export function createAnnotationOverlay(options: {
       padding: "0 5px",
       border: "0",
       "border-radius": "10px",
-      background: accent,
-      color: "#ffffff",
       font: `600 11px/20px ${overlayFont}`,
       cursor: "pointer",
       "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.35)",
     });
+    styleBadge(badge);
     badge.addEventListener("click", () => {
-      setCommentOpen(openComment === annotation.index ? null : annotation.index);
+      const entry = entries.get(annotation.id);
+
+      if (entry) {
+        requestEditor(entry.element, entry);
+      }
     });
 
-    const comment = doc.createElement("input");
+    entries.set(annotation.id, { annotation, element, outline, badge });
+    markerLayer.append(outline, badge);
+    positionEntries();
+  }
 
-    comment.dataset.slot = "annotation-comment";
-    comment.type = "text";
-    comment.placeholder = "What is wrong here?";
-    comment.hidden = true;
-    applyStyles(comment, {
-      width: "220px",
+  function entryForElement(element: Element) {
+    // Re-measure first: a re-rendered element may just have been rebound to
+    // this node by the position pass, which is what lets the click below
+    // reopen its editor instead of drafting a duplicate.
+    positionEntries();
+    if (editor) {
+      positionEditor(editor.element);
+    }
+    for (const entry of entries.values()) {
+      if (entry.element === element) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /** Badges follow the list order: delete renumbers 1..N with no gaps. */
+  function renumber() {
+    annotations.forEach((annotation, position) => {
+      annotation.index = position + 1;
+      const entry = entries.get(annotation.id);
+
+      if (entry) {
+        entry.badge.textContent = String(annotation.index);
+      }
+    });
+  }
+
+  function deleteEntry(entry: AnnotationEntry) {
+    annotations.splice(annotations.indexOf(entry.annotation), 1);
+    entries.delete(entry.annotation.id);
+    entry.outline.remove();
+    entry.badge.remove();
+    renumber();
+    positionEntries();
+    options.onAnnotationDeleted(entry.annotation.id);
+  }
+
+  // -- Restoring synced annotations -----------------------------------------
+
+  /** One unambiguous hit for the selector, or it did not land. */
+  function resolveBySelector(selector: string) {
+    try {
+      const matches = doc.querySelectorAll(selector);
+
+      return matches.length === 1 ? matches[0]! : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function stopWatchingRestore(id: string) {
+    const pending = pendingRestores.get(id);
+
+    if (pending) {
+      pendingRestores.delete(id);
+      pending.observer.disconnect();
+      clearTimeout(pending.timer);
+    }
+  }
+
+  /**
+   * A comment the store expects on this document but the page has not
+   * rendered yet — an SPA that fills its DOM after load, say. Misses are
+   * watched for a bounded while: absent is not stale until the wait is over.
+   */
+  function restoreAnnotation(annotation: BrowserAnnotationElement) {
+    if (pendingRestores.has(annotation.id)) {
+      return;
+    }
+
+    const found = resolveBySelector(annotation.selector);
+
+    if (found && !elementOwned(found)) {
+      renderEntry(annotation, found);
+      options.onAnnotationPresence(annotation.id, false);
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      // What the element gets is whatever the store last said for this id —
+      // the sync that started the watch may already be older than the one it
+      // answers, and a dropped id renders nothing.
+      const current = annotations.find((item) => item.id === annotation.id);
+
+      if (!current) {
+        stopWatchingRestore(annotation.id);
+        return;
+      }
+
+      const element = resolveBySelector(current.selector);
+
+      if (element && !elementOwned(element)) {
+        stopWatchingRestore(current.id);
+        renderEntry(current, element);
+        options.onAnnotationPresence(current.id, false);
+      }
+    });
+    const timer = setTimeout(() => {
+      stopWatchingRestore(annotation.id);
+      // Only report for an id the store still wants — its watcher should
+      // already be dead, but a missed sync must not become a stale report.
+      if (annotations.some((item) => item.id === annotation.id)) {
+        options.onAnnotationPresence(annotation.id, true);
+      }
+    }, 5000);
+
+    if (doc.documentElement) {
+      observer.observe(doc.documentElement, { childList: true, subtree: true });
+    }
+    pendingRestores.set(annotation.id, { observer, timer });
+  }
+
+  /**
+   * The store's list is authoritative: marks it no longer knows go away
+   * (an open editor on one of them is a comment on nothing), fields it
+   * renumbered update in place, and ids the document has not carried before
+   * are restored by selector — or reported stale after a bounded wait.
+   */
+  function applySync(list: BrowserAnnotationElement[]) {
+    const incoming = new Map(list.map((annotation) => [annotation.id, annotation]));
+
+    for (const [id, entry] of entries) {
+      if (!incoming.has(id)) {
+        if (editor?.annotationId === id) {
+          closeEditor();
+        }
+        entry.outline.remove();
+        entry.badge.remove();
+        entries.delete(id);
+      }
+    }
+    for (const id of pendingRestores.keys()) {
+      if (!incoming.has(id)) {
+        stopWatchingRestore(id);
+      }
+    }
+
+    annotations.length = 0;
+    for (const annotation of list) {
+      const copy = { ...annotation };
+
+      annotations.push(copy);
+
+      const entry = entries.get(copy.id);
+
+      if (entry) {
+        entry.annotation = copy;
+        entry.badge.textContent = String(copy.index);
+
+        if (!entry.element.isConnected || entry.element.ownerDocument !== doc) {
+          // An SPA re-render can take a marked element between syncs — the
+          // store still wants the mark, so it rejoins the restore path:
+          // rebind now, or watch until it shows or the wait declares it stale.
+          entry.outline.remove();
+          entry.badge.remove();
+          entries.delete(copy.id);
+          restoreAnnotation(copy);
+        }
+      } else {
+        restoreAnnotation(copy);
+      }
+    }
+    positionEntries();
+  }
+
+  // -- The comment editor --------------------------------------------------
+
+  function ensureEditor() {
+    if (editorBox || !ensureHost() || !markerLayer) {
+      return;
+    }
+
+    editorBox = doc.createElement("div");
+    editorBox.dataset.slot = "annotation-editor";
+    applyStyles(editorBox, {
+      position: "fixed",
+      display: "none",
+      "flex-direction": "column",
+      gap: "8px",
+      "box-sizing": "border-box",
+      width: `${editorWidthPx}px`,
+      padding: "10px",
+      "border-radius": "8px",
+      "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.3)",
+    });
+
+    editorText = doc.createElement("textarea");
+    editorText.dataset.slot = "annotation-editor-input";
+    editorText.rows = 3;
+    // Same ceiling main applies when it rebuilds the comment on the way in.
+    editorText.maxLength = maxCommentLength;
+    editorText.placeholder = "What is wrong here?";
+    applyStyles(editorText, {
+      "box-sizing": "border-box",
+      width: "100%",
       margin: "0",
-      padding: "3px 6px",
-      border: `1px solid ${accent}`,
+      padding: "6px 8px",
       "border-radius": "4px",
-      background: "#ffffff",
-      color: "#111827",
-      font: `400 12px/16px ${overlayFont}`,
-      "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.35)",
+      font: `400 13px/18px ${overlayFont}`,
+      resize: "none",
+    });
+    editorText.addEventListener("input", syncSaveEnabled);
+
+    const row = doc.createElement("div");
+    applyStyles(row, {
+      display: "flex",
+      "justify-content": "flex-end",
+      gap: "6px",
     });
 
-    const entry: MarkerEntry = { annotation, element, marker, comment };
+    deleteButton = doc.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.dataset.slot = "annotation-editor-delete";
+    deleteButton.textContent = "Delete";
+    applyStyles(deleteButton, {
+      display: "none",
+      "margin-right": "auto",
+      padding: "4px 8px",
+      border: "0",
+      "border-radius": "4px",
+      background: "transparent",
+      font: `500 12px/16px ${overlayFont}`,
+      cursor: "pointer",
+    });
+    deleteButton.addEventListener("click", () => {
+      const id = editor?.annotationId;
+      const entry = id ? entries.get(id) : undefined;
 
-    // A blur is a commit; Enter and Escape go through the overlay's own
-    // keydown handler, which is the only one that sees them.
-    comment.addEventListener("change", () => commitComment(entry));
-    comment.addEventListener("blur", () => commitComment(entry));
+      closeEditor();
+      if (entry) {
+        deleteEntry(entry);
+      }
+    });
 
-    marker.append(badge, comment);
-    markerLayer.append(marker);
-    markers.set(annotation.index, entry);
-    positionMarker(entry);
+    const cancelButton = doc.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.dataset.slot = "annotation-editor-cancel";
+    cancelButton.textContent = "Cancel";
+    applyStyles(cancelButton, {
+      padding: "4px 8px",
+      border: "0",
+      "border-radius": "4px",
+      background: "transparent",
+      font: `500 12px/16px ${overlayFont}`,
+      cursor: "pointer",
+    });
+    cancelButton.addEventListener("click", () => closeEditor());
+
+    saveButton = doc.createElement("button");
+    saveButton.type = "button";
+    saveButton.dataset.slot = "annotation-editor-save";
+    saveButton.textContent = "Save";
+    applyStyles(saveButton, {
+      padding: "4px 10px",
+      border: "0",
+      "border-radius": "4px",
+      font: `600 12px/16px ${overlayFont}`,
+      cursor: "pointer",
+    });
+    saveButton.addEventListener("click", () => saveEditor());
+
+    row.append(deleteButton, cancelButton, saveButton);
+    editorBox.append(editorText, row);
+    markerLayer.append(editorBox);
+    styleEditor();
   }
 
-  function addAnnotation(element: Element) {
-    const annotation = describeAnnotatedElement(element, annotations.length + 1);
+  function syncSaveEnabled() {
+    if (!editorText || !saveButton) {
+      return;
+    }
 
-    annotations.push(annotation);
-    renderMarker(annotation, element);
-    notify();
+    // A comment is required: an empty mark was a misclick, not an annotation.
+    const empty = editorText.value.trim() === "";
+    saveButton.disabled = empty;
+    applyStyles(saveButton, { opacity: empty ? "0.5" : "1" });
   }
 
-  function applyDesignMode(enabled: boolean) {
-    designMode = enabled;
+  /**
+   * Below the element by default; if it would run off the viewport bottom it
+   * goes above, and if neither fits it clamps inside what room there is.
+   */
+  function positionEditor(element: Element) {
+    if (!editorBox) {
+      return;
+    }
 
-    if (enabled) {
-      ensureHost();
+    const rect = element.getBoundingClientRect();
+    const viewport = readViewport();
+    // Anchor on the visible part: a mark clipped by a scroll container would
+    // otherwise park the editor over whatever covers it.
+    const anchor = visibleElementRect(element, viewport)?.visible ?? rect;
+    const height =
+      editorBox.getBoundingClientRect().height || editorBox.offsetHeight;
+
+    let top = anchor.bottom + 8;
+
+    if (top + height > viewport.height - 8) {
+      top = anchor.top - 8 - height;
+    }
+
+    applyStyles(editorBox, {
+      left: `${clampValue(anchor.left, 8, Math.max(8, viewport.width - editorWidthPx - 8))}px`,
+      top: `${clampValue(top, 8, Math.max(8, viewport.height - height - 8))}px`,
+    });
+  }
+
+  function openEditor(element: Element, entry?: AnnotationEntry) {
+    ensureEditor();
+
+    if (!editorBox || !editorText || !deleteButton) {
+      return;
+    }
+
+    editor = {
+      element,
+      annotationId: entry?.annotation.id ?? null,
+      savedText: entry?.annotation.comment ?? "",
+    };
+    editorText.value = editor.savedText;
+    applyStyles(deleteButton, { display: entry ? "block" : "none" });
+    syncSaveEnabled();
+    // Shown before it is measured: a display:none box has no height, so the
+    // flip-above check would always think there is room below.
+    applyStyles(editorBox, { display: "flex" });
+    positionEditor(element);
+    editorText.focus();
+    editorText.setSelectionRange(editorText.value.length, editorText.value.length);
+  }
+
+  /** Close without committing: a draft is discarded, an edit reverts. */
+  function closeEditor() {
+    editor = null;
+
+    if (editorBox) {
+      applyStyles(editorBox, { display: "none" });
+    }
+  }
+
+  /**
+   * Commit the draft. A click on another target while a changed non-empty
+   * draft is open does not switch — it shakes instead, so typed text is
+   * never silently lost.
+   */
+  function saveEditor(thenSubmit = false) {
+    if (!editor || !editorText) {
+      return;
+    }
+
+    const comment = editorText.value.trim();
+
+    if (!comment) {
+      return;
+    }
+
+    const existing = editor.annotationId
+      ? entries.get(editor.annotationId)
+      : undefined;
+    let saved: BrowserAnnotationElement;
+
+    if (existing) {
+      existing.annotation.comment = comment;
+      saved = existing.annotation;
     } else {
-      hideHighlight();
-      setCommentOpen(null);
+      // The index is provisional: main numbers comments across the Session
+      // and the sync that answers this save brings the real one.
+      const annotation = describeAnnotatedElement(
+        editor.element,
+        annotations.length + 1,
+        crypto.randomUUID(),
+      );
+      annotation.comment = comment;
+      annotations.push(annotation);
+      renderEntry(annotation, editor.element);
+      saved = annotation;
     }
 
-    // Markers only take pointer events while marking; once design mode is off
-    // the page has to be fully usable again with the marks still on screen.
-    if (markerLayer) {
-      applyStyles(markerLayer, { "pointer-events": enabled ? "auto" : "none" });
-    }
+    closeEditor();
+    reportSaved(
+      saved,
+      !existing,
+      thenSubmit ? () => options.onSubmitRequested() : undefined,
+    );
   }
+
+  function shakeEditor() {
+    const reduceMotion =
+      doc.defaultView
+        ?.matchMedia?.("(prefers-reduced-motion: reduce)")
+        .matches === true;
+
+    if (reduceMotion || typeof editorBox?.animate !== "function") {
+      return;
+    }
+
+    editorBox.animate(
+      [
+        { transform: "translateX(0)" },
+        { transform: "translateX(-5px)" },
+        { transform: "translateX(5px)" },
+        { transform: "translateX(-3px)" },
+        { transform: "translateX(0)" },
+      ],
+      { duration: 200 },
+    );
+  }
+
+  /**
+   * Every request to open an editor — a page click or a badge. One editor at
+   * a time: a dirty unsaved draft holds its ground (with a shake); anything
+   * else is discarded in favour of the new target.
+   */
+  function requestEditor(element: Element, entry?: AnnotationEntry) {
+    if (editor && editorText) {
+      const sameTarget = entry
+        ? editor.annotationId === entry.annotation.id
+        : editor.element === element;
+
+      if (sameTarget) {
+        editorText.focus();
+        return;
+      }
+
+      if (editorText.value.trim() && editorText.value !== editor.savedText) {
+        shakeEditor();
+        return;
+      }
+
+      closeEditor();
+    }
+
+    openEditor(element, entry);
+  }
+
+  // -- Event handlers ------------------------------------------------------
 
   function handlePointerMove(event: Event) {
     if (!designMode) {
@@ -388,25 +1319,29 @@ export function createAnnotationOverlay(options: {
 
     const target = pageTarget(event);
 
-    if (target) {
-      showHighlight(target);
-    } else {
+    if (!target) {
       hideHighlight();
+      resolvedTarget = null;
+      hoverTarget = null;
+      return;
     }
+
+    // Moving the pointer re-anchors: whatever ↑ did is a per-hover adjustment,
+    // not a persistent selection.
+    resolvedTarget = resolveAnnotationTarget(target);
+    hoverTarget = resolvedTarget;
+    showHighlight(hoverTarget);
   }
 
   /**
    * The pointer left the document — `relatedTarget` is null only then, which
    * is what tells this apart from moving between two elements in the page.
-   *
-   * Purely what the user sees: the highlight follows the pointer, so it has to
-   * stop framing an element once the pointer is off the page and over the
-   * toolbar. Keeping it out of the screenshot is `prepareCapture`'s job, which
-   * covers the keyboard route this cannot.
    */
   function handlePointerOut(event: Event) {
     if (designMode && !(event as MouseEvent).relatedTarget) {
       hideHighlight();
+      resolvedTarget = null;
+      hoverTarget = null;
     }
   }
 
@@ -417,7 +1352,7 @@ export function createAnnotationOverlay(options: {
 
     const target = pageTarget(event);
 
-    // Our own badges and bubbles have to keep working, so their events are
+    // Our own badges and editor have to keep working, so their events are
     // left entirely alone.
     if (!target) {
       return;
@@ -427,42 +1362,149 @@ export function createAnnotationOverlay(options: {
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    if (event.type === "click") {
-      addAnnotation(target);
+    if (event.type !== "click") {
+      return;
     }
+
+    // A click annotates the current target — the one ↑ may have moved to an
+    // ancestor — while a click somewhere unhovered resolves fresh.
+    const resolved = resolveAnnotationTarget(target);
+    const targetElement =
+      resolved === resolvedTarget && hoverTarget ? hoverTarget : resolved;
+
+    resolvedTarget = resolved;
+    hoverTarget = targetElement;
+    requestEditor(targetElement, entryForElement(targetElement) ?? undefined);
+  }
+
+  /** ↑ walks toward the root (never to `<html>`), ↓ back toward the pointer. */
+  function moveHover(direction: -1 | 1) {
+    if (!hoverTarget) {
+      return;
+    }
+
+    if (direction < 0) {
+      const parent = hoverTarget.parentElement;
+
+      if (parent && parent !== doc.documentElement) {
+        hoverTarget = parent;
+        showHighlight(hoverTarget);
+      }
+      return;
+    }
+
+    if (
+      !resolvedTarget ||
+      resolvedTarget === hoverTarget ||
+      !hoverTarget.contains(resolvedTarget)
+    ) {
+      return;
+    }
+
+    let step = resolvedTarget;
+
+    while (step.parentElement && step.parentElement !== hoverTarget) {
+      step = step.parentElement;
+    }
+
+    hoverTarget = step;
+    showHighlight(hoverTarget);
+  }
+
+  function toggleDesignMode() {
+    applyDesignMode(!designMode);
+    options.onDesignModeChange(designMode);
   }
 
   function handleKeyDown(event: Event) {
-    const { key } = event as KeyboardEvent;
-    const fromOverlay = !pageTarget(event);
+    const keyboard = event as KeyboardEvent;
+
+    // Cmd/Ctrl+Shift+A toggles annotation mode from anywhere — including an
+    // open editor, whose draft goes away with the mode it lives in.
+    if (
+      keyboard.code === "KeyA" &&
+      keyboard.shiftKey &&
+      (keyboard.metaKey || keyboard.ctrlKey)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleDesignMode();
+      return;
+    }
+
+    const own = isOverlayEvent(event);
 
     // Typing a comment must not trigger the page's own keyboard shortcuts —
-    // which also means the bubble's own listeners never see the keys, so Enter
-    // is answered here rather than on the input.
-    if (fromOverlay) {
+    // which also means the editor's own listeners never see the keys, so
+    // Enter and Escape are answered here rather than on the textarea.
+    if (own) {
+      event.stopPropagation();
+    }
+
+    if (!designMode) {
+      return;
+    }
+
+    // An IME composition owns its keys: Enter confirms a candidate and Escape
+    // cancels the composition — neither may save or close the editor. 229 is
+    // what Chromium reports for keyCode during a composition.
+    if (keyboard.isComposing || keyboard.keyCode === 229) {
+      return;
+    }
+
+    if (keyboard.key === "Escape") {
+      event.preventDefault();
       event.stopPropagation();
 
-      if (key === "Enter" && openComment !== null) {
-        event.preventDefault();
-        setCommentOpen(null);
+      // Two-stage: an open editor is cancelled first (draft discarded, saved
+      // text reverted); the next Escape leaves annotation mode entirely.
+      if (editor) {
+        closeEditor();
         return;
       }
-    }
 
-    if (!designMode || key !== "Escape") {
+      applyDesignMode(false);
+      options.onDesignModeChange(false);
       return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
+    if (keyboard.key === "Enter" && (keyboard.metaKey || keyboard.ctrlKey)) {
+      event.preventDefault();
+      event.stopPropagation();
 
-    if (openComment !== null) {
-      setCommentOpen(null);
+      // Cmd/Ctrl+Enter sends what is there: a draft with text saves first and
+      // the submit rides its report; an empty one is a misclick to cancel.
+      if (editor) {
+        if (editorText?.value.trim()) {
+          saveEditor(true);
+        } else {
+          closeEditor();
+          options.onSubmitRequested();
+        }
+      } else {
+        options.onSubmitRequested();
+      }
       return;
     }
 
-    applyDesignMode(false);
-    options.onDesignModeChange(false);
+    if (own && editor && keyboard.key === "Enter" && !keyboard.shiftKey) {
+      // A bare Enter saves and keeps marking; Shift+Enter stays a newline
+      // because its default action is left alone.
+      event.preventDefault();
+      saveEditor();
+      return;
+    }
+
+    if (
+      !editor &&
+      hoverTarget &&
+      (keyboard.key === "ArrowUp" || keyboard.key === "ArrowDown")
+    ) {
+      // Without this the arrow keys would scroll the page being marked.
+      event.preventDefault();
+      event.stopPropagation();
+      moveHover(keyboard.key === "ArrowUp" ? -1 : 1);
+    }
   }
 
   for (const type of pointerEvents) {
@@ -480,38 +1522,30 @@ export function createAnnotationOverlay(options: {
   listenerTarget.addEventListener("resize", scheduleMarkerSync, true);
 
   return {
-    setDesignMode(enabled) {
+    setAnnotationPalette(palette) {
+      applyAnnotationPalette(palette);
+    },
+
+    setDesignMode(enabled, palette) {
+      if (palette) {
+        applyAnnotationPalette(palette);
+      }
       // No notification back: this is main answering its own command, and an
       // echo would fight the renderer's own state.
       applyDesignMode(enabled);
     },
 
-    prepareCapture() {
-      // Closing the bubble commits it: a Send driven from the keyboard never
-      // blurs the input, so this is the only moment the comment the user just
-      // typed can still reach the payload. It also takes the input and the
-      // hover box out of the frame — both are overlay chrome, and neither
-      // belongs in a screenshot of the user's page.
-      setCommentOpen(null);
-      hideHighlight();
-      // Measured now rather than when the mark was made: the panel can have
-      // been dragged wider since, and the shot is being taken at this size.
-      options.onCaptureReady(
-        annotations.map((annotation) => ({ ...annotation })),
-        readViewport(),
-      );
+    finishCapture() {
+      // However the shot ended — full-page or a save's crop — the overlay is
+      // allowed back on screen, mode chrome included.
+      restoreAfterSaveCapture();
+      if (designMode) {
+        setModeAffordanceVisible(true);
+      }
     },
 
-    clearAnnotations() {
-      // No commit on the way out: clearing throws the marks away, comments and
-      // all, so there is nothing left to report but the empty list.
-      openComment = null;
-      annotations.length = 0;
-      for (const { marker } of markers.values()) {
-        marker.remove();
-      }
-      markers.clear();
-      notify();
+    syncAnnotations(list) {
+      applySync(list.map((annotation) => ({ ...annotation })));
     },
 
     dispose() {
@@ -523,11 +1557,29 @@ export function createAnnotationOverlay(options: {
       listenerTarget.removeEventListener("keydown", handleKeyDown, true);
       listenerTarget.removeEventListener("scroll", scheduleMarkerSync, true);
       listenerTarget.removeEventListener("resize", scheduleMarkerSync, true);
+      for (const id of pendingRestores.keys()) {
+        stopWatchingRestore(id);
+      }
+      if (visibilityRestoreTimer) {
+        clearTimeout(visibilityRestoreTimer);
+        visibilityRestoreTimer = null;
+      }
       host?.remove();
       host = null;
+      shadowRoot = null;
       highlight = null;
+      highlightLabel = null;
       markerLayer = null;
-      markers.clear();
+      frame = null;
+      pill = null;
+      editorBox = null;
+      editorText = null;
+      saveButton = null;
+      deleteButton = null;
+      editor = null;
+      resolvedTarget = null;
+      hoverTarget = null;
+      entries.clear();
       annotations.length = 0;
     },
   };
