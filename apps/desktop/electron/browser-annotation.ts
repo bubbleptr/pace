@@ -46,6 +46,10 @@ export type BrowserAnnotationCommand =
       /** The renderer's theme tokens; the overlay validates each colour itself. */
       palette?: BrowserAnnotationPalette;
     }
+  | {
+      type: "set-annotation-palette";
+      palette: BrowserAnnotationPalette;
+    }
   | { type: "clear-annotations" }
   | { type: "prepare-capture" }
   /**
@@ -380,10 +384,9 @@ function readAnnotationsPayload(
 }
 
 /**
- * The renderer sends its computed theme tokens with `browser_set_design_mode`.
- * Main accepts only the shape — all six fields present, each a short string —
- * and drops the palette wholesale otherwise; whether each colour parses is the
- * overlay's call (`CSS.supports`), since only the page knows its own CSS engine.
+ * The renderer sends its computed theme tokens with a design-mode or
+ * palette-only command. Main validates the shape; the overlay parses colours
+ * with `CSS.supports` in the page's CSS engine.
  */
 export function readAnnotationPalette(
   value: unknown,

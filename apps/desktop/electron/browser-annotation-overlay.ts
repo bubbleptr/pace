@@ -55,6 +55,7 @@ type EditorState = {
 
 export type BrowserAnnotationOverlay = {
   setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
+  setAnnotationPalette(palette: BrowserAnnotationPalette): void;
   clearAnnotations(): void;
   /**
    * Put the overlay out of shot and say what it holds, so main can photograph
@@ -283,6 +284,11 @@ export function createAnnotationOverlay(options: {
     }
   }
 
+  function applyAnnotationPalette(palette: BrowserAnnotationPalette) {
+    colors = resolveOverlayPalette(palette);
+    restyle();
+  }
+
   function ensureHost() {
     if (host) {
       return host;
@@ -503,6 +509,7 @@ export function createAnnotationOverlay(options: {
     }
 
     const viewport = readViewport();
+    const reconciled = reconcileEntries();
     const placed: { x: number; y: number; width: number; height: number }[] = [];
 
     // Annotation order is creation order, so the earlier badge always wins
@@ -514,43 +521,48 @@ export function createAnnotationOverlay(options: {
         continue;
       }
 
-      // `hidden` cannot win against the important display below, and an
-      // element a re-render took away measures as 0,0 — which would park the
-      // mark in the corner of the viewport rather than take it off screen.
-      if (!entry.element.isConnected) {
+      const visibleRect = visibleElementRect(entry.element, viewport);
+
+      if (!visibleRect) {
         applyStyles(entry.outline, { display: "none" });
         applyStyles(entry.badge, { display: "none" });
         continue;
       }
 
-      const rect = entry.element.getBoundingClientRect();
-
       applyStyles(entry.outline, {
         display: "block",
-        left: `${rect.x}px`,
-        top: `${rect.y}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
+        left: `${visibleRect.left}px`,
+        top: `${visibleRect.top}px`,
+        width: `${visibleRect.right - visibleRect.left}px`,
+        height: `${visibleRect.bottom - visibleRect.top}px`,
       });
 
       const badgeWidth = entry.badge.offsetWidth || 20;
       const badgeHeight = entry.badge.offsetHeight || 20;
-      // Centred on the outline's top-right corner, then clamped on screen…
+      if (
+        visibleRect.right - visibleRect.left < badgeWidth ||
+        visibleRect.bottom - visibleRect.top < badgeHeight
+      ) {
+        applyStyles(entry.badge, { display: "none" });
+        continue;
+      }
+
+      // Centred on the visible outline's top-right corner, then clamped inside
+      // its viewport and scroll-container clipping…
       let badgeX = clampValue(
-        rect.right - badgeWidth / 2,
-        8,
-        Math.max(8, viewport.width - badgeWidth - 8),
+        visibleRect.right - badgeWidth / 2,
+        visibleRect.left,
+        visibleRect.right - badgeWidth,
       );
       const badgeY = clampValue(
-        rect.top - badgeHeight / 2,
-        8,
-        Math.max(8, viewport.height - badgeHeight - 8),
+        visibleRect.top - badgeHeight / 2,
+        visibleRect.top,
+        visibleRect.bottom - badgeHeight,
       );
 
       // …and shifted left while it would sit on an earlier badge (nested
       // elements share the corner).
       while (
-        badgeX - (badgeWidth + 4) >= 8 &&
         placed.some(
           (other) =>
             badgeX < other.x + other.width &&
@@ -559,7 +571,11 @@ export function createAnnotationOverlay(options: {
             other.y < badgeY + badgeHeight,
         )
       ) {
-        badgeX -= badgeWidth + 4;
+        const nextBadgeX = badgeX - badgeWidth - 4;
+        if (nextBadgeX < visibleRect.left && badgeX === visibleRect.left) {
+          break;
+        }
+        badgeX = Math.max(visibleRect.left, nextBadgeX);
       }
 
       placed.push({ x: badgeX, y: badgeY, width: badgeWidth, height: badgeHeight });
@@ -569,6 +585,116 @@ export function createAnnotationOverlay(options: {
         top: `${badgeY}px`,
       });
     }
+
+    if (reconciled) {
+      notify();
+    }
+  }
+
+  function visibleElementRect(
+    element: Element,
+    viewport: BrowserAnnotationViewport,
+  ) {
+    if (!element.isConnected || element.ownerDocument !== doc) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    let left = Math.max(0, rect.left);
+    let top = Math.max(0, rect.top);
+    let right = Math.min(viewport.width, rect.right);
+    let bottom = Math.min(viewport.height, rect.bottom);
+    const view = doc.defaultView;
+
+    for (
+      let ancestor = element.parentElement;
+      ancestor && (left < right && top < bottom);
+      ancestor = ancestor.parentElement
+    ) {
+      if (!view) {
+        break;
+      }
+
+      const style = view.getComputedStyle(ancestor);
+      const ancestorRect = ancestor.getBoundingClientRect();
+      const overflowX = style.overflowX || style.overflow;
+      const overflowY = style.overflowY || style.overflow;
+
+      if (["hidden", "clip", "auto", "scroll"].includes(overflowX)) {
+        left = Math.max(left, ancestorRect.left + ancestor.clientLeft);
+        right = Math.min(
+          right,
+          ancestorRect.left + ancestor.clientLeft + ancestor.clientWidth,
+        );
+      }
+      if (["hidden", "clip", "auto", "scroll"].includes(overflowY)) {
+        top = Math.max(top, ancestorRect.top + ancestor.clientTop);
+        bottom = Math.min(
+          bottom,
+          ancestorRect.top + ancestor.clientTop + ancestor.clientHeight,
+        );
+      }
+    }
+
+    return left < right && top < bottom ? { left, top, right, bottom } : null;
+  }
+
+  function reconcileEntries() {
+    const owned = new Set<Element>();
+    let changed = false;
+
+    for (const entry of entries.values()) {
+      if (entry.element.isConnected && entry.element.ownerDocument === doc) {
+        owned.add(entry.element);
+      }
+    }
+
+    for (const annotation of annotations) {
+      const entry = entries.get(annotation.id);
+
+      if (!entry || (entry.element.isConnected && entry.element.ownerDocument === doc)) {
+        continue;
+      }
+
+      let matches: NodeListOf<Element>;
+      try {
+        matches = doc.querySelectorAll(entry.annotation.selector);
+      } catch {
+        continue;
+      }
+
+      if (matches.length !== 1 || owned.has(matches[0]!)) {
+        continue;
+      }
+
+      const replacement = matches[0]!;
+      const refreshed = describeAnnotatedElement(
+        replacement,
+        entry.annotation.index,
+        entry.annotation.id,
+      );
+      if (entry.annotation.comment) {
+        refreshed.comment = entry.annotation.comment;
+      }
+      const annotationIndex = annotations.indexOf(entry.annotation);
+
+      if (annotationIndex !== -1) {
+        annotations[annotationIndex] = refreshed;
+      }
+      entry.annotation = refreshed;
+      entry.element = replacement;
+      if (editor?.annotationId === refreshed.id) {
+        editor.element = replacement;
+      }
+      owned.add(replacement);
+      changed = true;
+    }
+
+    return changed;
   }
 
   /**
@@ -652,6 +778,10 @@ export function createAnnotationOverlay(options: {
   }
 
   function entryForElement(element: Element) {
+    positionEntries();
+    if (editor) {
+      positionEditor(editor.element);
+    }
     for (const entry of entries.values()) {
       if (entry.element === element) {
         return entry;
@@ -678,6 +808,7 @@ export function createAnnotationOverlay(options: {
     entry.outline.remove();
     entry.badge.remove();
     renumber();
+    positionEntries();
     notify();
   }
 
@@ -805,17 +936,19 @@ export function createAnnotationOverlay(options: {
 
     const rect = element.getBoundingClientRect();
     const viewport = readViewport();
+    const visibleRect = visibleElementRect(element, viewport);
+    const anchor = visibleRect ?? rect;
     const height =
       editorBox.getBoundingClientRect().height || editorBox.offsetHeight;
 
-    let top = rect.bottom + 8;
+    let top = anchor.bottom + 8;
 
     if (top + height > viewport.height - 8) {
-      top = rect.top - 8 - height;
+      top = anchor.top - 8 - height;
     }
 
     applyStyles(editorBox, {
-      left: `${clampValue(rect.left, 8, Math.max(8, viewport.width - editorWidthPx - 8))}px`,
+      left: `${clampValue(anchor.left, 8, Math.max(8, viewport.width - editorWidthPx - 8))}px`,
       top: `${clampValue(top, 8, Math.max(8, viewport.height - height - 8))}px`,
     });
   }
@@ -1131,10 +1264,13 @@ export function createAnnotationOverlay(options: {
   listenerTarget.addEventListener("resize", scheduleMarkerSync, true);
 
   return {
+    setAnnotationPalette(palette) {
+      applyAnnotationPalette(palette);
+    },
+
     setDesignMode(enabled, palette) {
       if (palette) {
-        colors = resolveOverlayPalette(palette);
-        restyle();
+        applyAnnotationPalette(palette);
       }
       // No notification back: this is main answering its own command, and an
       // echo would fight the renderer's own state.
@@ -1151,6 +1287,7 @@ export function createAnnotationOverlay(options: {
           closeEditor();
         }
       }
+      syncOverlayPositions();
       // Editor, hover box and mode chrome are overlay chrome — none of them
       // belong in a screenshot of the user's page. The marks stay: they are
       // what the numbered rows in the prompt point at.

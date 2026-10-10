@@ -51,6 +51,9 @@ ipcRenderer.on(
       case "set-design-mode":
         overlay.setDesignMode(command.enabled === true, command.palette);
         break;
+      case "set-annotation-palette":
+        overlay.setAnnotationPalette(command.palette);
+        break;
       case "clear-annotations":
         overlay.clearAnnotations();
         break;

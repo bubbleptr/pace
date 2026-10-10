@@ -61,6 +61,7 @@ function installPreload(
         goBack() {},
         goForward() {},
         setDesignMode() {},
+        setAnnotationPalette() {},
         clearAnnotations() {},
         prepareCapture() {},
         finishCapture() {},
@@ -569,6 +570,31 @@ describe("SessionBrowserPanel multi-instance", () => {
       border: expect.any(String),
       muted: expect.any(String),
     });
+  });
+
+  it("sends a palette-only update for page-origin activation without echoing mode", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.host.tab({ sessionId: "s", tabId: target.tabId }).recordDesignMode(true);
+      preload.host.notify({ sessionId: "s", tabId: target.tabId });
+    });
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.filter(
+          (item) => item.command === "browser_set_annotation_palette",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(
+      preload.invocations.some(
+        (item) => item.command === "browser_set_design_mode",
+      ),
+    ).toBe(false);
   });
 
   it("toggles annotation mode on Cmd/Ctrl+Shift+A while a live tab is active", async () => {

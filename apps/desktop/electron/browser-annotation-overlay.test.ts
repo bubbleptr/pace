@@ -100,6 +100,19 @@ function place(element: Element, x = 40, y = 40) {
   return element;
 }
 
+function clip(element: Element, x: number, y: number, width: number, height: number) {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
+    rectAt(x, y, width, height),
+  );
+  Object.defineProperties(element, {
+    clientLeft: { configurable: true, value: 0 },
+    clientTop: { configurable: true, value: 0 },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+  });
+  return element;
+}
+
 function editor(h: ReturnType<typeof harness>) {
   return h
     .shadow()
@@ -459,6 +472,32 @@ describe("annotation overlay", () => {
     expect(badge.style.color).toBe("rgb(4, 5, 6)");
   });
 
+  it("updates the palette without enabling annotation mode", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    vi.stubGlobal("CSS", {
+      escape: CSS.escape,
+      supports: (_property: string, value: string) => value.startsWith("rgb("),
+    });
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "palette");
+    h.overlay.setDesignMode(false);
+
+    h.overlay.setAnnotationPalette(fullPalette);
+
+    expect(badges(h)[0]!.style.backgroundColor).toBe("rgb(1, 2, 3)");
+    expect(
+      h.shadow().querySelector<HTMLElement>('[data-slot="annotation-frame"]')!
+        .style.display,
+    ).toBe("none");
+    expect(
+      h.shadow().querySelector<HTMLElement>('[data-slot="annotation-markers"]')!
+        .style.pointerEvents,
+    ).toBe("none");
+    expect(h.designModeChanges).toEqual([]);
+  });
+
   it("shows the mode frame and pill only while annotating", () => {
     const h = harness();
     const frame = () =>
@@ -557,6 +596,141 @@ describe("annotation overlay", () => {
     expect(h.annotationChanges).toHaveLength(0);
   });
 
+  it("hides fully offscreen marks and refreshes their positions synchronously for capture", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!, -60, -60);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "offscreen");
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    const badge = badges(h)[0]!;
+
+    expect(outline.style.display).toBe("none");
+    expect(badge.style.display).toBe("none");
+
+    vi.mocked(button.getBoundingClientRect).mockReturnValue(rectAt(80, 90));
+    h.overlay.prepareCapture();
+
+    expect(outline.style.display).toBe("block");
+    expect(outline.style.left).toBe("80px");
+    expect(outline.style.top).toBe("90px");
+    expect(badge.style.display).toBe("flex");
+    expect(h.captures[0]?.annotations).toHaveLength(1);
+  });
+
+  it("clips marks and badge placement to nested scrolling ancestors", () => {
+    const h = harness();
+    const outer = document.createElement("section");
+    const inner = document.createElement("section");
+    const button = document.createElement("button");
+
+    outer.style.overflowX = "auto";
+    outer.style.overflowY = "auto";
+    inner.style.overflowX = "hidden";
+    inner.style.overflowY = "hidden";
+    outer.append(inner);
+    inner.append(button);
+    document.querySelector("main")!.append(outer);
+    clip(outer, 40, 40, 120, 120);
+    clip(inner, 60, 60, 60, 60);
+    clip(button, 20, 20, 120, 120);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "nested");
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    const badge = badges(h)[0]!;
+
+    expect(outline.style.left).toBe("60px");
+    expect(outline.style.top).toBe("60px");
+    expect(outline.style.width).toBe("60px");
+    expect(outline.style.height).toBe("60px");
+    expect(Number.parseFloat(badge.style.left)).toBeGreaterThanOrEqual(60);
+    expect(Number.parseFloat(badge.style.left) + 20).toBeLessThanOrEqual(120);
+    expect(Number.parseFloat(badge.style.top)).toBeGreaterThanOrEqual(60);
+    expect(Number.parseFloat(badge.style.top) + 20).toBeLessThanOrEqual(120);
+  });
+
+  it("rebinds a uniquely selected DOM replacement and keeps its stable annotation id", () => {
+    const h = harness();
+    const original = place(document.getElementById("cta")!, 40, 40);
+    h.overlay.setDesignMode(true);
+    annotate(h, original, "Original comment");
+    clickPageElement(original);
+    expect(editorVisible(h)).toBe(true);
+
+    original.remove();
+    const replacement = document.createElement("button");
+    replacement.id = "cta";
+    replacement.textContent = "Replacement";
+    place(replacement, 120, 130);
+    document.querySelector("main")!.append(replacement);
+
+    clickPageElement(replacement);
+
+    expect(editorInput(h).value).toBe("Original comment");
+    expect(editor(h).style.left).toBe("120px");
+    typeDraft(h, "Updated comment");
+    pressKey(editorInput(h), "Enter");
+
+    expect(h.latest()).toHaveLength(1);
+    expect(h.latest()[0]).toMatchObject({
+      id: expect.any(String),
+      index: 1,
+      selector: "#cta",
+      rect: { x: 120, y: 130 },
+      comment: "Updated comment",
+    });
+  });
+
+  it("does not rebind a disconnected annotation to an ambiguous selector", () => {
+    const h = harness();
+    const original = place(document.getElementById("cta")!);
+    h.overlay.setDesignMode(true);
+    annotate(h, original, "Original comment");
+    original.remove();
+
+    const first = document.createElement("button");
+    const second = document.createElement("button");
+    first.id = "cta";
+    second.id = "cta";
+    place(first, 80, 80);
+    place(second, 120, 120);
+    document.querySelector("main")!.append(first, second);
+
+    clickPageElement(first);
+
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("");
+    expect(editorButton(h, "delete").style.display).toBe("none");
+    expect(h.latest()).toHaveLength(1);
+    expect(h.latest()[0]?.comment).toBe("Original comment");
+  });
+
+  it("reclaims the shared badge corner immediately after deleting an earlier mark", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!, 40, 40);
+    const paragraph = place(document.getElementById("copy")!, 40, 40);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "first");
+    annotate(h, paragraph, "second");
+    const survivingBadge = badges(h)[1]!;
+    expect(survivingBadge.style.left).toBe("40px");
+
+    clickPageElement(button);
+    editorButton(h, "delete").click();
+
+    expect(survivingBadge.textContent).toBe("1");
+    expect(survivingBadge.style.left).toBe("60px");
+    expect(h.latest()).toHaveLength(1);
+  });
+
   it("drops the hover highlight when the pointer leaves the page", () => {
     const h = harness();
     const button = place(document.getElementById("cta")!);
@@ -630,6 +804,7 @@ describe("annotation overlay", () => {
     const button = document.getElementById("cta")!;
     const measure = vi.spyOn(button, "getBoundingClientRect");
 
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
     measure.mockReturnValue(rectAt(12, 200));
     h.overlay.setDesignMode(true);
     annotate(h, button, "scroll test");

@@ -549,6 +549,11 @@ function createBrowserView(target: BrowserTabTarget) {
         enabled,
         ...(palette ? { palette } : {}),
       }),
+    setAnnotationPalette: (palette: BrowserAnnotationPalette) =>
+      sendAnnotationCommand(webContents, {
+        type: "set-annotation-palette",
+        palette,
+      }),
     clearAnnotations: () =>
       sendAnnotationCommand(webContents, { type: "clear-annotations" }),
     prepareCapture: () =>

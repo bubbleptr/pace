@@ -67,6 +67,15 @@ export function setBrowserDesignMode(
     ...(palette ? { palette } : {}),
   });
 }
+export function setBrowserAnnotationPalette(
+  target: BrowserTabTarget,
+  palette: BrowserAnnotationPalette,
+) {
+  return invoke<BrowserTabState | null>("browser_set_annotation_palette", {
+    ...target,
+    palette,
+  });
+}
 export function clearBrowserAnnotations(target: BrowserTabTarget) {
   return invoke<BrowserTabState | null>("browser_clear_annotations", target);
 }

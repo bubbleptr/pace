@@ -60,6 +60,7 @@ const browserCommands = new Set([
   "browser_set_bounds",
   "browser_set_visible",
   "browser_set_design_mode",
+  "browser_set_annotation_palette",
   "browser_clear_annotations",
   "browser_open_external",
 ]);
@@ -223,6 +224,8 @@ export type BrowserHostView = {
   goForward(): void;
   /** Design mode lives in the page's isolated world; this is the command. */
   setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
+  /** Updates the annotation colours without changing mode. */
+  setAnnotationPalette(palette: BrowserAnnotationPalette): void;
   clearAnnotations(): void;
   /** Asks the overlay to put itself out of shot and report what it holds. */
   prepareCapture(): void;
@@ -273,8 +276,8 @@ type BrowserTabHost = {
   /** Design mode the page left by itself (Escape), so main stops re-applying it. */
   recordDesignMode(enabled: boolean): void;
   /**
-   * The last palette the renderer sent with a valid `browser_set_design_mode`,
-   * replayed to each fresh document so the overlay keeps Pace's colours.
+   * The last valid palette, replayed to each fresh document so the overlay
+   * keeps Pace's colours.
    */
   annotationPalette(): BrowserAnnotationPalette | undefined;
   /**
@@ -566,6 +569,14 @@ export function createBrowserTabHost(
             palette = nextPalette;
           }
           view?.setDesignMode(designMode, nextPalette);
+          return null;
+        }
+        case "browser_set_annotation_palette": {
+          const nextPalette = readAnnotationPalette(args?.palette);
+          if (nextPalette) {
+            palette = nextPalette;
+            view?.setAnnotationPalette(nextPalette);
+          }
           return null;
         }
         case "browser_clear_annotations":

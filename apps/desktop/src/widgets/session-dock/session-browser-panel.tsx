@@ -14,6 +14,7 @@ import {
   openBrowserTab,
   openBrowserUrlExternally,
   reloadBrowser,
+  setBrowserAnnotationPalette,
   setBrowserBounds,
   setBrowserDesignMode,
   setBrowserVisible,
@@ -194,6 +195,22 @@ function BrowserSessionContent({
       muted: token("--muted"),
     };
   }, []);
+
+  useEffect(() => {
+    if (!available || !tabId || !active?.designMode) return;
+    const palette = readAnnotationPalette();
+    if (!palette) return;
+    void setBrowserAnnotationPalette({ sessionId, tabId }, palette).catch((error) => {
+      if (alive.current) setActionError(errorMessage(error));
+    });
+  }, [
+    active?.designMode,
+    available,
+    readAnnotationPalette,
+    sessionId,
+    tabId,
+  ]);
+
   const tabCount = group?.tabs.length ?? 0;
   const state: BrowserSurfaceState = !docked
     ? { kind: "narrow" }

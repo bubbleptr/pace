@@ -56,6 +56,10 @@ function createFakeView() {
       calls.push(`setDesignMode(${enabled}${palette ? ",palette" : ""})`);
       calls.push(`palette(${palette ? JSON.stringify(palette) : ""})`);
     },
+    setAnnotationPalette(palette) {
+      calls.push("setAnnotationPalette");
+      calls.push(`palette(${JSON.stringify(palette)})`);
+    },
     prepareCapture() {
       calls.push("prepareCapture");
     },
@@ -536,6 +540,35 @@ describe("browser host commands", () => {
     expect(host.annotationPalette()).toEqual(palette);
   });
 
+  it("validates palette-only updates without changing design mode", async () => {
+    const { host, views } = createHostHarness();
+    const palette = {
+      accent: "#0064E0",
+      accentForeground: "#ffffff",
+      surface: "#1f1f22",
+      foreground: "#dfe2e5",
+      border: "#494d53",
+      muted: "#aaafb5",
+    };
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_annotation_palette", { palette });
+
+    expect(host.annotationPalette()).toEqual(palette);
+    expect(host.isDesignModeEnabled()).toBe(false);
+    expect(views[0]!.calls).toContain("setAnnotationPalette");
+    expect(views[0]!.calls).not.toContain("setDesignMode(false)");
+
+    const callCount = views[0]!.calls.length;
+    await host.invoke("browser_set_annotation_palette", {
+      palette: { ...palette, surface: 42 },
+    });
+
+    expect(host.annotationPalette()).toEqual(palette);
+    expect(views[0]!.calls).toHaveLength(callCount);
+    expect(host.isDesignModeEnabled()).toBe(false);
+  });
+
   it("ignores a malformed palette wholesale instead of forwarding part of it", async () => {
     const { host, views } = createHostHarness();
 
@@ -577,6 +610,7 @@ describe("browser host commands", () => {
       "browser_set_bounds",
       "browser_set_visible",
       "browser_set_design_mode",
+      "browser_set_annotation_palette",
       "browser_clear_annotations",
       "browser_open_external",
     ]) {
