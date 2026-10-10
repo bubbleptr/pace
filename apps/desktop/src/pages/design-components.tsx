@@ -2801,7 +2801,7 @@ function ComposerAttachmentDrawerGallery() {
             />
           </div>
         </Variant>
-        <Variant caption="with comment chips — one stale">
+        <Variant caption="with comment chips — one stale, one area">
           <div className="w-96">
             <ChatPromptInput
               drawer={
@@ -2814,6 +2814,7 @@ function ComposerAttachmentDrawerGallery() {
                       warning:
                         "No longer on the page — sent as it was when saved",
                     },
+                    { id: "c3", label: "#3 Area · Hero spacing is uneven" },
                   ]}
                   commentsLabel="Browser comments"
                   items={[
