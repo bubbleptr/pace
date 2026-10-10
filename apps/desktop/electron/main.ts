@@ -660,6 +660,10 @@ ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
       break;
     }
     case "annotation-saved":
+      // DIAGNOSTIC (bisect worktree only): proof main received the save.
+      console.log(
+        `[annotation-dbg] annotation-saved received id=${message.annotation?.id} sel=${message.annotation?.selector}`,
+      );
       // The store records it and takes the element's crop; the overlay hid
       // itself for two frames before this, so the shot carries no overlay.
       void getBrowserHost().saveComment(

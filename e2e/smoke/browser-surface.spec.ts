@@ -126,18 +126,35 @@ async function readBrowserViewWidth(app: ElectronApplication) {
  * overlay's window-capture handler sees.
  */
 async function typeAndSaveComment(app: ElectronApplication, text: string) {
-  await app.evaluate(({ BrowserWindow }, value) => {
-    const views = (BrowserWindow.getAllWindows()[0]?.contentView.children ?? [])
+  const diag = await app.evaluate(({ BrowserWindow }, value) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const views = (win?.contentView.children ?? [])
       .filter(
         (child): child is Electron.WebContentsView => "webContents" in child,
       )
       .filter((child) => child.webContents.getURL() !== "");
     const view = views.at(-1);
 
+    const info = {
+      windowCount: BrowserWindow.getAllWindows().length,
+      windowFocused: win?.isFocused() ?? null,
+      windowVisible: win?.isVisible() ?? null,
+      windowMinimized: win?.isMinimized() ?? null,
+      viewCount: views.length,
+      viewUrl: view?.webContents.getURL() ?? null,
+      viewFocused: view?.webContents.isFocused() ?? null,
+      viewVisible: view?.getVisible() ?? null,
+      viewBounds: view?.getBounds() ?? null,
+    };
+
     view?.webContents.insertText(value);
     view?.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
     view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+
+    return info;
   }, text);
+  console.log("ANNOTATION-DBG-INPUT", JSON.stringify(diag));
+  return diag;
 }
 
 /** Opens the dock on the Browser surface, with no page loaded yet. */
@@ -401,9 +418,46 @@ test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and se
 
     await typeAndSaveComment(testApp.app, "Needs a bigger hit area");
 
-    await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 comment",
-    );
+    // DIAGNOSTIC (bisect worktree only): on failure, dump every key event the
+    // overlay saw, whether saveEditor ran, and the document/focus state.
+    try {
+      await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
+        "1 comment",
+      );
+    } catch (error) {
+      const dbg = await embedded.evaluate(() => {
+        const host = document.querySelector("pigui-annotation-overlay");
+        return {
+          hostPresent: Boolean(host),
+          keys: host?.getAttribute("data-annotation-keys") ?? null,
+          saves: host?.getAttribute("data-annotation-saves") ?? null,
+          activeTag: document.activeElement?.tagName ?? null,
+          visibility: document.visibilityState,
+          url: location.href,
+        };
+      });
+      console.log("ANNOTATION-DBG", JSON.stringify(dbg));
+      const wc = await testApp.app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        return {
+          windowCount: BrowserWindow.getAllWindows().length,
+          windowFocused: win?.isFocused() ?? null,
+          windowVisible: win?.isVisible() ?? null,
+          windowMinimized: win?.isMinimized() ?? null,
+          views: (win?.contentView.children ?? [])
+            .filter((c) => "webContents" in c)
+            .map((c) => ({
+              url: c.webContents.getURL(),
+              focused: c.webContents.isFocused(),
+              visible: c.getVisible(),
+              bounds: c.getBounds(),
+              loading: c.webContents.isLoading(),
+            })),
+        };
+      });
+      console.log("ANNOTATION-DBG-VIEWS", JSON.stringify(wc));
+      throw error;
+    }
 
     // A second element, so the send below has two comments and two crops.
     await embedded.evaluate(() =>

@@ -32,10 +32,7 @@ jobs:
       - name: Verify native ARM64 runner
         run: node -e 'if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Expected darwin/arm64")'
       - run: bun install --frozen-lockfile
-      - run: bun run test:release
-      - run: bun run test --maxWorkers=2
-        env:
-          PACE_DATA_DIR: ${{ runner.temp }}/pigui-unit-data
+      # DEBUG BRANCH: skip unit/test:release to shorten the diagnosis cycle.
       - name: Build unsigned app and validate the bundled runtime
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -43,13 +40,14 @@ jobs:
       # trajectory-strip.spec.ts drives a Vite page in Chromium, not Electron.
       - name: Install Playwright Chromium
         run: bunx playwright install chromium
+      # DEBUG BRANCH: only the annotation spec, 3 repeats, no early abort.
       - name: Test packaged app
-        timeout-minutes: 10
+        timeout-minutes: 15
         env:
           DEBUG: pw:browser
         run: |
           system_profiler SPDisplaysDataType
-          bun run test:e2e:packaged:mac --workers=1 --max-failures=1 --reporter=line
+          bun run test:e2e:packaged:mac e2e/smoke/browser-surface.spec.ts --workers=1 --repeat-each=3 --reporter=line
       - name: Upload test diagnostics
         if: failure()
         uses: actions/upload-artifact@v7

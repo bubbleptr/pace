@@ -1489,6 +1489,17 @@ export function createAnnotationOverlay(options: {
    * never silently lost.
    */
   function saveEditor(thenSubmit = false) {
+    // DIAGNOSTIC (bisect worktree only).
+    host?.setAttribute(
+      "data-annotation-saves",
+      (host.getAttribute("data-annotation-saves") ?? "") +
+        "|" +
+        JSON.stringify({
+          ed: editor !== null,
+          value: editorText?.value ?? null,
+        }),
+    );
+
     if (!editor || !editorText) {
       return;
     }
@@ -1814,6 +1825,27 @@ export function createAnnotationOverlay(options: {
     }
 
     const own = isOverlayEvent(event);
+
+    // DIAGNOSTIC (bisect worktree only — not for merge): record every key
+    // event the handler sees so a flake can be attributed to delivery vs. a
+    // guard. Readable from the page on the host element.
+    host?.setAttribute(
+      "data-annotation-keys",
+      (host.getAttribute("data-annotation-keys") ?? "") +
+        "|" +
+        JSON.stringify({
+          key: keyboard.key,
+          code: keyboard.keyCode,
+          composing: keyboard.isComposing,
+          own,
+          dm: designMode,
+          ed: editor !== null,
+          active: doc.activeElement?.tagName ?? "none",
+          activeHost: doc.activeElement === host,
+          focus: doc.hasFocus(),
+          vis: doc.visibilityState,
+        }),
+    );
 
     // Typing a comment must not trigger the page's own keyboard shortcuts —
     // which also means the editor's own listeners never see the keys, so
