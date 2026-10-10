@@ -51,6 +51,8 @@ PiGUI 目前对 dev server 零认知(project registry 只有 `{id, path, display
 
 ### 5. 元素标识与载荷形状(定义在 `packages/core`)
 
+> 修订提示(2026-10-10):本节「不新增结构化附件」「落到 composer 草稿」与 `formatBrowserAnnotationPrompt` 已被标注 v2 取代,见 `.scratch/browser-annotation-v2/PRD.md` 决策 4 与 ADR-0029「修订:标注 v2」。
+
 ```ts
 type BrowserAnnotationElement = {
   index: number;               // 标记序号,与截图上的数字一致

@@ -268,6 +268,10 @@ _Avoid_: Panel, tab, view, plugin, widget
 Pace 自带的 Surface：Changes、Files、Terminal、Browser。它们与将来扩展注册的 Surface 走同一套注册表与 Rail，只是 provider 为 `builtin`。Files 是只读的 checkout 目录树加文件预览（ADR-0035）。
 _Avoid_: Core panel, native panel, first-party plugin
 
+**Browser Comment**:
+用户在 Browser Surface 的标注模式里对页面一个元素或一块区域写下的评论，保存才成立（标注 v2，ADR-0029「修订：标注 v2」）。由主进程按 Session 持有——不属于 tab 或文档，带保存时的 URL、视口与局部截图；同 URL 的新文档会重新显示它的标记，找不到元素时标为 stale。它在 composer 附件抽屉里以 `#n` 芯片列出，随下一条消息作为评论块与截图发给 Pi，发送成功即被消费。
+_Avoid_: Annotation（仅指页上标记的实现层叫法）, marker, note, design comment
+
 **Session Projection**:
 Pace 自己保存的查询模型，用来支撑 Session 列表、Analyze、状态索引、成本聚合、checkout 生命周期、恢复入口和 UI 快速渲染。它是从 Pi Session State、Session Trajectory 和 Pace checkout 管理事件同步出来的投影，不是 Pi 会话内容的权威来源。渲染层每个 Session 只保留一份，由一个 module 拥有并作为唯一写者（ADR-0044）。
 _Avoid_: Runtime truth, independent chat state, source of record
