@@ -521,43 +521,51 @@ export function createAnnotationOverlay(options: {
         continue;
       }
 
-      const visibleRect = visibleElementRect(entry.element, viewport);
+      const elementRects = visibleElementRect(entry.element, viewport);
 
-      if (!visibleRect) {
+      if (!elementRects) {
         applyStyles(entry.outline, { display: "none" });
         applyStyles(entry.badge, { display: "none" });
         continue;
       }
+      const { visible, clipping } = elementRects;
 
       applyStyles(entry.outline, {
         display: "block",
-        left: `${visibleRect.left}px`,
-        top: `${visibleRect.top}px`,
-        width: `${visibleRect.right - visibleRect.left}px`,
-        height: `${visibleRect.bottom - visibleRect.top}px`,
+        left: `${visible.left}px`,
+        top: `${visible.top}px`,
+        width: `${visible.right - visible.left}px`,
+        height: `${visible.bottom - visible.top}px`,
       });
 
       const badgeWidth = entry.badge.offsetWidth || 20;
       const badgeHeight = entry.badge.offsetHeight || 20;
-      if (
-        visibleRect.right - visibleRect.left < badgeWidth ||
-        visibleRect.bottom - visibleRect.top < badgeHeight
-      ) {
+      const clippedX = clipping.left > 0 || clipping.right < viewport.width;
+      const clippedY = clipping.top > 0 || clipping.bottom < viewport.height;
+      const minimumX = clippedX ? clipping.left : 8;
+      const minimumY = clippedY ? clipping.top : 8;
+      const maximumX = clippedX
+        ? clipping.right - badgeWidth
+        : viewport.width - badgeWidth - 8;
+      const maximumY = clippedY
+        ? clipping.bottom - badgeHeight
+        : viewport.height - badgeHeight - 8;
+      if (maximumX < minimumX || maximumY < minimumY) {
         applyStyles(entry.badge, { display: "none" });
         continue;
       }
 
-      // Centred on the visible outline's top-right corner, then clamped inside
-      // its viewport and scroll-container clipping…
+      // Centre the badge on the visible top-right corner, then keep it within
+      // the viewport or scroll-container clipping bounds.
       let badgeX = clampValue(
-        visibleRect.right - badgeWidth / 2,
-        visibleRect.left,
-        visibleRect.right - badgeWidth,
+        visible.right - badgeWidth / 2,
+        minimumX,
+        maximumX,
       );
       const badgeY = clampValue(
-        visibleRect.top - badgeHeight / 2,
-        visibleRect.top,
-        visibleRect.bottom - badgeHeight,
+        visible.top - badgeHeight / 2,
+        minimumY,
+        maximumY,
       );
 
       // …and shifted left while it would sit on an earlier badge (nested
@@ -571,11 +579,10 @@ export function createAnnotationOverlay(options: {
             other.y < badgeY + badgeHeight,
         )
       ) {
-        const nextBadgeX = badgeX - badgeWidth - 4;
-        if (nextBadgeX < visibleRect.left && badgeX === visibleRect.left) {
+        if (badgeX - badgeWidth - 4 < minimumX) {
           break;
         }
-        badgeX = Math.max(visibleRect.left, nextBadgeX);
+        badgeX -= badgeWidth + 4;
       }
 
       placed.push({ x: badgeX, y: badgeY, width: badgeWidth, height: badgeHeight });
@@ -604,15 +611,15 @@ export function createAnnotationOverlay(options: {
       return null;
     }
 
-    let left = Math.max(0, rect.left);
-    let top = Math.max(0, rect.top);
-    let right = Math.min(viewport.width, rect.right);
-    let bottom = Math.min(viewport.height, rect.bottom);
+    let clipLeft = 0;
+    let clipTop = 0;
+    let clipRight = viewport.width;
+    let clipBottom = viewport.height;
     const view = doc.defaultView;
 
     for (
       let ancestor = element.parentElement;
-      ancestor && (left < right && top < bottom);
+      ancestor && clipLeft < clipRight && clipTop < clipBottom;
       ancestor = ancestor.parentElement
     ) {
       if (!view) {
@@ -625,22 +632,37 @@ export function createAnnotationOverlay(options: {
       const overflowY = style.overflowY || style.overflow;
 
       if (["hidden", "clip", "auto", "scroll"].includes(overflowX)) {
-        left = Math.max(left, ancestorRect.left + ancestor.clientLeft);
-        right = Math.min(
-          right,
+        clipLeft = Math.max(clipLeft, ancestorRect.left + ancestor.clientLeft);
+        clipRight = Math.min(
+          clipRight,
           ancestorRect.left + ancestor.clientLeft + ancestor.clientWidth,
         );
       }
       if (["hidden", "clip", "auto", "scroll"].includes(overflowY)) {
-        top = Math.max(top, ancestorRect.top + ancestor.clientTop);
-        bottom = Math.min(
-          bottom,
+        clipTop = Math.max(clipTop, ancestorRect.top + ancestor.clientTop);
+        clipBottom = Math.min(
+          clipBottom,
           ancestorRect.top + ancestor.clientTop + ancestor.clientHeight,
         );
       }
     }
 
-    return left < right && top < bottom ? { left, top, right, bottom } : null;
+    const left = Math.max(rect.left, clipLeft);
+    const top = Math.max(rect.top, clipTop);
+    const right = Math.min(rect.right, clipRight);
+    const bottom = Math.min(rect.bottom, clipBottom);
+
+    return left < right && top < bottom
+      ? {
+          visible: { left, top, right, bottom },
+          clipping: {
+            left: clipLeft,
+            top: clipTop,
+            right: clipRight,
+            bottom: clipBottom,
+          },
+        }
+      : null;
   }
 
   function reconcileEntries() {
@@ -936,8 +958,8 @@ export function createAnnotationOverlay(options: {
 
     const rect = element.getBoundingClientRect();
     const viewport = readViewport();
-    const visibleRect = visibleElementRect(element, viewport);
-    const anchor = visibleRect ?? rect;
+    const elementRects = visibleElementRect(element, viewport);
+    const anchor = elementRects?.visible ?? rect;
     const height =
       editorBox.getBoundingClientRect().height || editorBox.offsetHeight;
 

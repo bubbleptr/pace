@@ -621,6 +621,49 @@ describe("annotation overlay", () => {
     expect(h.captures[0]?.annotations).toHaveLength(1);
   });
 
+  it("keeps the badge usable when its target is smaller than the badge", () => {
+    const h = harness();
+    const button = document.getElementById("cta")!;
+
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue(
+      rectAt(40, 40, 16, 16),
+    );
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "small target");
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    const badge = badges(h)[0]!;
+
+    expect(outline.style.width).toBe("16px");
+    expect(outline.style.height).toBe("16px");
+    expect(badge.style.display).toBe("flex");
+    expect(badge.style.left).toBe("46px");
+    expect(badge.style.top).toBe("30px");
+  });
+
+  it("keeps the badge visible when only a sliver of its target intersects the viewport", () => {
+    const h = harness();
+    const button = document.getElementById("cta")!;
+
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue(
+      rectAt(-18, 40, 20, 20),
+    );
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "partially visible");
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    const badge = badges(h)[0]!;
+
+    expect(outline.style.left).toBe("0px");
+    expect(outline.style.width).toBe("2px");
+    expect(badge.style.display).toBe("flex");
+    expect(badge.style.left).toBe("8px");
+  });
+
   it("clips marks and badge placement to nested scrolling ancestors", () => {
     const h = harness();
     const outer = document.createElement("section");
@@ -654,6 +697,16 @@ describe("annotation overlay", () => {
     expect(Number.parseFloat(badge.style.left) + 20).toBeLessThanOrEqual(120);
     expect(Number.parseFloat(badge.style.top)).toBeGreaterThanOrEqual(60);
     expect(Number.parseFloat(badge.style.top) + 20).toBeLessThanOrEqual(120);
+    expect(badge.style.left).toBe("100px");
+    expect(badge.style.top).toBe("60px");
+
+    vi.mocked(button.getBoundingClientRect).mockReturnValue(
+      rectAt(130, 130, 20, 20),
+    );
+    h.overlay.prepareCapture();
+
+    expect(outline.style.display).toBe("none");
+    expect(badge.style.display).toBe("none");
   });
 
   it("rebinds a uniquely selected DOM replacement and keeps its stable annotation id", () => {
@@ -661,6 +714,7 @@ describe("annotation overlay", () => {
     const original = place(document.getElementById("cta")!, 40, 40);
     h.overlay.setDesignMode(true);
     annotate(h, original, "Original comment");
+    const originalId = h.latest()[0]!.id;
     clickPageElement(original);
     expect(editorVisible(h)).toBe(true);
 
@@ -680,7 +734,7 @@ describe("annotation overlay", () => {
 
     expect(h.latest()).toHaveLength(1);
     expect(h.latest()[0]).toMatchObject({
-      id: expect.any(String),
+      id: originalId,
       index: 1,
       selector: "#cta",
       rect: { x: 120, y: 130 },
@@ -721,13 +775,13 @@ describe("annotation overlay", () => {
     annotate(h, button, "first");
     annotate(h, paragraph, "second");
     const survivingBadge = badges(h)[1]!;
-    expect(survivingBadge.style.left).toBe("40px");
+    expect(survivingBadge.style.left).toBe("46px");
 
     clickPageElement(button);
     editorButton(h, "delete").click();
 
     expect(survivingBadge.textContent).toBe("1");
-    expect(survivingBadge.style.left).toBe("60px");
+    expect(survivingBadge.style.left).toBe("70px");
     expect(h.latest()).toHaveLength(1);
   });
 
