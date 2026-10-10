@@ -15,6 +15,30 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.3.0",
+    date: "2026-10-10",
+    title: "Comment on pages in the browser",
+    summary: "Annotate pages in the embedded browser: click an element or drag over an area, write a comment, and send it to Pi with a cropped screenshot of exactly what you marked.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.3.0",
+    changes: [
+      {
+        kind: "added",
+        title: "Browser comments",
+        description: "Turn on Annotate in the Browser panel (Cmd/Ctrl+Shift+A) and click an element to write a comment. Enter saves it and keeps annotating, Shift+Enter adds a line, and Cmd/Ctrl+Enter saves and sends. Each comment appears in the composer under Browser comments and is sent after your message with a cropped screenshot; removing its chip deletes it.",
+      },
+      {
+        kind: "added",
+        title: "Drag to comment on an area",
+        description: "In annotation mode, drag over part of a page to comment on that area instead of a single element. The screenshot is cropped around the area, and Pi is told where it sits in the screenshot and in the page.",
+      },
+      {
+        kind: "improved",
+        title: "Comments survive reloads",
+        description: "Comments belong to the Session, not the page. Reloading or returning to the same URL puts the markers back; if the element is gone, the comment is marked stale and can still be sent with its original screenshot. Comments are discarded when the window closes.",
+      },
+    ],
+  },
+  {
     version: "0.2.1",
     date: "2026-10-07",
     title: "Sending a prompt no longer crashes the window",
