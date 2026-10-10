@@ -122,8 +122,12 @@ async function readBrowserViewWidth(app: ElectronApplication) {
 /**
  * The comment editor lives in the isolated world's closed shadow root —
  * unreachable for `evaluate` — so the comment goes in as real input on the
- * focused textarea (`insertText`), and Enter is a real key press the
- * overlay's window-capture handler sees.
+ * focused textarea and Enter is a real key press the overlay's window-capture
+ * handler sees. Every character goes through `sendInputEvent` as a `char`
+ * event rather than `insertText`: the two travel to the renderer on
+ * different channels, so on a slow runner Enter could be handled before the
+ * text landed. `char` events share Enter's path through the input router,
+ * which keeps them ordered.
  */
 async function typeAndSaveComment(app: ElectronApplication, text: string) {
   await app.evaluate(({ BrowserWindow }, value) => {
@@ -134,7 +138,9 @@ async function typeAndSaveComment(app: ElectronApplication, text: string) {
       .filter((child) => child.webContents.getURL() !== "");
     const view = views.at(-1);
 
-    view?.webContents.insertText(value);
+    for (const ch of value) {
+      view?.webContents.sendInputEvent({ type: "char", keyCode: ch });
+    }
     view?.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
     view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
   }, text);
@@ -205,14 +211,19 @@ test("Browser surface loads a page, follows the panel, and keeps popups in place
       .poll(() => readBrowserViewWidth(testApp.app))
       .not.toBe(widthBeforeResize);
 
-    const placeholder = (await window
-      .getByTestId("browser-viewport")
-      .boundingBox())!;
+    // The native view follows the DOM placeholder with an IPC round-trip of
+    // lag, so a single read can catch it mid-sync on a slow runner — poll
+    // until it lands, re-measuring the placeholder on every attempt.
+    await expect
+      .poll(async () => {
+        const placeholder = await window
+          .getByTestId("browser-viewport")
+          .boundingBox();
+        const viewWidth = await readBrowserViewWidth(testApp.app);
 
-    expect(await readBrowserViewWidth(testApp.app)).toBeCloseTo(
-      placeholder.width,
-      0,
-    );
+        return placeholder ? Math.abs(viewWidth - placeholder.width) : NaN;
+      })
+      .toBeLessThanOrEqual(1);
 
     // Hovering the rail opens a tooltip the native view would paint over. In
     // Chromium the layer opens through `showPopover()`, which mutates no
