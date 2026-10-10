@@ -16,7 +16,8 @@ describe("formatBrowserAnnotationPrompt", () => {
         screenshot: true,
         elements: [
           {
-            index: 1,
+            id: "e1",
+          index: 1,
             selector: "#cta",
             tag: "button",
             text: "Get started",
@@ -51,12 +52,14 @@ describe("formatBrowserAnnotationPrompt", () => {
         screenshot: true,
         elements: [
           {
-            index: 1,
+            id: "e1",
+          index: 1,
             selector: "main > p:nth-of-type(2)",
             tag: "p",
             rect: { x: 0, y: 0, width: 10, height: 10 },
           },
           {
+            id: "e2",
             index: 2,
             selector: "[data-testid=\"row\"]",
             tag: "li",
@@ -91,7 +94,8 @@ describe("formatBrowserAnnotationPrompt", () => {
         screenshot: false,
         elements: [
           {
-            index: 1,
+            id: "e1",
+          index: 1,
             selector: "#cta",
             tag: "button",
             text: "Get started",
@@ -123,6 +127,7 @@ describe("formatBrowserAnnotationPrompt", () => {
       screenshot: true,
       elements: [
         {
+          id: "e1",
           index: 1,
           selector: "#cta",
           tag: "button",

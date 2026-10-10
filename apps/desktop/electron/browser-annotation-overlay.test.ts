@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BrowserAnnotationElement,
+  BrowserAnnotationPalette,
   BrowserAnnotationViewport,
 } from "@/shared/browser-protocol";
 import {
@@ -12,8 +13,8 @@ import {
 /**
  * The overlay lives in a closed shadow root, which is exactly what makes it
  * unreachable from the page — and from a test. Capturing the roots as they are
- * attached is the only way to drive the comment bubble the way a user does;
- * everything else is asserted through the callbacks the preload subscribes to.
+ * attached is the only way to drive the editor the way a user does; everything
+ * else is asserted through the callbacks the preload subscribes to.
  */
 const shadowRoots: ShadowRoot[] = [];
 let overlay: BrowserAnnotationOverlay | null = null;
@@ -54,24 +55,90 @@ function clickPageElement(element: Element) {
   );
 }
 
-function pressKey(target: EventTarget, key: string) {
-  target.dispatchEvent(
-    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, composed: true }),
+function hoverPageElement(element: Element) {
+  element.dispatchEvent(
+    new MouseEvent("pointermove", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    }),
   );
 }
 
-function rectAt(x: number, y: number) {
+function pressKey(target: EventTarget, key: string, init: KeyboardEventInit = {}) {
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      ...init,
+    }),
+  );
+}
+
+function rectAt(x: number, y: number, width = 40, height = 20) {
   return {
     x,
     y,
-    width: 40,
-    height: 20,
+    width,
+    height,
     left: x,
     top: y,
-    right: x + 40,
-    bottom: y + 20,
+    right: x + width,
+    bottom: y + height,
     toJSON: () => ({}),
   } as DOMRect;
+}
+
+/**
+ * jsdom measures nothing, and target resolution skips elements under 8px —
+ * every click target needs a rect or the climb lands on `<body>`.
+ */
+function place(element: Element, x = 40, y = 40) {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(rectAt(x, y));
+  return element;
+}
+
+function editor(h: ReturnType<typeof harness>) {
+  return h
+    .shadow()
+    .querySelector<HTMLElement>('[data-slot="annotation-editor"]')!;
+}
+
+function editorInput(h: ReturnType<typeof harness>) {
+  return h
+    .shadow()
+    .querySelector<HTMLTextAreaElement>('[data-slot="annotation-editor-input"]')!;
+}
+
+function editorButton(h: ReturnType<typeof harness>, slot: string) {
+  return h
+    .shadow()
+    .querySelector<HTMLButtonElement>(`[data-slot="annotation-editor-${slot}"]`)!;
+}
+
+function editorVisible(h: ReturnType<typeof harness>) {
+  return editor(h).style.display !== "none";
+}
+
+function typeDraft(h: ReturnType<typeof harness>, text: string) {
+  const input = editorInput(h);
+  input.value = text;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Click, type, Enter — the full path from pointer to saved annotation. */
+function annotate(h: ReturnType<typeof harness>, element: Element, text: string) {
+  clickPageElement(element);
+  typeDraft(h, text);
+  pressKey(editorInput(h), "Enter");
+}
+
+function badges(h: ReturnType<typeof harness>) {
+  return Array.from(
+    h.shadow().querySelectorAll<HTMLElement>('[data-slot="annotation-badge"]'),
+  );
 }
 
 /** jsdom runs rAF on a timer; two frames is enough for a scheduled sync. */
@@ -80,6 +147,15 @@ function nextFrames() {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
 }
+
+const fullPalette: BrowserAnnotationPalette = {
+  accent: "rgb(1, 2, 3)",
+  accentForeground: "rgb(4, 5, 6)",
+  surface: "rgb(7, 8, 9)",
+  foreground: "rgb(10, 11, 12)",
+  border: "rgb(13, 14, 15)",
+  muted: "rgb(16, 17, 18)",
+};
 
 beforeEach(() => {
   const attachShadow = Element.prototype.attachShadow;
@@ -94,133 +170,396 @@ beforeEach(() => {
     shadowRoots.push(root);
     return root;
   });
-  document.body.innerHTML = '<main><button id="cta">Go</button><p id="copy">c</p></main>';
+  document.body.innerHTML =
+    '<main><button id="cta">Go</button><p id="copy">c</p></main>';
 });
 
 afterEach(() => {
   overlay?.dispose();
   overlay = null;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("annotation overlay", () => {
-  it("marks an element only while design mode is on, and keeps the click from the page", () => {
-    const { overlay, annotationChanges, latest } = harness();
+  it("opens a focused editor on click and reports nothing until it is saved", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
     const pageClicks = vi.fn();
-    const button = document.getElementById("cta")!;
 
     button.addEventListener("click", pageClicks);
-
     clickPageElement(button);
 
-    expect(annotationChanges).toHaveLength(0);
     expect(pageClicks).toHaveBeenCalledTimes(1);
+    expect(h.annotationChanges).toHaveLength(0);
 
-    overlay.setDesignMode(true);
+    h.overlay.setDesignMode(true);
     clickPageElement(button);
 
     // The page must not act on a click the user meant as "mark this".
     expect(pageClicks).toHaveBeenCalledTimes(1);
-    expect(latest()).toHaveLength(1);
-    expect(latest()[0]).toMatchObject({ index: 1, selector: "#cta", tag: "button" });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.shadow().activeElement).toBe(editorInput(h));
+
+    // A draft is not an annotation yet: main hears nothing while it is typed.
+    typeDraft(h, "Too small to hit");
+    expect(h.annotationChanges).toHaveLength(0);
+    // Main clamps comments at the same ceiling when it rebuilds them.
+    expect(editorInput(h).maxLength).toBe(500);
   });
 
-  it("numbers markers in the order they were clicked", () => {
-    const { overlay, latest } = harness();
+  it("cannot save an empty comment — Save is disabled and Enter does nothing", () => {
+    const h = harness();
 
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
-    clickPageElement(document.getElementById("copy")!);
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
 
-    expect(latest().map((annotation) => [annotation.index, annotation.selector])).toEqual([
-      [1, "#cta"],
-      [2, "#copy"],
-    ]);
+    const save = editorButton(h, "save");
+
+    expect(save.disabled).toBe(true);
+
+    pressKey(editorInput(h), "Enter");
+    typeDraft(h, "   ");
+    pressKey(editorInput(h), "Enter");
+
+    expect(editorVisible(h)).toBe(true);
+    expect(h.annotationChanges).toHaveLength(0);
   });
 
-  it("leaves design mode on Escape and keeps the marks that were made", () => {
-    const { overlay, designModeChanges, latest } = harness();
+  it("saves on Enter and stays in annotation mode", () => {
+    const h = harness();
 
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
+    h.overlay.setDesignMode(true);
+    annotate(h, place(document.getElementById("cta")!), "Too small to hit");
 
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-    );
-
-    expect(designModeChanges).toEqual([false]);
-
-    // Marks outlive design mode — they are what the screenshot has to show.
-    clickPageElement(document.getElementById("copy")!);
-    expect(latest()).toHaveLength(1);
-  });
-
-  it("reports the page's own viewport alongside the marks", () => {
-    const { overlay, viewports } = harness();
-
-    for (const [property, value] of Object.entries({
-      innerWidth: 684,
-      innerHeight: 820,
-      devicePixelRatio: 2,
-    })) {
-      Object.defineProperty(window, property, { configurable: true, value });
-    }
-
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
-
-    // The marks are measured in the page's viewport, not the panel's rect —
-    // and the panel can be resized between marking and sending.
-    expect(viewports[viewports.length - 1]).toEqual({
-      width: 684,
-      height: 820,
-      dpr: 2,
+    expect(h.latest()).toHaveLength(1);
+    expect(h.latest()[0]).toMatchObject({
+      index: 1,
+      selector: "#cta",
+      tag: "button",
+      comment: "Too small to hit",
     });
+    expect(typeof h.latest()[0]!.id).toBe("string");
+    expect(h.designModeChanges).toEqual([]);
+    expect(editorVisible(h)).toBe(false);
+    expect(badges(h)[0]?.textContent).toBe("1");
   });
 
-  it("settles the overlay before a capture and acks what the page then holds", () => {
-    const { overlay, shadow, captures } = harness();
+  it("keeps Shift+Enter as a newline instead of saving", () => {
+    const h = harness();
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
+    typeDraft(h, "line one");
+    editorInput(h).dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(editorVisible(h)).toBe(true);
+    expect(h.annotationChanges).toHaveLength(0);
+  });
+
+  it("cancels the editor on first Escape and leaves the mode on the second", () => {
+    const h = harness();
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
+    typeDraft(h, "half-typed");
+    pressKey(editorInput(h), "Escape");
+
+    expect(editorVisible(h)).toBe(false);
+    expect(h.designModeChanges).toEqual([]);
+    expect(h.annotationChanges).toHaveLength(0);
+
+    pressKey(window, "Escape");
+
+    expect(h.designModeChanges).toEqual([false]);
+  });
+
+  it("reverts an existing annotation's text when its edit is cancelled", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "saved text");
+    clickPageElement(button);
+
+    expect(editorInput(h).value).toBe("saved text");
+
+    typeDraft(h, "changed mind");
+    editorButton(h, "cancel").click();
+
+    expect(editorVisible(h)).toBe(false);
+    expect(h.latest()[0]!.comment).toBe("saved text");
+    expect(h.latest()).toHaveLength(1);
+  });
+
+  it("opens the annotation's own editor when its element or badge is re-clicked", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "first note");
+    clickPageElement(button);
+
+    // Editing, not duplicating: the Delete button only exists for a saved mark.
+    expect(editorInput(h).value).toBe("first note");
+    expect(editorButton(h, "delete").style.display).not.toBe("none");
+    expect(h.latest()).toHaveLength(1);
+
+    pressKey(editorInput(h), "Escape");
+    badges(h)[0]!.click();
+
+    expect(editorInput(h).value).toBe("first note");
+    expect(h.latest()).toHaveLength(1);
+  });
+
+  it("deletes a mark and renumbers the rest contiguously", () => {
+    const h = harness();
+    const cta = place(document.getElementById("cta")!, 40, 40);
+    const copy = place(document.getElementById("copy")!, 40, 300);
+
+    h.overlay.setDesignMode(true);
+    annotate(h, cta, "first");
+    annotate(h, copy, "second");
+    clickPageElement(cta);
+    editorButton(h, "delete").click();
+
+    expect(h.latest()).toHaveLength(1);
+    expect(h.latest()[0]).toMatchObject({ index: 1, selector: "#copy", comment: "second" });
+    expect(badges(h).map((badge) => badge.textContent)).toEqual(["1"]);
+  });
+
+  it("keeps a dirty draft when another element is clicked, shaking instead of switching", () => {
+    const h = harness();
+    const cta = place(document.getElementById("cta")!, 40, 40);
+    const copy = place(document.getElementById("copy")!, 40, 300);
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(cta);
+    typeDraft(h, "not finished");
+    clickPageElement(copy);
+
+    // The draft the user was typing survives — a click is not a discard.
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("not finished");
+    expect(h.annotationChanges).toHaveLength(0);
+  });
+
+  it("discards an untouched draft when another element is clicked", () => {
+    const h = harness();
+    const cta = place(document.getElementById("cta")!, 40, 40);
+    const copy = place(document.getElementById("copy")!, 40, 300);
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(cta);
+    clickPageElement(copy);
+
+    // The new target owns the editor: it hangs below the second element.
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("");
+    expect(editor(h).style.top).toBe(`${300 + 20 + 8}px`);
+  });
+
+  it("flips the editor above an element near the viewport's bottom edge", () => {
+    const h = harness();
+
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 200 });
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!, 40, 170));
+
+    // jsdom's editor measures 0px tall, so above sits at top − 8.
+    expect(editor(h).style.top).toBe(`${170 - 8}px`);
+  });
+
+  it("lets ↑ climb to the parent and ↓ return, and annotates the adjusted target", () => {
+    const h = harness();
+    const wrap = place(document.querySelector("main")!, 8, 8);
+    const button = place(document.getElementById("cta")!, 40, 40);
+
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
+    pressKey(window, "ArrowUp");
+    pressKey(window, "ArrowDown");
+    pressKey(window, "ArrowUp");
+    clickPageElement(button);
+    typeDraft(h, "the whole row");
+    pressKey(editorInput(h), "Enter");
+
+    expect(h.latest()[0]).toMatchObject({ index: 1, tag: "main" });
+    expect(button.parentElement).toBe(wrap);
+  });
+
+  it("ignores Enter and Escape while an IME composition is active", () => {
+    const h = harness();
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
+    typeDraft(h, "half-typed");
+
+    // Enter inside a composition confirms a candidate — saving half a phrase
+    // is the bug this guard exists for. keyCode 229 is Chromium's composition
+    // marker on platforms that do not set isComposing.
+    pressKey(editorInput(h), "Enter", { isComposing: true });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.annotationChanges).toHaveLength(0);
+
+    pressKey(editorInput(h), "Enter", { keyCode: 229 });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.annotationChanges).toHaveLength(0);
+
+    pressKey(editorInput(h), "Escape", { isComposing: true });
+    expect(editorVisible(h)).toBe(true);
+    expect(h.designModeChanges).toEqual([]);
+
+    // Once the composition commits, the same keys work again.
+    pressKey(editorInput(h), "Enter");
+    expect(h.latest()[0]!.comment).toBe("half-typed");
+  });
+
+  it("toggles annotation mode on Cmd/Ctrl+Shift+A and reports it", () => {
+    const h = harness();
+
+    pressKey(window, "a", { code: "KeyA", shiftKey: true, metaKey: true });
+
+    expect(h.designModeChanges).toEqual([true]);
+
+    pressKey(window, "a", { code: "KeyA", shiftKey: true, ctrlKey: true });
+
+    expect(h.designModeChanges).toEqual([true, false]);
+    // A bare Cmd+A is the page's own shortcut and must not toggle.
+    pressKey(window, "a", { code: "KeyA", metaKey: true });
+    expect(h.designModeChanges).toEqual([true, false]);
+  });
+
+  it("falls back per colour when the page cannot parse a palette value", () => {
+    const h = harness();
+
+    // jsdom's CSS has no `supports`, which the overlay treats as "unsupported"
+    // — stub the whole global, keeping `escape` for the selector builder.
+    vi.stubGlobal("CSS", {
+      escape: CSS.escape,
+      supports: (_property: string, value: string) => value === "rgb(4, 5, 6)",
+    });
+
+    h.overlay.setDesignMode(true, fullPalette);
+    annotate(h, place(document.getElementById("cta")!), "hi");
+
+    const badge = badges(h)[0]!;
+
+    // The bad accent falls back alone; a good accentForeground still lands.
+    // jsdom normalises colours to rgb(), so the default reads back expanded.
+    expect(badge.style.backgroundColor).toBe("rgb(109, 40, 217)");
+    expect(badge.style.color).toBe("rgb(4, 5, 6)");
+  });
+
+  it("shows the mode frame and pill only while annotating", () => {
+    const h = harness();
+    const frame = () =>
+      h.shadow().querySelector<HTMLElement>('[data-slot="annotation-frame"]')!;
+    const pill = () =>
+      h.shadow().querySelector<HTMLElement>('[data-slot="annotation-pill"]')!;
+
+    h.overlay.setDesignMode(true);
+
+    expect(frame().style.display).toBe("block");
+    expect(pill().textContent).toContain("Esc to exit");
+
+    h.overlay.setDesignMode(false);
+
+    expect(frame().style.display).toBe("none");
+    expect(pill().style.display).toBe("none");
+  });
+
+  it("labels the hover box with the tag, first class, size and source", () => {
+    const h = harness();
     const button = document.getElementById("cta")!;
+
+    button.classList.add("primary-cta", "ignored");
+    button.setAttribute("data-source", "src/cta.tsx:9");
+    place(button, 40, 40);
+
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
+
+    const label = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-highlight-label"]')!;
+
+    expect(label.hidden).toBe(false);
+    expect(label.textContent).toBe("button.primary-cta · 40×20 · src/cta.tsx:9");
+  });
+
+  it("saves a non-empty draft on prepareCapture and hides all chrome but the marks", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
 
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
 
-    overlay.setDesignMode(true);
-    button.dispatchEvent(
-      new MouseEvent("pointermove", { bubbles: true, cancelable: true, composed: true }),
-    );
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
     clickPageElement(button);
-    clickPageElement(shadow().querySelector('[data-slot="annotation-badge"]')!);
+    typeDraft(h, "typed as the shot was asked for");
 
-    const comment = shadow().querySelector<HTMLInputElement>(
-      '[data-slot="annotation-comment"]',
-    )!;
-    const highlight = shadow().querySelector<HTMLElement>(
-      '[data-slot="annotation-highlight"]',
-    )!;
+    h.overlay.prepareCapture();
 
-    comment.value = "Too small to hit";
-
-    overlay.prepareCapture();
-
-    // Nothing of the overlay's own chrome may reach the screenshot, and the
-    // comment being typed has to reach the payload — a keyboard-driven Send
-    // never blurs the input, so committing on the way out is the only chance.
-    expect(comment.hidden).toBe(true);
-    expect(highlight.hidden).toBe(true);
-    expect(captures[captures.length - 1]).toEqual({
-      annotations: [expect.objectContaining({ index: 1, comment: "Too small to hit" })],
-      // Measured now: the panel may have been dragged since the mark was made.
+    // The draft the user was still typing has to reach the payload — a Send
+    // driven from the toolbar never blurs the textarea.
+    expect(h.captures).toHaveLength(1);
+    expect(h.captures[0]).toEqual({
+      annotations: [
+        expect.objectContaining({ index: 1, comment: "typed as the shot was asked for" }),
+      ],
       viewport: { width: 900, height: window.innerHeight, dpr: window.devicePixelRatio },
     });
+
+    const shadow = h.shadow();
+
+    for (const slot of [
+      "annotation-editor",
+      "annotation-highlight",
+      "annotation-highlight-label",
+      "annotation-frame",
+      "annotation-pill",
+    ]) {
+      const element = shadow.querySelector<HTMLElement>(`[data-slot="${slot}"]`)!;
+      expect(element.hidden === true || element.style.display === "none").toBe(true);
+    }
+
+    // Marks stay in the shot: the numbered rows in the prompt point at them.
+    expect(badges(h)[0]!.style.display).not.toBe("none");
+    expect(
+      shadow.querySelector<HTMLElement>('[data-slot="annotation-outline"]')!.style
+        .display,
+    ).not.toBe("none");
+
+    // The shot is done: the mode chrome comes back, still annotating.
+    h.overlay.finishCapture();
+    expect(
+      shadow.querySelector<HTMLElement>('[data-slot="annotation-frame"]')!.style.display,
+    ).toBe("block");
+  });
+
+  it("discards an empty draft on prepareCapture instead of inventing a mark", () => {
+    const h = harness();
+
+    h.overlay.setDesignMode(true);
+    clickPageElement(place(document.getElementById("cta")!));
+    h.overlay.prepareCapture();
+
+    expect(h.captures[0]?.annotations).toEqual([]);
+    expect(h.annotationChanges).toHaveLength(0);
   });
 
   it("drops the hover highlight when the pointer leaves the page", () => {
-    const { overlay, shadow } = harness();
-    const button = document.getElementById("cta")!;
-    const hover = (target: Element) =>
-      target.dispatchEvent(
-        new MouseEvent("pointermove", { bubbles: true, cancelable: true, composed: true }),
-      );
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
     const leave = (target: Element, relatedTarget: Element | null) =>
       target.dispatchEvent(
         new MouseEvent("mouseout", {
@@ -231,12 +570,12 @@ describe("annotation overlay", () => {
         }),
       );
 
-    overlay.setDesignMode(true);
-    hover(button);
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
 
-    const highlight = shadow().querySelector<HTMLElement>(
-      '[data-slot="annotation-highlight"]',
-    )!;
+    const highlight = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-highlight"]')!;
 
     expect(highlight.hidden).toBe(false);
 
@@ -253,71 +592,17 @@ describe("annotation overlay", () => {
   });
 
   it("ignores clicks that land on its own overlay", () => {
-    const { overlay, annotationChanges } = harness();
+    const h = harness();
 
-    overlay.setDesignMode(true);
+    h.overlay.setDesignMode(true);
+    clickPageElement(document.querySelector(annotationOverlayHostTag)!);
 
-    const host = document.querySelector(annotationOverlayHostTag)!;
-
-    clickPageElement(host);
-
-    expect(annotationChanges).toHaveLength(0);
-  });
-
-  it("sends a comment once it is committed, not on every keystroke", () => {
-    const { overlay, shadow, annotationChanges, latest } = harness();
-
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
-
-    const badge = shadow().querySelector<HTMLElement>('[data-slot="annotation-badge"]')!;
-    const comment = shadow().querySelector<HTMLInputElement>(
-      '[data-slot="annotation-comment"]',
-    )!;
-
-    expect(badge.textContent).toBe("1");
-    expect(comment.hidden).toBe(true);
-
-    clickPageElement(badge);
-    expect(comment.hidden).toBe(false);
-
-    const changesBeforeTyping = annotationChanges.length;
-
-    comment.value = "This button is too small";
-    comment.dispatchEvent(new Event("input", { bubbles: true }));
-
-    // Typing must not cost an IPC round trip per character.
-    expect(annotationChanges).toHaveLength(changesBeforeTyping);
-
-    // Enter closes the bubble. The overlay's own keydown handler runs in the
-    // capture phase at the window, so it is the only one that can see this.
-    pressKey(comment, "Enter");
-
-    expect(comment.hidden).toBe(true);
-    expect(latest()[0]!.comment).toBe("This button is too small");
-  });
-
-  it("closes an open bubble on Escape before it stops marking, keeping the text", () => {
-    const { overlay, shadow, designModeChanges, latest } = harness();
-
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
-    clickPageElement(shadow().querySelector('[data-slot="annotation-badge"]')!);
-
-    const comment = shadow().querySelector<HTMLInputElement>(
-      '[data-slot="annotation-comment"]',
-    )!;
-
-    comment.value = "Too small";
-    pressKey(comment, "Escape");
-
-    expect(comment.hidden).toBe(true);
-    expect(designModeChanges).toEqual([]);
-    expect(latest()[0]!.comment).toBe("Too small");
+    expect(shadowRoots[0]!.querySelector('[data-slot="annotation-editor"]')).toBeNull();
+    expect(h.annotationChanges).toHaveLength(0);
   });
 
   it("marks the element inside the page's own shadow root, not its host", () => {
-    const { overlay, latest } = harness();
+    const h = harness();
     const widget = document.createElement("div");
 
     widget.id = "widget";
@@ -326,85 +611,140 @@ describe("annotation overlay", () => {
     const inner = document.createElement("a");
 
     inner.textContent = "Inner link";
+    inner.href = "https://example.com";
     widget.attachShadow({ mode: "open" }).append(inner);
+    place(inner, 60, 60);
 
-    overlay.setDesignMode(true);
+    h.overlay.setDesignMode(true);
     clickPageElement(inner);
+    typeDraft(h, "shadow");
+    pressKey(editorInput(h), "Enter");
 
     // `event.target` is retargeted to the host at the window; the composed
     // path still names what the user actually pointed at.
-    expect(latest()[0]).toMatchObject({ tag: "a", text: "Inner link" });
+    expect(h.latest()[0]).toMatchObject({ tag: "a", text: "Inner link" });
   });
 
-  it("keeps a marker on its element as the page scrolls", async () => {
-    const { overlay, shadow } = harness();
+  it("keeps a mark on its element as the page scrolls", async () => {
+    const h = harness();
     const button = document.getElementById("cta")!;
     const measure = vi.spyOn(button, "getBoundingClientRect");
 
     measure.mockReturnValue(rectAt(12, 200));
-    overlay.setDesignMode(true);
-    clickPageElement(button);
+    h.overlay.setDesignMode(true);
+    annotate(h, button, "scroll test");
 
-    const marker = shadow().querySelector<HTMLElement>('[data-slot="annotation-marker"]')!;
+    const outline = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-outline"]')!;
 
-    expect(marker.style.top).toBe("200px");
+    expect(outline.style.top).toBe("200px");
 
     measure.mockReturnValue(rectAt(12, 40));
     window.dispatchEvent(new Event("scroll"));
     await nextFrames();
 
-    // A marker pinned to where the element was would sit over the wrong thing
-    // in the page and on S3's screenshot.
-    expect(marker.style.top).toBe("40px");
+    // A mark pinned to where the element was would sit over the wrong thing
+    // in the page and on the screenshot.
+    expect(outline.style.top).toBe("40px");
 
-    // An element a re-render took away has no position to sit at; the marker
+    // An element a re-render took away has no position to sit at; the mark
     // must not fall back to the top-left corner of the viewport.
     button.remove();
     window.dispatchEvent(new Event("scroll"));
     await nextFrames();
 
-    expect(marker.style.display).toBe("none");
+    expect(outline.style.display).toBe("none");
+    expect(badges(h)[0]!.style.display).toBe("none");
   });
 
-  it("arms its markers when the overlay is built after design mode was on", () => {
-    const { overlay, shadow } = harness();
-    const root = document.documentElement;
+  it("moves the open editor with its element on scroll", async () => {
+    const h = harness();
     const button = document.getElementById("cta")!;
+    const measure = vi.spyOn(button, "getBoundingClientRect");
+
+    measure.mockReturnValue(rectAt(40, 40));
+    // Tests that reshape the viewport leak it (defineProperty survives
+    // restoreAllMocks), so this one states its own height.
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 600,
+    });
+    h.overlay.setDesignMode(true);
+    clickPageElement(button);
+
+    expect(editor(h).style.top).toBe(`${40 + 20 + 8}px`);
+
+    measure.mockReturnValue(rectAt(40, 200));
+    window.dispatchEvent(new Event("scroll"));
+    await nextFrames();
+
+    // Scrolling is not blocked while a comment is being typed, so an editor
+    // that stayed behind would be writing about the wrong element.
+    expect(editor(h).style.top).toBe(`${200 + 20 + 8}px`);
+  });
+
+  it("moves the hover highlight and its label with the element on scroll", async () => {
+    const h = harness();
+    const button = document.getElementById("cta")!;
+    const measure = vi.spyOn(button, "getBoundingClientRect");
+
+    measure.mockReturnValue(rectAt(40, 40));
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
+
+    const highlight = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-highlight"]')!;
+
+    expect(highlight.style.top).toBe("40px");
+
+    measure.mockReturnValue(rectAt(40, 120));
+    window.dispatchEvent(new Event("scroll"));
+    await nextFrames();
+
+    expect(highlight.style.top).toBe("120px");
+  });
+
+  it("arms its marks when the overlay is built after design mode was on", () => {
+    const h = harness();
+    const root = document.documentElement;
+    const button = place(document.getElementById("cta")!);
 
     // A preload runs before the document has a root element to hang the
     // overlay on, and main re-applies design mode the moment it reports in.
     root.remove();
-    overlay.setDesignMode(true);
+    h.overlay.setDesignMode(true);
     document.append(root);
 
     clickPageElement(button);
 
     expect(
-      shadow().querySelector<HTMLElement>('[data-slot="annotation-markers"]')!.style
+      h.shadow().querySelector<HTMLElement>('[data-slot="annotation-markers"]')!.style
         .pointerEvents,
     ).toBe("auto");
   });
 
   it("clears every mark on demand", () => {
-    const { overlay, latest, shadow } = harness();
+    const h = harness();
 
-    overlay.setDesignMode(true);
-    clickPageElement(document.getElementById("cta")!);
-    overlay.clearAnnotations();
+    h.overlay.setDesignMode(true);
+    annotate(h, place(document.getElementById("cta")!), "gone");
+    h.overlay.clearAnnotations();
 
-    expect(latest()).toEqual([]);
-    expect(shadow().querySelector('[data-slot="annotation-badge"]')).toBeNull();
+    expect(h.latest()).toEqual([]);
+    expect(badges(h)).toHaveLength(0);
   });
 
   it("takes its overlay and its listeners with it when disposed", () => {
-    const { overlay, annotationChanges } = harness();
+    const h = harness();
 
-    overlay.setDesignMode(true);
-    overlay.dispose();
+    h.overlay.setDesignMode(true);
+    h.overlay.dispose();
 
     expect(document.querySelector(annotationOverlayHostTag)).toBeNull();
 
     clickPageElement(document.getElementById("cta")!);
-    expect(annotationChanges).toHaveLength(0);
+    expect(h.annotationChanges).toHaveLength(0);
   });
 });

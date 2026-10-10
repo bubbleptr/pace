@@ -119,6 +119,27 @@ async function readBrowserViewWidth(app: ElectronApplication) {
   return widths.at(-1) ?? 0;
 }
 
+/**
+ * The comment editor lives in the isolated world's closed shadow root —
+ * unreachable for `evaluate` — so the comment goes in as real input on the
+ * focused textarea (`insertText`), and Enter is a real key press the
+ * overlay's window-capture handler sees.
+ */
+async function typeAndSaveComment(app: ElectronApplication, text: string) {
+  await app.evaluate(({ BrowserWindow }, value) => {
+    const views = (BrowserWindow.getAllWindows()[0]?.contentView.children ?? [])
+      .filter(
+        (child): child is Electron.WebContentsView => "webContents" in child,
+      )
+      .filter((child) => child.webContents.getURL() !== "");
+    const view = views.at(-1);
+
+    view?.webContents.insertText(value);
+    view?.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    view?.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  }, text);
+}
+
 /** Opens the dock on the Browser surface, with no page loaded yet. */
 async function openBrowserSurface(testApp: PaceTestApplication) {
   const { window } = testApp;
@@ -262,7 +283,7 @@ test("Browser surface loads a page, follows the panel, and keeps popups in place
   }
 });
 
-test("Design mode marks a strict-CSP page, keeps the overlay to itself, and sends the marks to the composer", async () => {
+test("Annotate mode marks a strict-CSP page, keeps the overlay to itself, and sends the marks to the composer", async () => {
   const { server, origin } = await startPreviewServer();
   const testApp = await launchPace({
     seedSession: true,
@@ -285,7 +306,7 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
     // Page content can load before the renderer has synchronized native view bounds and visibility.
     await expect.poll(() => readBrowserViewVisible(testApp.app)).toBe(true);
 
-    await aside.getByRole("button", { name: "Design" }).click();
+    await aside.getByRole("button", { name: "Annotate" }).click();
 
     // The toolbar is plain buttons on purpose: a layer would trip the overlay
     // detection and the user would end up marking a frozen screenshot.
@@ -304,10 +325,14 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
 
     // Synthesized input cannot reach a native child view, so the page marks
     // itself; the isolated world's listener still sees the click (S0 spike).
+    // A click opens the draft editor — nothing is a mark until it is saved.
     await embedded.evaluate(() => document.getElementById("cta")!.click());
+    await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
+
+    await typeAndSaveComment(testApp.app, "Needs a bigger hit area");
 
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
     );
 
     // Everything the overlay draws stays behind a closed shadow root: the page
@@ -336,10 +361,9 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
 
     const composer = window.getByTestId("full-chat-composer");
 
-    // No comment was typed — the bubble lives in the closed shadow root, out of
-    // reach of any driver — so this also covers the uncommented row.
+    // The comment typed into the shadow-root editor is on the row Pi reads.
     await expect(composer.getByRole("combobox", { name: "Prompt" })).toHaveText(
-      /#1 `#cta` \(button\) — \(no comment\)/,
+      /#1 `#cta` \(button\) — Needs a bigger hit area/,
     );
     await expect(
       composer.getByAltText("browser-annotations.png"),
@@ -356,10 +380,9 @@ test("Design mode marks a strict-CSP page, keeps the overlay to itself, and send
       ),
     );
 
-    await expect(aside.getByRole("button", { name: "Design" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    await expect(
+      aside.getByRole("button", { name: "Annotate" }),
+    ).toHaveAttribute("aria-pressed", "false");
 
     await aside.getByRole("button", { name: "Clear marks" }).click();
     await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
@@ -397,7 +420,7 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     await window.keyboard.press("Enter");
     const first = await firstPage;
     await expect(first.locator("#cta")).toHaveText("Mark me");
-    await aside.getByRole("button", { name: "Design", exact: true }).click();
+    await aside.getByRole("button", { name: "Annotate", exact: true }).click();
     await expect
       .poll(() =>
         first.evaluate(() =>
@@ -406,8 +429,9 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
       )
       .toBe(true);
     await first.evaluate(() => document.getElementById("cta")!.click());
+    await typeAndSaveComment(testApp.app, "Pinned to tab one");
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
     );
 
     await aside.getByRole("button", { name: "New browser tab" }).click();
@@ -433,12 +457,12 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
       .toEqual([false, true]);
     await expect(aside.getByTestId("browser-annotation-count")).toHaveCount(0);
     await expect(
-      aside.getByRole("button", { name: "Design", exact: true }),
+      aside.getByRole("button", { name: "Annotate", exact: true }),
     ).toHaveAttribute("aria-pressed", "false");
 
     await aside.getByRole("tab", { name: "Browser 1" }).click();
     await expect(aside.getByTestId("browser-annotation-count")).toHaveText(
-      "1 marked",
+      "1 comment",
     );
     await expect
       .poll(async () =>
@@ -484,11 +508,11 @@ test("Browser tabs isolate views and marks, restore the Project group, and close
     const addressBounds = (await aside
       .getByRole("textbox", { name: "Address" })
       .boundingBox())!;
-    const designBounds = (await aside
-      .getByRole("button", { name: "Design", exact: true })
+    const annotateBounds = (await aside
+      .getByRole("button", { name: "Annotate", exact: true })
       .boundingBox())!;
     expect(addressBounds.x + addressBounds.width).toBeLessThanOrEqual(
-      designBounds.x,
+      annotateBounds.x,
     );
 
     // A reload remounts the renderer while main keeps the Session's pages.

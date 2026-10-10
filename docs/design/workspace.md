@@ -29,7 +29,7 @@
 
 ## BrowserSurface
 
-复合件：根只持 `state`，经 context 把状态交给子件。`state.kind` 为 `"narrow" | "unsupported" | "empty" | "live" | "error"`；`empty` 可用 `phase: "idle" | "initializing" | "opening" | "blank"`（无 phase 即 idle）。只有 `live` 渲染 viewport 占位（其 rect 驱动原生 `WebContentsView`）；`narrow` / `unsupported` 不画 chrome；零 tab 的 empty 显示 Astryx `EmptyState`。页面组合 `Tabs`（实例条）+ `Toolbar`（地址/导航/design mode）+ `Viewport`（占位、快照、notice、空态）。弹层出现时把 `snapshot` 传给 Viewport。
+复合件：根只持 `state`，经 context 把状态交给子件。`state.kind` 为 `"narrow" | "unsupported" | "empty" | "live" | "error"`；`empty` 可用 `phase: "idle" | "initializing" | "opening" | "blank"`（无 phase 即 idle）。只有 `live` 渲染 viewport 占位（其 rect 驱动原生 `WebContentsView`）；`narrow` / `unsupported` 不画 chrome；零 tab 的 empty 显示 Astryx `EmptyState`。页面组合 `Tabs`（实例条）+ `Toolbar`（地址/导航/Annotate 标注模式）+ `Viewport`（占位、快照、notice、空态）。弹层出现时把 `snapshot` 传给 Viewport。
 
 ```tsx
 <BrowserSurface state={state}>

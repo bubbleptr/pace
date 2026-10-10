@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { autoUpdater } from "electron-updater";
 import type { BackendRpcEvent, BackendRpcResponse } from "@pace/backend";
-import { browserEventChannel, type BrowserEvent, type BrowserTabTarget } from "@/shared/browser-protocol";
+import { browserEventChannel, type BrowserAnnotationPalette, type BrowserEvent, type BrowserTabTarget } from "@/shared/browser-protocol";
 import { updateEventChannel } from "@/shared/update-protocol";
 import {
   acceptBrowserAnnotationMessage,
@@ -543,12 +543,18 @@ function createBrowserView(target: BrowserTabTarget) {
       ),
     goBack: () => webContents.navigationHistory.goBack(),
     goForward: () => webContents.navigationHistory.goForward(),
-    setDesignMode: (enabled: boolean) =>
-      sendAnnotationCommand(webContents, { type: "set-design-mode", enabled }),
+    setDesignMode: (enabled: boolean, palette?: BrowserAnnotationPalette) =>
+      sendAnnotationCommand(webContents, {
+        type: "set-design-mode",
+        enabled,
+        ...(palette ? { palette } : {}),
+      }),
     clearAnnotations: () =>
       sendAnnotationCommand(webContents, { type: "clear-annotations" }),
     prepareCapture: () =>
       sendAnnotationCommand(webContents, { type: "prepare-capture" }),
+    finishCapture: () =>
+      sendAnnotationCommand(webContents, { type: "capture-done" }),
     reload: () => webContents.reload(),
     destroy: () => {
       browserAnnotationSenders.delete(webContents);
@@ -616,16 +622,20 @@ ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
   const host = getBrowserHost().tab(target);
 
   switch (message.type) {
-    case "ready":
+    case "ready": {
       // A new document carries a new overlay: no marks on it, and design mode
-      // has to be put back if the user never left it.
+      // — with the tab's last palette — has to be put back if the user never
+      // left it.
+      const palette = host.annotationPalette();
       sendAnnotationCommand(event.sender, {
         type: "set-design-mode",
         enabled: host.isDesignModeEnabled(),
+        ...(palette ? { palette } : {}),
       });
       host.recordAnnotations([], null);
       getBrowserHost().notify(target);
       break;
+    }
     case "annotations":
       // Kept on the host as well as forwarded: a capture whose prepare goes
       // unanswered falls back to the last marks that arrived here.

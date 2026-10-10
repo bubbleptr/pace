@@ -229,7 +229,7 @@ describe("BrowserSurface", () => {
 
     renderSurface({ onDesignModeChange });
 
-    await user.click(screen.getByRole("button", { name: "Design" }));
+    await user.click(screen.getByRole("button", { name: "Annotate" }));
 
     expect(onDesignModeChange).toHaveBeenCalledWith(true, expect.anything());
   });
@@ -247,7 +247,7 @@ describe("BrowserSurface", () => {
     view.rerender(<ComposedBrowserSurface {...props} annotationCount={2} isDesignMode />);
 
     expect(screen.getByTestId("browser-annotation-count")).toHaveTextContent(
-      "2",
+      "2 comments",
     );
     await user.click(screen.getByRole("button", { name: "Clear marks" }));
 
@@ -277,7 +277,7 @@ describe("BrowserSurface", () => {
       isDesignMode: true,
     });
 
-    const design = screen.getByRole("button", { name: "Design" });
+    const design = screen.getByRole("button", { name: "Annotate" });
 
     expect(design).toBeDisabled();
     // Nothing is marked where there is no page, so a pressed-but-disabled

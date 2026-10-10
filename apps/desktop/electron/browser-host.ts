@@ -6,11 +6,13 @@ import type {
   BrowserTabState,
   BrowserTabTarget,
   BrowserAnnotationElement,
+  BrowserAnnotationPalette,
   BrowserAnnotationViewport,
   BrowserViewRect,
   BrowserViewSnapshot,
   BrowserViewState,
 } from "@/shared/browser-protocol";
+import { readAnnotationPalette } from "./browser-annotation";
 
 /**
  * Policy and lifecycle for the embedded browser surface, with every Electron
@@ -220,10 +222,12 @@ export type BrowserHostView = {
   goBack(): void;
   goForward(): void;
   /** Design mode lives in the page's isolated world; this is the command. */
-  setDesignMode(enabled: boolean): void;
+  setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
   clearAnnotations(): void;
   /** Asks the overlay to put itself out of shot and report what it holds. */
   prepareCapture(): void;
+  /** The shot is done — the overlay may put its mode chrome back. */
+  finishCapture(): void;
   reload(): void;
   destroy(): void;
   readState(): BrowserViewSnapshot;
@@ -268,6 +272,11 @@ type BrowserTabHost = {
   isDesignModeEnabled(): boolean;
   /** Design mode the page left by itself (Escape), so main stops re-applying it. */
   recordDesignMode(enabled: boolean): void;
+  /**
+   * The last palette the renderer sent with a valid `browser_set_design_mode`,
+   * replayed to each fresh document so the overlay keeps Pace's colours.
+   */
+  annotationPalette(): BrowserAnnotationPalette | undefined;
   /**
    * What the page reports as the user marks. Kept so a capture can go ahead
    * with the last known marks when the page does not answer the prepare.
@@ -330,6 +339,7 @@ export function createBrowserTabHost(
   let title = "";
   let loading = false;
   let designMode = false;
+  let palette: BrowserAnnotationPalette | undefined;
   let marks: Omit<BrowserAnnotationCapture, "image" | "url"> = {
     annotations: [],
     viewport: null,
@@ -451,25 +461,31 @@ export function createBrowserTabHost(
     const capturedNavigation = navigationId;
     const settled = await awaitCaptureAck(capturedView);
 
-    // Closing or navigating a tab invalidates the page this handshake began on.
-    if (view !== capturedView || navigationId !== capturedNavigation) {
-      return null;
-    }
-    const image = await capturedView.capture(bounds?.width);
-    if (view !== capturedView || navigationId !== capturedNavigation)
-      return null;
+    try {
+      // Closing or navigating a tab invalidates the page this handshake began on.
+      if (view !== capturedView || navigationId !== capturedNavigation) {
+        return null;
+      }
+      const image = await capturedView.capture(bounds?.width);
+      if (view !== capturedView || navigationId !== capturedNavigation)
+        return null;
 
-    return {
-      // Downsampled to the panel's own CSS width: `capturePage` answers in
-      // device pixels, so on a 2x display a wide panel is a PNG approaching
-      // the 8 MiB an image attachment may weigh, for pixels the model cannot
-      // use. The overlay still (`browser_capture`) keeps them, because it is
-      // displayed at the placeholder's size.
-      image,
-      annotations: settled.annotations,
-      viewport: settled.viewport,
-      url: view.readState().url,
-    };
+      return {
+        // Downsampled to the panel's own CSS width: `capturePage` answers in
+        // device pixels, so on a 2x display a wide panel is a PNG approaching
+        // the 8 MiB an image attachment may weigh, for pixels the model cannot
+        // use. The overlay still (`browser_capture`) keeps them, because it is
+        // displayed at the placeholder's size.
+        image,
+        annotations: settled.annotations,
+        viewport: settled.viewport,
+        url: view.readState().url,
+      };
+    } finally {
+      // However the shot ended — taken, abandoned, never answered — the page
+      // gets told so its annotation-mode chrome can come back.
+      capturedView.finishCapture();
+    }
   }
 
   function setBounds(rect: BrowserViewRect) {
@@ -538,12 +554,20 @@ export function createBrowserTabHost(
           visibilityRequested = args?.visible === true;
           applyVisibility();
           return readState();
-        case "browser_set_design_mode":
-          // Deliberately not `ensureView()`: turning Design on over the empty
-          // state has nothing to mark up, and creating a view would paint one.
+        case "browser_set_design_mode": {
+          // Deliberately not `ensureView()`: turning annotation mode on over
+          // the empty state has nothing to mark up, and creating a view would
+          // paint one.
           designMode = args?.enabled === true;
-          view?.setDesignMode(designMode);
+          // An absent or malformed palette keeps the last one — the renderer
+          // only sends tokens when it turns the mode on.
+          const nextPalette = readAnnotationPalette(args?.palette);
+          if (nextPalette) {
+            palette = nextPalette;
+          }
+          view?.setDesignMode(designMode, nextPalette);
           return null;
+        }
         case "browser_clear_annotations":
           marks = { annotations: [], viewport: null };
           view?.clearAnnotations();
@@ -587,6 +611,10 @@ export function createBrowserTabHost(
 
     recordDesignMode(enabled) {
       designMode = enabled;
+    },
+
+    annotationPalette() {
+      return palette;
     },
 
     recordAnnotations(annotations, viewport) {

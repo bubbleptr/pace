@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptBrowserAnnotationMessage,
   buildElementSelector,
   describeAnnotatedElement,
+  readAnnotationPalette,
+  resolveAnnotationTarget,
 } from "./browser-annotation";
 
 function mount(html: string) {
@@ -107,7 +109,7 @@ describe("describeAnnotatedElement", () => {
     mount('<main><button id="cta">Go</button></main>');
 
     const element = document.getElementById("cta")!;
-    const annotation = describeAnnotatedElement(element, 3);
+    const annotation = describeAnnotatedElement(element, 3, "d1");
 
     expect(annotation.index).toBe(3);
     expect(annotation.tag).toBe("button");
@@ -118,7 +120,7 @@ describe("describeAnnotatedElement", () => {
   it("collapses whitespace and truncates long text", () => {
     mount(`<p id="copy">${"word ".repeat(60)}</p>`);
 
-    const annotation = describeAnnotatedElement(document.getElementById("copy")!, 1);
+    const annotation = describeAnnotatedElement(document.getElementById("copy")!, 1, "d1");
 
     expect(annotation.text!.length).toBeLessThanOrEqual(120);
     expect(annotation.text!.endsWith("…")).toBe(true);
@@ -128,10 +130,10 @@ describe("describeAnnotatedElement", () => {
   it("keeps short text verbatim and omits it when there is none", () => {
     mount('<p id="copy">  Hello\n  world  </p><img id="pic" alt="" />');
 
-    expect(describeAnnotatedElement(document.getElementById("copy")!, 1).text).toBe(
+    expect(describeAnnotatedElement(document.getElementById("copy")!, 1, "d1").text).toBe(
       "Hello world",
     );
-    expect(describeAnnotatedElement(document.getElementById("pic")!, 2)).not.toHaveProperty(
+    expect(describeAnnotatedElement(document.getElementById("pic")!, 2, "d2")).not.toHaveProperty(
       "text",
     );
   });
@@ -139,7 +141,7 @@ describe("describeAnnotatedElement", () => {
   it("reads a source location from data-source", () => {
     mount('<b id="tagged" data-source="src/pages/app.tsx:12:5">x</b>');
 
-    expect(describeAnnotatedElement(document.getElementById("tagged")!, 1).source).toEqual({
+    expect(describeAnnotatedElement(document.getElementById("tagged")!, 1, "d1").source).toEqual({
       file: "src/pages/app.tsx",
       line: 12,
       column: 5,
@@ -151,7 +153,7 @@ describe("describeAnnotatedElement", () => {
       '<b id="tagged" data-inspector-relative-path="src/app.tsx" data-inspector-line="7">x</b>',
     );
 
-    expect(describeAnnotatedElement(document.getElementById("tagged")!, 1).source).toEqual({
+    expect(describeAnnotatedElement(document.getElementById("tagged")!, 1, "d1").source).toEqual({
       file: "src/app.tsx",
       line: 7,
     });
@@ -160,7 +162,7 @@ describe("describeAnnotatedElement", () => {
   it("omits the source when no data attribute carries one", () => {
     mount('<b id="plain" data-source="not-a-location">x</b>');
 
-    expect(describeAnnotatedElement(document.getElementById("plain")!, 1)).not.toHaveProperty(
+    expect(describeAnnotatedElement(document.getElementById("plain")!, 1, "d1")).not.toHaveProperty(
       "source",
     );
   });
@@ -169,7 +171,7 @@ describe("describeAnnotatedElement", () => {
     mount('<b id="plain">x</b>');
 
     expect(
-      Object.keys(describeAnnotatedElement(document.getElementById("plain")!, 1)),
+      Object.keys(describeAnnotatedElement(document.getElementById("plain")!, 1, "d1")),
     ).not.toContain("reactName");
   });
 });
@@ -177,6 +179,7 @@ describe("describeAnnotatedElement", () => {
 describe("acceptBrowserAnnotationMessage", () => {
   const trustedSender = { id: "view" };
   const annotation = {
+    id: "ann-1",
     index: 1,
     selector: "#cta",
     tag: "button",
@@ -244,6 +247,30 @@ describe("acceptBrowserAnnotationMessage", () => {
       annotations: [annotation],
       viewport,
     });
+  });
+
+  it("drops annotations whose id is not a minted short string", () => {
+    const accepted = acceptBrowserAnnotationMessage({
+      sender: trustedSender,
+      trustedSender,
+      message: {
+        type: "annotations",
+        viewport,
+        annotations: [
+          annotation,
+          { ...annotation, id: 42 },
+          { ...annotation, id: "has spaces/in it" },
+          { ...annotation, id: "x".repeat(65) },
+          { ...annotation, id: "" },
+        ],
+      },
+    });
+    const kept = (accepted as { annotations: Array<{ id: string }> }).annotations;
+
+    // Only the well-formed mark survives; the index field alone is not an
+    // identity a page can be trusted with.
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.id).toBe("ann-1");
   });
 
   it("folds newlines out of every field that reaches the prompt", () => {
@@ -333,5 +360,114 @@ describe("acceptBrowserAnnotationMessage", () => {
         message: { type: "design-mode", enabled: false },
       }),
     ).toEqual({ type: "design-mode", enabled: false });
+  });
+});
+
+describe("resolveAnnotationTarget", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  /** jsdom measures nothing; give an element a size so it is not decorative. */
+  function size(element: Element, width = 40, height = 20) {
+    vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width,
+      height,
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: height,
+      toJSON: () => ({}),
+    } as DOMRect);
+    return element;
+  }
+
+  it("climbs out of inline decorations to the element the user meant", () => {
+    mount('<p id="copy">Some <span id="word">nested <b id="bold">text</b></span></p>');
+    const copy = size(document.getElementById("copy")!);
+
+    expect(resolveAnnotationTarget(size(document.getElementById("bold")!))).toBe(
+      copy,
+    );
+    expect(resolveAnnotationTarget(size(document.getElementById("word")!))).toBe(
+      copy,
+    );
+  });
+
+  it("names the svg, not a path inside it", () => {
+    mount(
+      '<button id="icon"><svg viewBox="0 0 10 10"><path id="stroke" d="M0 0h10"/></svg></button>',
+    );
+
+    const path = document.getElementById("stroke")!;
+    size(document.getElementById("icon")!);
+
+    // The climb reaches the <svg>, and the interactive step then prefers the
+    // button — marking an icon is marking the control it draws.
+    expect(resolveAnnotationTarget(path)).toBe(document.getElementById("icon"));
+  });
+
+  it("climbs past elements too small to have been aimed at", () => {
+    mount('<div id="row"><i id="hairline"></i></div>');
+    const row = size(document.getElementById("row")!);
+
+    expect(resolveAnnotationTarget(document.getElementById("hairline")!)).toBe(row);
+  });
+
+  it("prefers the nearest interactive ancestor even for a sizeable target", () => {
+    mount('<button id="cta"><span id="label">Go</span></button>');
+
+    const label = document.getElementById("label")!;
+    size(document.getElementById("cta")!);
+
+    // span is decorative regardless, but the assertion is on the outcome:
+    // the click meant the button.
+    expect(resolveAnnotationTarget(label)).toBe(document.getElementById("cta"));
+  });
+
+  it("honours ARIA roles as interactive targets", () => {
+    mount('<div id="chip" role="button"><em id="inner">x</em></div>');
+    const chip = size(document.getElementById("chip")!);
+
+    expect(resolveAnnotationTarget(document.getElementById("inner")!)).toBe(chip);
+  });
+
+  it("stops at body rather than climbing to the document element", () => {
+    mount('<span id="orphan">x</span>');
+
+    expect(resolveAnnotationTarget(document.getElementById("orphan")!)).toBe(
+      document.body,
+    );
+  });
+});
+
+describe("readAnnotationPalette", () => {
+  const palette = {
+    accent: "#0064E0",
+    accentForeground: "#fff",
+    surface: "#1f1f22",
+    foreground: "rgb(1, 2, 3)",
+    border: "rgba(0, 0, 0, 0.1)",
+    muted: "oklch(0.7 0.1 200)",
+  };
+
+  it("accepts a full palette of short strings verbatim", () => {
+    expect(readAnnotationPalette(palette)).toEqual(palette);
+  });
+
+  it("drops the whole palette when a field is missing, not a string, or too long", () => {
+    for (const bad of [
+      null,
+      "dark",
+      { ...palette, accent: 42 },
+      { ...palette, muted: "x".repeat(65) },
+      { accent: "#fff" },
+    ]) {
+      // A partial or malformed palette must not reach the page: the overlay
+      // would then mix renderer colours with defaults unpredictably.
+      expect(readAnnotationPalette(bad)).toBeUndefined();
+    }
   });
 });

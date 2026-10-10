@@ -19,6 +19,7 @@ import { SessionBrowserPanel } from "./session-browser-panel";
 
 const marks = [
   {
+    id: "m1",
     index: 1,
     selector: "#cta",
     tag: "button",
@@ -62,6 +63,7 @@ function installPreload(
         setDesignMode() {},
         clearAnnotations() {},
         prepareCapture() {},
+        finishCapture() {},
         reload() {},
         destroy() {},
         readState: () => ({ url, canGoBack: false, canGoForward: false }),
@@ -272,7 +274,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       "aria-busy",
       "true",
     );
-    await user.click(screen.getByRole("button", { name: "Design" }));
+    await user.click(screen.getByRole("button", { name: "Annotate" }));
     preload.mark(first);
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(screen.queryByTestId("browser-annotation-count")).toBeNull();
@@ -289,9 +291,9 @@ describe("SessionBrowserPanel multi-instance", () => {
     });
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Design" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "Annotate" })).toHaveAttribute(
         "aria-pressed",
         "true",
       ),
@@ -301,7 +303,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.host.notify(first);
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Design" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "Annotate" })).toHaveAttribute(
         "aria-pressed",
         "false",
       ),
@@ -325,7 +327,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     await act(async () => release());
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
   });
 
   it("hides on unmount, preserves marks on reattach, and never commands from a narrow Sheet", async () => {
@@ -342,7 +344,7 @@ describe("SessionBrowserPanel multi-instance", () => {
     await restored();
     expect(
       await screen.findByTestId("browser-annotation-count"),
-    ).toHaveTextContent("1 marked");
+    ).toHaveTextContent("1 comment");
     next.unmount();
     preload.invocations.length = 0;
     const narrow = render(
@@ -541,5 +543,79 @@ describe("SessionBrowserPanel multi-instance", () => {
     await user.click(screen.getByRole("button", { name: "New browser tab" }));
     await act(async () => release());
     expect(screen.queryByTestId("browser-snapshot")).toBeNull();
+  });
+
+  it("sends the panel's semantic tokens as the overlay palette when annotating starts", async () => {
+    const preload = installPreload();
+    const user = userEvent.setup();
+    mount();
+    await restored();
+
+    await user.click(screen.getByRole("button", { name: "Annotate" }));
+
+    const toggle = preload.invocations.find(
+      (item) => item.command === "browser_set_design_mode" && item.args?.enabled === true,
+    );
+
+    // The overlay lives in a page that cannot read Pace's stylesheets, so the
+    // colours travel as computed values. jsdom resolves none of the tokens —
+    // empty strings are still strings, and the page-side check decides which
+    // of them can actually parse.
+    expect(toggle?.args?.palette).toEqual({
+      accent: expect.any(String),
+      accentForeground: expect.any(String),
+      surface: expect.any(String),
+      foreground: expect.any(String),
+      border: expect.any(String),
+      muted: expect.any(String),
+    });
+  });
+
+  it("toggles annotation mode on Cmd/Ctrl+Shift+A while a live tab is active", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "KeyA",
+        key: "a",
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.some(
+          (item) =>
+            item.command === "browser_set_design_mode" &&
+            item.args?.enabled === true,
+        ),
+      ).toBe(true),
+    );
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "KeyA",
+        key: "a",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        preload.invocations.some(
+          (item) =>
+            item.command === "browser_set_design_mode" &&
+            item.args?.enabled === false,
+        ),
+      ).toBe(true),
+    );
   });
 });

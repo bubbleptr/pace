@@ -45,6 +45,21 @@ export type BrowserViewState = BrowserViewSnapshot & {
 export type { BrowserAnnotationElement, BrowserAnnotationViewport };
 
 /**
+ * The renderer's theme tokens, resolved to computed colour values and carried
+ * to the page's overlay with `set-design-mode`. The overlay accepts each
+ * colour only if `CSS.supports("color", v)` parses it, falling back per field
+ * to its built-in defaults, so nothing here needs to be a legal colour.
+ */
+export type BrowserAnnotationPalette = {
+  accent: string;
+  accentForeground: string;
+  surface: string;
+  foreground: string;
+  border: string;
+  muted: string;
+};
+
+/**
  * What `browser_capture_annotation` answers with: the screenshot and the marks
  * it was taken against, which the page settled and re-measured for this shot.
  * They travel together because a payload assembled from two moments would

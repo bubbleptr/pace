@@ -324,18 +324,18 @@ describe("Design components layer", () => {
     expect(within(section).getByTestId("browser-snapshot")).toBeInTheDocument();
     expect(within(section).getByText(/widen the window/i)).toBeInTheDocument();
     expect(within(section).getByText("No page loaded")).toBeInTheDocument();
-    // Design mode is a toolbar state of this surface, so the gallery has to
-    // carry it too — pressed toggle and the count of what is marked.
+    // Annotation mode is a toolbar state of this surface, so the gallery has
+    // to carry it too — pressed toggle and the count of what is marked.
     expect(within(section).getAllByTestId("browser-annotation-count")[0]).toHaveTextContent(
-      "2",
+      "2 comments",
     );
     expect(
       within(section)
-        .getAllByRole("button", { name: "Design" })
+        .getAllByRole("button", { name: "Annotate" })
         .some((button) => button.getAttribute("aria-pressed") === "true"),
     ).toBe(true);
 
-    // Send to composer is the point of design mode, and it has two states
+    // Send to composer is the point of annotation mode, and it has two states
     // worth showing: nothing marked yet, and something to send.
     const send = within(section).getAllByRole("button", { name: "Send to composer" });
 

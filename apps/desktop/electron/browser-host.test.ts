@@ -52,11 +52,15 @@ function createFakeView() {
     goBack() {
       calls.push("goBack");
     },
-    setDesignMode(enabled) {
-      calls.push(`setDesignMode(${enabled})`);
+    setDesignMode(enabled, palette) {
+      calls.push(`setDesignMode(${enabled}${palette ? ",palette" : ""})`);
+      calls.push(`palette(${palette ? JSON.stringify(palette) : ""})`);
     },
     prepareCapture() {
       calls.push("prepareCapture");
+    },
+    finishCapture() {
+      calls.push("finishCapture");
     },
     clearAnnotations() {
       calls.push("clearAnnotations");
@@ -178,6 +182,7 @@ describe("browser host commands", () => {
   const marked = {
     annotations: [
       {
+        id: "m1",
         index: 1,
         selector: "#cta",
         tag: "button",
@@ -457,10 +462,12 @@ describe("browser host commands", () => {
       url: "http://localhost:5173/",
     });
     // Order is the whole point: shooting first would print the open comment
-    // bubble and a stale hover box onto what Pi reads.
-    expect(views[0]!.calls.slice(-2)).toEqual([
+    // bubble and a stale hover box onto what Pi reads — and the page is told
+    // when the shot is over so its annotation chrome can come back.
+    expect(views[0]!.calls.slice(-3)).toEqual([
       "prepareCapture",
       "capture(684)",
+      "finishCapture",
     ]);
   });
 
@@ -484,6 +491,8 @@ describe("browser host commands", () => {
         viewport: marked.viewport,
       });
       expect(views[0]!.calls).toContain("capture()");
+      // Even the bail-out tells the page the shot is over.
+      expect(views[0]!.calls).toContain("finishCapture");
     } finally {
       vi.useRealTimers();
     }
@@ -504,6 +513,40 @@ describe("browser host commands", () => {
 
     expect(views[0]!.calls).toContain("setDesignMode(true)");
     expect(views[0]!.calls).toContain("clearAnnotations");
+  });
+
+  it("stores a valid palette for ready replays and forwards it to the view", async () => {
+    const { host, views } = createHostHarness();
+    const palette = {
+      accent: "#0064E0",
+      accentForeground: "#ffffff",
+      surface: "#1f1f22",
+      foreground: "#dfe2e5",
+      border: "#494d53",
+      muted: "#aaafb5",
+    };
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_design_mode", { enabled: true, palette });
+
+    expect(views[0]!.calls).toContain(
+      `palette(${JSON.stringify(palette)})`,
+    );
+    // Fresh documents get it back when their overlay reports in.
+    expect(host.annotationPalette()).toEqual(palette);
+  });
+
+  it("ignores a malformed palette wholesale instead of forwarding part of it", async () => {
+    const { host, views } = createHostHarness();
+
+    await host.invoke("browser_navigate", { url: "http://localhost:5173/" });
+    await host.invoke("browser_set_design_mode", {
+      enabled: true,
+      palette: { accent: "#0064E0", surface: 42 },
+    });
+
+    expect(host.annotationPalette()).toBeUndefined();
+    expect(views[0]!.calls).toContain("palette()");
   });
 
   it("records design mode the page left on its own without commanding it back", async () => {
@@ -698,7 +741,10 @@ describe("Browser multi-instance host", () => {
     await host.invoke("browser_set_design_mode", { ...first, enabled: true });
     host
       .tab(first)
-      .recordAnnotations([{ index: 1, selector: "#a", tag: "p", rect }], null);
+      .recordAnnotations(
+        [{ id: "a1", index: 1, selector: "#a", tag: "p", rect }],
+        null,
+      );
     const capture = host.invoke("browser_capture_annotation", first);
     await host.invoke("browser_open", second);
     await host.invoke("browser_navigate", { ...second, url: "localhost:4000" });

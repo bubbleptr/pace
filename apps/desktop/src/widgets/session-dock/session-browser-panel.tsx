@@ -22,6 +22,7 @@ import {
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { isElectronRuntime } from "@/shared/runtime";
 import type {
+  BrowserAnnotationPalette,
   BrowserSessionState,
   BrowserTabState,
   BrowserViewRect,
@@ -84,6 +85,8 @@ function BrowserSessionContent({
   // Every context change invalidates pending captures, even if the user switches back.
   const contextVersion = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
+  /** The panel's own root — the element its semantic tokens are read from. */
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const instancesCallback = useRef(onInstancesChange);
   instancesCallback.current = onInstancesChange;
   const available = isElectronRuntime() && docked;
@@ -169,6 +172,28 @@ function BrowserSessionContent({
     () => (tabId ? { sessionId, tabId } : null),
     [sessionId, tabId],
   );
+
+  /**
+   * The overlay paints in a page that shares nothing with Pace's stylesheets,
+   * so the computed semantic tokens travel with the command and the page
+   * checks each colour itself.
+   */
+  const readAnnotationPalette = useCallback(():
+    | BrowserAnnotationPalette
+    | undefined => {
+    const element = surfaceRef.current;
+    if (!element) return undefined;
+    const styles = getComputedStyle(element);
+    const token = (name: string) => styles.getPropertyValue(name).trim();
+    return {
+      accent: token("--primary"),
+      accentForeground: token("--color-on-accent"),
+      surface: token("--surface"),
+      foreground: token("--foreground"),
+      border: token("--border"),
+      muted: token("--muted"),
+    };
+  }, []);
   const tabCount = group?.tabs.length ?? 0;
   const state: BrowserSurfaceState = !docked
     ? { kind: "narrow" }
@@ -277,6 +302,37 @@ function BrowserSessionContent({
       if (alive.current) setActionError(errorMessage(error));
     });
   };
+  const changeDesignMode = (tab: BrowserTabState, enabled: boolean) => {
+    runPageCommand(() =>
+      setBrowserDesignMode(
+        { sessionId, tabId: tab.tabId },
+        enabled,
+        // The palette only matters when the overlay comes up; main keeps the
+        // last one it saw for everything else.
+        enabled ? readAnnotationPalette() : undefined,
+      ),
+    );
+  };
+
+  // The in-page overlay listens for the same shortcut — this side covers the
+  // Pace window having focus while a browser tab is live.
+  useEffect(() => {
+    if (!available || state.kind !== "live" || !tabId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.code !== "KeyA" ||
+        !event.shiftKey ||
+        (!event.metaKey && !event.ctrlKey)
+      )
+        return;
+      const tab = groupRef.current?.tabs.find((item) => item.tabId === tabId);
+      if (!tab) return;
+      event.preventDefault();
+      changeDesignMode(tab, !tab.designMode);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [available, state.kind, tabId]);
   const submitAddress = async (url: string) => {
     if (!available || !url.trim()) return;
     const version = ++contextVersion.current;
@@ -370,7 +426,7 @@ function BrowserSessionContent({
       runPageCommand(() => reloadBrowser({ sessionId, tabId: active.tabId }));
   };
   return (
-    <BrowserSurface state={state}>
+    <BrowserSurface ref={surfaceRef} state={state}>
       <BrowserSurface.Tabs
         tabs={tabs}
         activeTabId={tabId}
@@ -406,10 +462,7 @@ function BrowserSessionContent({
             );
         }}
         onDesignModeChange={(enabled) => {
-          if (active)
-            runPageCommand(() =>
-              setBrowserDesignMode({ sessionId, tabId: active.tabId }, enabled),
-            );
+          if (active) changeDesignMode(active, enabled);
         }}
         onForward={() => {
           if (active)

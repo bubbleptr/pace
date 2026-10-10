@@ -49,13 +49,16 @@ ipcRenderer.on(
   (_event, command: BrowserAnnotationCommand) => {
     switch (command?.type) {
       case "set-design-mode":
-        overlay.setDesignMode(command.enabled === true);
+        overlay.setDesignMode(command.enabled === true, command.palette);
         break;
       case "clear-annotations":
         overlay.clearAnnotations();
         break;
       case "prepare-capture":
         overlay.prepareCapture();
+        break;
+      case "capture-done":
+        overlay.finishCapture();
         break;
     }
   },

@@ -1,6 +1,7 @@
 import { invoke, onBrowserEvent } from "@/shared/runtime";
 import type {
   BrowserAnnotationCapture,
+  BrowserAnnotationPalette,
   BrowserEvent,
   BrowserSessionState,
   BrowserTabState,
@@ -58,10 +59,12 @@ export function setBrowserVisible(target: BrowserTabTarget, visible: boolean) {
 export function setBrowserDesignMode(
   target: BrowserTabTarget,
   enabled: boolean,
+  palette?: BrowserAnnotationPalette,
 ) {
   return invoke<BrowserTabState | null>("browser_set_design_mode", {
     ...target,
     enabled,
+    ...(palette ? { palette } : {}),
   });
 }
 export function clearBrowserAnnotations(target: BrowserTabTarget) {

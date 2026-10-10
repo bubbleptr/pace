@@ -135,7 +135,7 @@ function BrowserSurfaceTabs({
             className="shrink-0 text-xs tabular-nums text-muted"
             data-testid="browser-annotation-count"
           >
-            {annotationCount} marked
+            {annotationCount === 1 ? "1 comment" : `${annotationCount} comments`}
           </span>
         ) : null
       }
@@ -224,7 +224,7 @@ function BrowserSurfaceToolbar({
             // never reads as pressed there — a pressed, disabled control
             // claims a state the user cannot leave.
             isPressed={isLive && isDesignMode}
-            label="Design"
+            label="Annotate"
             size="sm"
             onPressedChange={onDesignModeChange}
           />

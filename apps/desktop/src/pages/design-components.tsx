@@ -499,7 +499,7 @@ function BrowserSurfaceGallery() {
             />
           </div>
         </Variant>
-        <Variant caption="design mode on, two elements marked — the marks live in the page's own overlay, and Send to composer drops them plus a screenshot into the chat draft">
+        <Variant caption="annotate mode on, two comments — the marks live in the page's own overlay, and To composer drops them plus a screenshot into the chat draft">
           <div className="h-56 w-[30rem] overflow-hidden rounded-md border border-separator px-2">
             <GalleryBrowserSurface
               address="http://localhost:5173/"

@@ -24,6 +24,11 @@ export type BrowserAnnotationViewport = {
  * read from whatever `data-*` attributes the dev server stamped.
  */
 export type BrowserAnnotationElement = {
+  /**
+   * Stable identity for the annotation's lifetime, minted by the overlay
+   * (`crypto.randomUUID()`). `index` renumbers on delete; `id` never changes.
+   */
+  id: string;
   /** 1-based; the number the marker shows in the page and on the screenshot. */
   index: number;
   selector: string;

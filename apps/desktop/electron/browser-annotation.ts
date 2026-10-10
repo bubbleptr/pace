@@ -1,5 +1,6 @@
 import type {
   BrowserAnnotationElement,
+  BrowserAnnotationPalette,
   BrowserAnnotationViewport,
 } from "@/shared/browser-protocol";
 
@@ -39,17 +40,41 @@ export type BrowserAnnotationMessage =
   | ({ type: "capture-ready" } & AnnotationsPayload);
 
 export type BrowserAnnotationCommand =
-  | { type: "set-design-mode"; enabled: boolean }
+  | {
+      type: "set-design-mode";
+      enabled: boolean;
+      /** The renderer's theme tokens; the overlay validates each colour itself. */
+      palette?: BrowserAnnotationPalette;
+    }
   | { type: "clear-annotations" }
-  | { type: "prepare-capture" };
+  | { type: "prepare-capture" }
+  /**
+   * The screenshot is taken (or abandoned): the overlay may put its mode
+   * chrome — the frame and pill `prepare-capture` hid — back on screen.
+   */
+  | { type: "capture-done" };
 
 const maxTextLength = 120;
-const maxCommentLength = 500;
+/**
+ * The page-side editor caps its textarea at this too — export it so the one
+ * limit lives in one place. (This module is already in the preload bundle.)
+ */
+export const maxCommentLength = 500;
 const maxTagLength = 40;
 const maxSelectorLength = 1_000;
 const maxAnnotations = 200;
 /** `file:line` or `file:line:column`, with a file part that is not empty. */
 const sourcePattern = /^(.+?):(\d+)(?::(\d+))?$/;
+/** What the overlay mints with `crypto.randomUUID()` — short and url-safe. */
+const annotationIdPattern = /^[A-Za-z0-9-]{1,64}$/;
+const paletteFields = [
+  "accent",
+  "accentForeground",
+  "surface",
+  "foreground",
+  "border",
+  "muted",
+] as const;
 
 /**
  * One line, then at most `max` characters of it.
@@ -138,11 +163,59 @@ function readText(element: Element) {
 }
 
 /**
+ * Tags that decorate text rather than carry it — pointing at one means the
+ * user aimed at what wraps it.
+ */
+const decorativeTags = new Set(["span", "b", "i", "em", "strong", "small"]);
+
+/**
+ * Controls a click means even when it lands on a child: marking a button's
+ * label is marking the button.
+ */
+const interactiveTargetSelector =
+  'a,button,label,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"]';
+
+/**
+ * What a click on the deepest composed node actually meant. The path names
+ * leaf nodes — a `span`, an SVG `path`, a 1px decorator — so the target
+ * climbs while the element is decorative (decorative tag, an SVG interior,
+ * or too small to have been aimed at), stopping at `document.body`, then
+ * prefers the nearest enclosing interactive control.
+ */
+export function resolveAnnotationTarget(deepest: Element): Element {
+  const body = deepest.ownerDocument.body;
+  let current = deepest;
+
+  while (current !== body) {
+    const tag = current.tagName.toLowerCase();
+    const rect = current.getBoundingClientRect();
+    // `ownerSVGElement` is non-null only inside an SVG — and only on
+    // SVGElements at all, which is why this is not a plain property read.
+    const insideSvg =
+      current instanceof SVGElement && current.ownerSVGElement !== null;
+    const decorative =
+      decorativeTags.has(tag) ||
+      insideSvg ||
+      rect.width < 8 ||
+      rect.height < 8;
+    const parent = current.parentElement;
+
+    if (!decorative || !parent) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return current.closest(interactiveTargetSelector) ?? current;
+}
+
+/**
  * Best-effort source location, read only from `data-*` attributes: either a
  * combined `data-source="file:line:column"` or the separate attributes the
  * React inspector plugins stamp. Anything else is left out rather than guessed.
  */
-function readSource(element: Element) {
+export function readSource(element: Element) {
   const combined = sourcePattern.exec(element.getAttribute("data-source")?.trim() ?? "");
 
   if (combined) {
@@ -172,12 +245,14 @@ function readSource(element: Element) {
 export function describeAnnotatedElement(
   element: Element,
   index: number,
+  id: string,
 ): BrowserAnnotationElement {
   const rect = element.getBoundingClientRect();
   const text = readText(element);
   const source = readSource(element);
 
   return {
+    id,
     index,
     selector: buildElementSelector(element),
     tag: element.tagName.toLowerCase(),
@@ -252,14 +327,14 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     return null;
   }
 
-  const { index, selector, tag, text, rect, source, comment } = value as Record<
-    string,
-    unknown
-  >;
+  const { id, index, selector, tag, text, rect, source, comment } =
+    value as Record<string, unknown>;
   const indexNumber = finiteNumber(index);
   const rectangle = readRect(rect);
 
   if (
+    typeof id !== "string" ||
+    !annotationIdPattern.test(id) ||
     indexNumber === null ||
     typeof selector !== "string" ||
     typeof tag !== "string" ||
@@ -271,6 +346,7 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
   const location = readSourceValue(source);
 
   return {
+    id,
     index: Math.trunc(indexNumber),
     selector: clampText(selector, maxSelectorLength),
     tag: clampText(tag, maxTagLength),
@@ -301,6 +377,35 @@ function readAnnotationsPayload(
       .filter((annotation): annotation is BrowserAnnotationElement => annotation !== null),
     viewport,
   };
+}
+
+/**
+ * The renderer sends its computed theme tokens with `browser_set_design_mode`.
+ * Main accepts only the shape — all six fields present, each a short string —
+ * and drops the palette wholesale otherwise; whether each colour parses is the
+ * overlay's call (`CSS.supports`), since only the page knows its own CSS engine.
+ */
+export function readAnnotationPalette(
+  value: unknown,
+): BrowserAnnotationPalette | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const palette = {} as Record<(typeof paletteFields)[number], string>;
+
+  for (const field of paletteFields) {
+    const colour = record[field];
+
+    if (typeof colour !== "string" || colour.length > 64) {
+      return undefined;
+    }
+
+    palette[field] = colour;
+  }
+
+  return palette;
 }
 
 /**
