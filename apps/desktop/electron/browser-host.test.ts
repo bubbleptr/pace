@@ -788,7 +788,11 @@ describe("Session comment store", () => {
 
   function harness() {
     const views: ReturnType<typeof createFakeView>[] = [];
-    const events: { type: string; comments?: unknown[] }[] = [];
+    const events: {
+      type: string;
+      revision?: number;
+      comments?: unknown[];
+    }[] = [];
     const host = createBrowserHost({
       createView() {
         const view = createFakeView();
@@ -800,10 +804,12 @@ describe("Session comment store", () => {
       emit: (event) => events.push(event as { type: string }),
     });
 
-    const list = () =>
-      host.invoke("browser_list_comments", {
-        sessionId: first.sessionId,
-      }) as Promise<BrowserComment[]>;
+    const list = async () =>
+      ((
+        await host.invoke("browser_list_comments", {
+          sessionId: first.sessionId,
+        })
+      ) as { revision: number; comments: BrowserComment[] }).comments;
 
     return { host, views, events, list };
   }
@@ -1001,7 +1007,13 @@ describe("Session comment store", () => {
     });
 
     expect(host.readTab(first).annotations).toEqual([]);
-    expect(await host.invoke("browser_list_comments", { sessionId: "s" })).toHaveLength(1);
+    expect(
+      (
+        (await host.invoke("browser_list_comments", {
+          sessionId: "s",
+        })) as { comments: unknown[] }
+      ).comments,
+    ).toHaveLength(1);
 
     host.syncTabAnnotations(first, "http://localhost:3000/other");
     expect(views[0]!.synced).toEqual([]);
@@ -1091,10 +1103,68 @@ describe("Session comment store", () => {
     expect(events).toHaveLength(emitted);
   });
 
+  it("stamps every comments-changed with the store's growing revision", async () => {
+    const { host, events } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
+
+    const changes = events.filter(
+      (event) => event.type === "comments-changed",
+    );
+
+    expect(changes.length).toBeGreaterThanOrEqual(2);
+    const last = changes[changes.length - 1]!;
+    const firstChange = changes[0]!;
+    expect(last.revision).toBeGreaterThan(firstChange.revision!);
+
+    const reply = (await host.invoke("browser_list_comments", {
+      sessionId: "s",
+    })) as { revision: number };
+
+    expect(reply.revision).toBe(last.revision);
+  });
+
+  it("settles an in-flight save before answering the send's list", async () => {
+    const { host, views } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    let releaseCrop = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseCrop = resolve;
+    });
+    views[0]!.captureRect = async () => {
+      await gate;
+      return "data:image/png;base64,LATE";
+    };
+
+    // IPC order is what makes this observable: the save's crop is in flight
+    // when the settle request arrives.
+    void host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    const settled = host.invoke("browser_settle_comments", {
+      sessionId: "s",
+    }) as Promise<{ revision: number; comments: BrowserComment[] }>;
+
+    releaseCrop();
+    const reply = await settled;
+
+    // The send's read carries the comment its hook snapshot had not seen yet.
+    expect(reply.comments).toMatchObject([{ id: "c1", hasImage: true }]);
+    expect(reply.revision).toBeGreaterThan(0);
+  });
+
   it("reads the store without touching tabs, views or activation", async () => {
     const { host, views } = harness();
 
-    expect(await host.invoke("browser_list_comments", { sessionId: "s" })).toEqual([]);
+    expect(
+      (
+        (await host.invoke("browser_list_comments", {
+          sessionId: "s",
+        })) as { comments: unknown[] }
+      ).comments,
+    ).toEqual([]);
     expect(views).toHaveLength(0);
   });
 

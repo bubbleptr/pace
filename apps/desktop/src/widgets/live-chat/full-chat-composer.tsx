@@ -52,13 +52,16 @@ import {
   getFollowUpDraft,
   saveFollowUpDraft,
 } from "@/entities/session/follow-up-drafts";
-import { subscribeComposerSubmitRequests } from "@/entities/session/composer-submit-requests";
+import { markComposerMounted } from "@/entities/session/composer-presence";
 import {
   consumeBrowserComments,
   deleteBrowserComment,
   readBrowserCommentImages,
+  settleBrowserComments,
 } from "@/entities/browser/browser-client";
 import { useBrowserComments } from "@/entities/browser/use-browser-comments";
+import { isElectronRuntime } from "@/shared/runtime";
+import type { BrowserComment } from "@/shared/browser-protocol";
 import { formatBrowserComments } from "@pace/core";
 import { type SessionDraftCheckoutMode } from "@/entities/session/session-drafts";
 import { type SessionProjection } from "@/entities/session/session-projection";
@@ -234,7 +237,13 @@ export function FullChatComposer({
 
   // The Session's browser comments ride the send as an appendix — chips in
   // the drawer, and a formatted block + screenshots in the prompt itself.
-  const browserComments = useBrowserComments(sessionId);
+  // onSubmitRequested is the page's Cmd/Ctrl+Enter — the composer answers the
+  // event itself, so the send survives the Browser panel being closed. The
+  // ref lets the callback run the latest submit without the option churning.
+  const pageSubmitRef = useRef<() => void>(() => {});
+  const browserComments = useBrowserComments(sessionId, {
+    onSubmitRequested: () => pageSubmitRef.current(),
+  });
   const commentChips = useMemo(
     () =>
       browserComments.comments.map((comment) => {
@@ -278,10 +287,19 @@ export function FullChatComposer({
         return;
       }
 
-      // Snapshot now: what is sent is exactly what the chips said when the
-      // user pressed send — a comment saved during the flight is not in it,
-      // and survives the consume that follows.
-      const pending = browserComments.latest();
+      // What is sent is the settled store, not the hook's snapshot: a comment
+      // whose crop is still in flight lands in the send once the wait ends.
+      // The snapshot of ids — and only it — is what a success consumes.
+      let pending: BrowserComment[] = [];
+      if (sessionId && isElectronRuntime()) {
+        try {
+          pending = (await settleBrowserComments(sessionId)).comments;
+        } catch (error) {
+          // Nothing sent means nothing consumed — the comments stay put.
+          setComposerError(errorMessage(error));
+          return;
+        }
+      }
       const sentCommentIds = pending.map((comment) => comment.id);
       let appendix: PromptAppendix | undefined;
 
@@ -383,30 +401,35 @@ export function FullChatComposer({
   const attachmentsRef = useRef(attachments.items);
   attachmentsRef.current = attachments.items;
 
+  // The request's own gates, read through refs for the same reason: while
+  // the composer cannot send at all (Session Creation, a stop in flight) a
+  // page request is ignored — and so is one that would go out empty.
+  pageSubmitRef.current = () => {
+    if (composerBusyRef.current) {
+      return;
+    }
+
+    const hasDraft = Boolean(draftRef.current.replace(/\u00A0/g, " ").trim());
+
+    if (
+      !hasDraft &&
+      attachmentsRef.current.length === 0 &&
+      browserComments.latest().length === 0
+    ) {
+      return;
+    }
+
+    void submitDraftRef.current();
+  };
+
+  // Mounted means the page's send has a taker — the Browser panel only warns
+  // about an unanswered request when this registry says nobody is here.
   useEffect(() => {
     if (!sessionId) {
       return;
     }
 
-    return subscribeComposerSubmitRequests(sessionId, () => {
-      if (composerBusyRef.current) {
-        return;
-      }
-
-      const hasDraft = Boolean(
-        draftRef.current.replace(/\u00A0/g, " ").trim(),
-      );
-
-      if (
-        !hasDraft &&
-        attachmentsRef.current.length === 0 &&
-        browserComments.latest().length === 0
-      ) {
-        return;
-      }
-
-      void submitDraftRef.current();
-    });
+    return markComposerMounted(sessionId);
   }, [sessionId]);
 
   // Queue-first model: the composer always queues while a run is active, and

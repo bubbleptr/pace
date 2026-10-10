@@ -2,6 +2,7 @@ import { invoke, onBrowserEvent } from "@/shared/runtime";
 import type {
   BrowserAnnotationPalette,
   BrowserComment,
+  BrowserCommentList,
   BrowserEvent,
   BrowserSessionState,
   BrowserTabState,
@@ -84,7 +85,14 @@ export function clearBrowserAnnotations(target: BrowserTabTarget) {
  * order. A pure read: it never attaches, activates or paints a tab.
  */
 export function listBrowserComments(sessionId: string) {
-  return invoke<BrowserComment[]>("browser_list_comments", { sessionId });
+  return invoke<BrowserCommentList>("browser_list_comments", { sessionId });
+}
+/**
+ * The same read after every in-flight save-crop has landed — the answer a
+ * send builds on, so a comment committed moments before the send is in it.
+ */
+export function settleBrowserComments(sessionId: string) {
+  return invoke<BrowserCommentList>("browser_settle_comments", { sessionId });
 }
 /** The save-crops for the given comment ids, `null` where none was taken. */
 export function readBrowserCommentImages(sessionId: string, ids: string[]) {

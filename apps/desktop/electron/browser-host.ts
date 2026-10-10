@@ -4,6 +4,7 @@ import type {
   BrowserAnnotationPalette,
   BrowserAnnotationViewport,
   BrowserComment,
+  BrowserCommentList,
   BrowserEvent,
   BrowserSessionState,
   BrowserTabState,
@@ -54,6 +55,7 @@ const browserCommands = new Set([
   "browser_set_annotation_palette",
   "browser_clear_annotations",
   "browser_list_comments",
+  "browser_settle_comments",
   "browser_comment_images",
   "browser_delete_comment",
   "browser_consume_comments",
@@ -727,6 +729,8 @@ type BrowserSessionGroup = {
    * always finds the crop it must wait for.
    */
   pendingCrops: Set<Promise<unknown>>;
+  /** Bumped on every store change so readers can drop answers older than one they hold. */
+  commentRevision: number;
 };
 
 /** Session membership owns lifetime; the active target alone owns the native slot. */
@@ -744,6 +748,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
         comments: [],
         images: new Map(),
         pendingCrops: new Set(),
+        commentRevision: 0,
       };
       sessions.set(sessionId, group);
     }
@@ -836,9 +841,16 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
   }
 
   function emitCommentsChanged(sessionId: string) {
+    const group = sessions.get(sessionId);
+
+    if (!group) {
+      return;
+    }
+    group.commentRevision += 1;
     deps.emit?.({
       type: "comments-changed",
       sessionId,
+      revision: group.commentRevision,
       comments: publicComments(sessionId),
     });
   }
@@ -950,7 +962,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
   ): Promise<
     | BrowserSessionState
     | BrowserTabState
-    | BrowserComment[]
+    | BrowserCommentList
     | Record<string, string | null>
     | string
     | null
@@ -1026,7 +1038,23 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       }
       case "browser_list_comments":
         // A pure read of the store — no tab is attached, activated or painted.
-        return publicComments(sessionId);
+        return {
+          revision: sessions.get(sessionId)?.commentRevision ?? 0,
+          comments: publicComments(sessionId),
+        };
+      case "browser_settle_comments": {
+        // The composer's send needs every save whose crop is still in flight
+        // to land first — the same wait requestSubmit does — then the fresh
+        // list, revision-stamped like the read.
+        const group = sessions.get(sessionId);
+        if (group) {
+          await Promise.allSettled([...group.pendingCrops]);
+        }
+        return {
+          revision: sessions.get(sessionId)?.commentRevision ?? 0,
+          comments: publicComments(sessionId),
+        };
+      }
       case "browser_comment_images": {
         const group = sessions.get(sessionId);
         const ids = readStringList(args?.ids);

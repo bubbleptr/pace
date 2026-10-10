@@ -257,6 +257,9 @@ describe("FullChatComposer slash commands", () => {
           truncated: false,
         };
       }
+      if (command === "browser_settle_comments") {
+        return { revision: 0, comments: [] };
+      }
       return invokeBrowserFallback(command, args);
     });
     window.pace = {
@@ -426,6 +429,9 @@ describe("FullChatComposer slash commands", () => {
           },
         ];
       }
+      if (command === "browser_settle_comments") {
+        return { revision: 0, comments: [] };
+      }
       return invokeBrowserFallback(command, args);
     });
     window.pace = {
@@ -552,6 +558,9 @@ describe("FullChatComposer file references", () => {
           truncated: false,
         };
       }
+      if (command === "browser_settle_comments") {
+        return { revision: 0, comments: [] };
+      }
       return invokeBrowserFallback(command, args);
     });
     window.pace = {
@@ -592,6 +601,9 @@ describe("FullChatComposer file references", () => {
           });
         });
       }
+      if (command === "browser_settle_comments") {
+        return { revision: 0, comments: [] };
+      }
       return invokeBrowserFallback(command, args);
     });
     window.pace = {
@@ -629,6 +641,9 @@ describe("FullChatComposer file references", () => {
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
       if (command === "search_workspace_files") {
         return { matches: files, truncated: false };
+      }
+      if (command === "browser_settle_comments") {
+        return { revision: 0, comments: [] };
       }
       return invokeBrowserFallback(command, args);
     });
@@ -698,7 +713,12 @@ describe("FullChatComposer browser comments", () => {
     };
   }
 
-  function installPreload(options: { comments?: ReturnType<typeof comment>[] } = {}) {
+  function installPreload(
+    options: {
+      comments?: ReturnType<typeof comment>[];
+      settled?: ReturnType<typeof comment>[];
+    } = {},
+  ) {
     const listeners = new Set<(event: unknown) => void>();
     const comments = options.comments ?? [];
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -706,7 +726,10 @@ describe("FullChatComposer browser comments", () => {
         return { source: "runtime", commands: [] };
       }
       if (command === "browser_list_comments") {
-        return comments;
+        return { revision: 1, comments };
+      }
+      if (command === "browser_settle_comments") {
+        return { revision: 1, comments: options.settled ?? comments };
       }
       if (command === "browser_comment_images") {
         const ids = (args?.ids as string[]) ?? [];
@@ -846,6 +869,45 @@ describe("FullChatComposer browser comments", () => {
     );
   });
 
+  it("sends and consumes a comment that only the settle answer carried", async () => {
+    // Its crop was still in flight when the send began: the hook's list saw
+    // nothing, but the send waits for the store to settle — and it is in it.
+    const preload = installPreload({
+      comments: [],
+      settled: [comment("c9", 1, { hasImage: true })],
+    });
+    const onPromptSubmit = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(
+      <FullChatComposer
+        projection={liveProjection()}
+        onPromptSubmit={onPromptSubmit}
+      />,
+    );
+    const input = await findPromptInput();
+
+    typeText(input, "go");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
+    const [prompt, images] = onPromptSubmit.mock.calls[0]! as unknown as [
+      string,
+      { name: string }[],
+    ];
+
+    expect(prompt).toContain("#1 [screenshot] `#c9` (button)");
+    expect(images).toEqual([expect.objectContaining({ name: "browser-comment-1.png" })]);
+
+    await waitFor(() =>
+      expect(preload.callsFor("browser_consume_comments")).toEqual([
+        [
+          "browser_consume_comments",
+          { sessionId: SESSION_ID, ids: ["c9"] },
+        ],
+      ]),
+    );
+  });
+
   it("keeps a comment that arrives while the send is in flight", async () => {
     let releaseSend = () => {};
     const sendGate = new Promise<void>((resolve) => {
@@ -871,6 +933,7 @@ describe("FullChatComposer browser comments", () => {
       preload.publish({
         type: "comments-changed",
         sessionId: SESSION_ID,
+        revision: 2,
         comments: [comment("c1", 1), comment("c2", 2)],
       });
     });
@@ -961,7 +1024,7 @@ describe("FullChatComposer browser comments", () => {
   });
 
   it("submits when the page asks the composer to send", async () => {
-    installPreload({ comments: [comment("c1", 1)] });
+    const preload = installPreload({ comments: [comment("c1", 1)] });
     const onPromptSubmit = vi.fn(async () => {});
     render(
       <FullChatComposer
@@ -972,11 +1035,9 @@ describe("FullChatComposer browser comments", () => {
     await findPromptInput();
     await commentsGroup();
 
-    const { requestComposerSubmit } = await import(
-      "@/entities/session/composer-submit-requests"
-    );
+    // The event travels on the browser channel — no Browser panel needed.
     act(() => {
-      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+      preload.publish({ type: "submit-requested", sessionId: SESSION_ID });
     });
 
     await waitFor(() => expect(onPromptSubmit).toHaveBeenCalledOnce());
@@ -985,7 +1046,7 @@ describe("FullChatComposer browser comments", () => {
   });
 
   it("ignores a page submit request with nothing to send", async () => {
-    installPreload();
+    const preload = installPreload();
     const onPromptSubmit = vi.fn(async () => {});
     render(
       <FullChatComposer
@@ -995,14 +1056,11 @@ describe("FullChatComposer browser comments", () => {
     );
     await findPromptInput();
 
-    // A stray Cmd/Ctrl+Enter in the page: the composer is mounted, so the
-    // request is delivered — but an empty draft and an empty drawer mean a
-    // no-op, not "Type a message or attach a file."
-    const { requestComposerSubmit } = await import(
-      "@/entities/session/composer-submit-requests"
-    );
+    // A stray Cmd/Ctrl+Enter in the page reaches the composer — but an empty
+    // draft and an empty drawer mean a no-op, not "Type a message or attach
+    // a file."
     act(() => {
-      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+      preload.publish({ type: "submit-requested", sessionId: SESSION_ID });
     });
 
     await act(async () => {});
@@ -1013,7 +1071,7 @@ describe("FullChatComposer browser comments", () => {
   });
 
   it("ignores a page submit request while Session Creation owns the composer", async () => {
-    installPreload({ comments: [comment("c1", 1)] });
+    const preload = installPreload({ comments: [comment("c1", 1)] });
     saveFollowUpDraft(SESSION_ID, "a draft waiting to send");
     const onPromptSubmit = vi.fn(async () => {});
     render(
@@ -1026,16 +1084,13 @@ describe("FullChatComposer browser comments", () => {
     await findPromptInput();
     await commentsGroup();
 
-    const { requestComposerSubmit } = await import(
-      "@/entities/session/composer-submit-requests"
-    );
     act(() => {
-      expect(requestComposerSubmit(SESSION_ID)).toBe(true);
+      preload.publish({ type: "submit-requested", sessionId: SESSION_ID });
     });
 
     await act(async () => {});
-    // There was something to send, but the input is locked — the request is
-    // answered "delivered" without going out, like pressing a disabled Send.
+    // There was something to send, but the input is locked — a page request
+    // meets the same gate a disabled Send button applies.
     expect(onPromptSubmit).not.toHaveBeenCalled();
   });
 });

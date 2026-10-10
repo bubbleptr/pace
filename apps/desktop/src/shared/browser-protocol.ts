@@ -94,6 +94,8 @@ export type BrowserEvent =
   | {
       type: "comments-changed";
       sessionId: string;
+      /** Bumped on every store change — an event older than one already seen is stale. */
+      revision: number;
       comments: BrowserComment[];
     }
   /**
@@ -113,5 +115,16 @@ export type BrowserEvent =
    * `comments-changed` that carries their `hasImage`.
    */
   | { type: "submit-requested"; sessionId: string };
+
+/**
+ * A read of the Session's comment store — `browser_list_comments` and
+ * `browser_settle_comments`. `revision` is the store's counter at the moment
+ * the answer was built: a stale read drops against any newer one already
+ * applied.
+ */
+export type BrowserCommentList = {
+  revision: number;
+  comments: BrowserComment[];
+};
 
 export const browserEventChannel = "pigui:browser-event";

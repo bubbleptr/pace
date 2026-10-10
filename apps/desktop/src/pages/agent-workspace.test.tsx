@@ -51,7 +51,6 @@ import {
 } from "@/entities/session/session-projection";
 import { createSessionRuntimeModel } from "@/entities/session/session-runtime-model";
 import { getFollowUpDraft, saveFollowUpDraft } from "@/entities/session/follow-up-drafts";
-import { requestComposerSubmit } from "@/entities/session/composer-submit-requests";
 import { getLastModelSelection, saveLastModelSelection } from "@/entities/session/last-model-preference";
 import { saveVisibleModels } from "@/entities/model/visible-models";
 import { ensureSessionDraft, getSessionDraft, saveSessionDraft, setSessionDraftTarget } from "@/entities/session/session-drafts";
@@ -1454,6 +1453,12 @@ describe("AgentWorkspaceSessionsPage", () => {
           events: [{ id: "history", seq: 1, sessionId: "persisted-session-1", piSessionId: "pi-session-persisted-1",
             type: "message_update", ts: "2026-07-03T10:00:00.000Z", payload: { kind: "message", role: "assistant", body: "Saved answer without Pi file" } }],
           updatedAt: "2026-07-03T10:00:00.000Z" };
+      }
+      if (
+        command === "browser_list_comments" ||
+        command === "browser_settle_comments"
+      ) {
+        return { revision: 0, comments: [] };
       }
       if (command === "send_prompt") throw new Error("Pi session file is missing");
 
@@ -4275,6 +4280,30 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
     saveFollowUpDraft("annotated-session", "Half a thought");
 
+    // The request rides the browser event channel — the composer listens on
+    // its own, no Browser panel required.
+    const browserListeners = new Set<(event: unknown) => void>();
+    window.pace = {
+      invoke: vi.fn(async (command: string) => {
+        if (
+          command === "browser_list_comments" ||
+          command === "browser_settle_comments"
+        ) {
+          return { revision: 0, comments: [] };
+        }
+        return null;
+      }) as unknown as NonNullable<typeof window.pace>["invoke"],
+      onBackendEvent: vi.fn(() => vi.fn()),
+      onBrowserEvent: vi.fn((listener) => {
+        browserListeners.add(listener as (event: unknown) => void);
+        return () =>
+          browserListeners.delete(listener as (event: unknown) => void);
+      }),
+      onUpdateEvent: vi.fn(() => vi.fn()),
+      onWindowFocusChanged: vi.fn(() => vi.fn()),
+      onNavigateRequest: vi.fn(() => vi.fn()),
+    };
+
     render(
       <FixtureSessionsView
         projectId="pig-docs"
@@ -4304,12 +4333,18 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await findPromptInput(undefined, { placeholder: "What do you want to know?" });
 
-    // A request aimed at a Session this composer is not showing has no taker.
-    expect(requestComposerSubmit("other-session")).toBe(false);
+    const publish = (sessionId: string) => {
+      for (const listener of browserListeners) {
+        listener({ type: "submit-requested", sessionId });
+      }
+    };
 
-    act(() => {
-      expect(requestComposerSubmit("annotated-session")).toBe(true);
-    });
+    // A request aimed at a Session this composer is not showing has no taker.
+    act(() => publish("other-session"));
+    await act(async () => {});
+    expect(send).not.toHaveBeenCalled();
+
+    act(() => publish("annotated-session"));
 
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith(

@@ -18,7 +18,7 @@ import {
   setBrowserVisible,
   subscribeBrowserEvents,
 } from "@/entities/browser/browser-client";
-import { requestComposerSubmit } from "@/entities/session/composer-submit-requests";
+import { isComposerMounted } from "@/entities/session/composer-presence";
 import { isElectronRuntime } from "@/shared/runtime";
 import type {
   BrowserAnnotationPalette,
@@ -124,11 +124,10 @@ function BrowserSessionContent({
       // is only ever tab snapshots, plus the notices a page could not get on
       // its own.
       if (event.type === "submit-requested") {
-        // Cmd/Ctrl+Enter in the page. A composer mounted for this Session
-        // answers by submitting; with none, the comments stay on the page and
-        // the user hears that nothing was sent.
+        // Cmd/Ctrl+Enter in the page. A mounted composer answers the event
+        // itself, wherever it lives; the panel only says when nobody could.
         if (event.sessionId !== sessionId || !alive.current) return;
-        if (!requestComposerSubmit(sessionId)) {
+        if (!isComposerMounted(sessionId)) {
           const tabId = groupRef.current?.activeTabId ?? "empty";
           setNotices((current) => ({
             ...current,

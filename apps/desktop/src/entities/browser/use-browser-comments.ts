@@ -12,15 +12,27 @@ import {
  * `comments` renders the chips; `latest()` is what a submit snapshots — it
  * reads the ref the event handler writes synchronously, because a save that
  * landed inside the same tick as the send has to be in it. Events are
- * subscribed before the initial list goes out, and an event that arrived
- * before the reply wins: it is newer than whatever the reply was about to say.
+ * subscribed before the initial list goes out, and every answer is stamped
+ * with the store's revision: anything older than the last one applied is
+ * dropped, whether it is a late reply or a replayed event.
+ *
+ * `onSubmitRequested` is the page's Cmd/Ctrl+Enter: the event's own channel
+ * delivers it, so a send survives the Browser panel being closed. The
+ * callback lives in a ref — the subscription does not move per keystroke.
  */
-export function useBrowserComments(sessionId: string | null) {
+export function useBrowserComments(
+  sessionId: string | null,
+  options?: { onSubmitRequested?: () => void },
+) {
   const [comments, setComments] = useState<BrowserComment[]>([]);
   const latestRef = useRef<BrowserComment[]>([]);
+  const appliedRef = useRef(0);
+  const onSubmitRequestedRef = useRef(options?.onSubmitRequested);
+  onSubmitRequestedRef.current = options?.onSubmitRequested;
 
   useEffect(() => {
     latestRef.current = [];
+    appliedRef.current = 0;
     setComments([]);
 
     if (!sessionId || !isElectronRuntime()) {
@@ -28,29 +40,40 @@ export function useBrowserComments(sessionId: string | null) {
     }
 
     let alive = true;
-    let sawEvent = false;
 
     const unsubscribe = subscribeBrowserEvents((event) => {
+      if (!alive) {
+        return;
+      }
+
+      if (event.type === "submit-requested") {
+        if (event.sessionId === sessionId) {
+          onSubmitRequestedRef.current?.();
+        }
+        return;
+      }
+
       if (
         event.type !== "comments-changed" ||
         event.sessionId !== sessionId ||
-        !alive
+        event.revision <= appliedRef.current
       ) {
         return;
       }
 
-      sawEvent = true;
+      appliedRef.current = event.revision;
       latestRef.current = event.comments;
       setComments(event.comments);
     });
 
     void listBrowserComments(sessionId)
       .then((fetched) => {
-        if (!alive || sawEvent || !fetched) {
+        if (!alive || !fetched || fetched.revision <= appliedRef.current) {
           return;
         }
-        latestRef.current = fetched;
-        setComments(fetched);
+        appliedRef.current = fetched.revision;
+        latestRef.current = fetched.comments;
+        setComments(fetched.comments);
       })
       // A failed read leaves the list empty; the next comments-changed
       // repopulates it.

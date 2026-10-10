@@ -24,13 +24,13 @@ function comment(id: string, index: number): BrowserComment {
   };
 }
 
-function installPreload(options: { listGate?: Promise<void> } = {}) {
+function installPreload(options: { listGate?: Promise<void>; revision?: number } = {}) {
   const listeners = new Set<(event: BrowserEvent) => void>();
   const invoke = vi.fn(async (command: string, args?: unknown) => {
     if (command === "browser_list_comments") {
       await options.listGate;
       void args;
-      return [comment("c1", 1)];
+      return { revision: options.revision ?? 1, comments: [comment("c1", 1)] };
     }
     return null;
   });
@@ -86,7 +86,12 @@ describe("useBrowserComments", () => {
 
     const next = [comment("c2", 1), comment("c1", 2)];
     act(() => {
-      publish({ type: "comments-changed", sessionId: "s", comments: next });
+      publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 2,
+        comments: next,
+      });
     });
 
     expect(result.current.comments).toBe(next);
@@ -95,24 +100,74 @@ describe("useBrowserComments", () => {
     expect(result.current.latest()).toBe(next);
   });
 
-  it("lets an event that beat the list reply win", async () => {
+  it("drops a list reply older than an event it was overtaken by", async () => {
     let release = () => {};
     const { publish } = installPreload({
       listGate: new Promise<void>((resolve) => {
         release = resolve;
       }),
+      revision: 1,
     });
     const { result } = renderHook(() => useBrowserComments("s"));
 
     const newer = [comment("c9", 1)];
     act(() => {
-      publish({ type: "comments-changed", sessionId: "s", comments: newer });
+      publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 5,
+        comments: newer,
+      });
     });
     await act(async () => release());
 
     // The reply was older news than the event: applying it would resurrect a
     // comment the store has already dropped.
     expect(result.current.comments).toBe(newer);
+  });
+
+  it("applies a list reply newer than the events seen so far", async () => {
+    const { publish } = installPreload({ revision: 7 });
+    const { result } = renderHook(() => useBrowserComments("s"));
+
+    act(() => {
+      publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 5,
+        comments: [comment("c9", 1)],
+      });
+    });
+
+    // Events can overtake the reply en route: a fresh answer still lands.
+    await waitFor(() =>
+      expect(result.current.comments[0]).toMatchObject({ id: "c1" }),
+    );
+  });
+
+  it("drops an event older than the revision already applied", async () => {
+    const { publish } = installPreload();
+    const { result } = renderHook(() => useBrowserComments("s"));
+
+    await waitFor(() => expect(result.current.comments).toHaveLength(1));
+
+    const latest = [comment("c2", 1), comment("c1", 2)];
+    act(() => {
+      publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 3,
+        comments: latest,
+      });
+      publish({
+        type: "comments-changed",
+        sessionId: "s",
+        revision: 2,
+        comments: [comment("ghost", 1)],
+      });
+    });
+
+    expect(result.current.comments).toBe(latest);
   });
 
   it("ignores another Session's events", async () => {
@@ -125,10 +180,45 @@ describe("useBrowserComments", () => {
       publish({
         type: "comments-changed",
         sessionId: "other",
+        revision: 9,
         comments: [comment("x", 1), comment("y", 2)],
       });
     });
 
     expect(result.current.comments).toHaveLength(1);
+  });
+
+  it("hands the page's submit request to its callback", async () => {
+    const { publish } = installPreload();
+    const onSubmitRequested = vi.fn();
+    renderHook(() =>
+      useBrowserComments("s", { onSubmitRequested }),
+    );
+
+    act(() => {
+      publish({ type: "submit-requested", sessionId: "s" });
+      publish({ type: "submit-requested", sessionId: "other" });
+    });
+
+    expect(onSubmitRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls the latest callback, not the one rendered with", async () => {
+    const { publish } = installPreload();
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = renderHook(
+      ({ onSubmitRequested }) =>
+        useBrowserComments("s", { onSubmitRequested }),
+      { initialProps: { onSubmitRequested: first } },
+    );
+
+    rerender({ onSubmitRequested: second });
+    act(() => {
+      publish({ type: "submit-requested", sessionId: "s" });
+    });
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 });

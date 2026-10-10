@@ -8,7 +8,7 @@ import type {
   BrowserTabTarget,
 } from "@/shared/browser-protocol";
 import type { PaceRendererApi } from "@/shared/runtime";
-import { subscribeComposerSubmitRequests } from "@/entities/session/composer-submit-requests";
+import { markComposerMounted } from "@/entities/session/composer-presence";
 import { createBrowserHost } from "../../../electron/browser-host";
 import { SessionDockMotionContext } from "@/shared/ui/session-dock/session-dock";
 import { SessionBrowserPanel } from "./session-browser-panel";
@@ -362,12 +362,9 @@ describe("SessionBrowserPanel multi-instance", () => {
     expect(screen.queryByText("OLD ERROR")).toBeNull();
   });
 
-  it("hands the page's submit request to a mounted composer", async () => {
+  it("lets a mounted composer answer the page's submit request itself", async () => {
     const preload = installPreload();
-    const submits: number[] = [];
-    const unsubscribe = subscribeComposerSubmitRequests("s", () =>
-      submits.push(submits.length),
-    );
+    const unmount = markComposerMounted("s");
 
     mount();
     await restored();
@@ -376,9 +373,11 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.publish({ type: "submit-requested", sessionId: "s" });
     });
 
-    expect(submits).toHaveLength(1);
+    // The composer heard the event on its own channel — the panel only
+    // speaks when nobody was mounted, so nothing surfaces here.
+    await act(async () => {});
     expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
-    unsubscribe();
+    unmount();
   });
 
   it("says nothing was sent when no composer answers the submit request", async () => {
@@ -398,10 +397,6 @@ describe("SessionBrowserPanel multi-instance", () => {
 
   it("ignores another Session's submit request", async () => {
     const preload = installPreload();
-    const submits: number[] = [];
-    const unsubscribe = subscribeComposerSubmitRequests("s", () =>
-      submits.push(submits.length),
-    );
 
     mount();
     await restored();
@@ -410,9 +405,8 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.publish({ type: "submit-requested", sessionId: "other" });
     });
 
-    expect(submits).toHaveLength(0);
+    await act(async () => {});
     expect(screen.queryByTestId("browser-surface-notice")).toBeNull();
-    unsubscribe();
   });
 
   it("hides the native view behind a still while the dock moves, and reuses that still on the next mount", async () => {
@@ -553,6 +547,7 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.publish({
         type: "comments-changed",
         sessionId: "s",
+        revision: 1,
         comments: [],
       });
     });
