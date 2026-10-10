@@ -1624,4 +1624,106 @@ describe("annotation overlay — area selection", () => {
       vi.useRealTimers();
     }
   });
+
+  it("stores the anchor's own scroll in the offset when the area is saved", async () => {
+    const h = harness();
+
+    document.body.innerHTML =
+      '<div id="scrollbox"><p id="start">inside</p></div>';
+    const box = place(document.getElementById("scrollbox")!, 40, 40, 200, 200);
+    const start = place(document.getElementById("start")!, 50, 50, 20, 10);
+    vi.spyOn(box, "scrollTop", "get").mockReturnValue(100);
+
+    h.overlay.setDesignMode(true);
+    drag(start, 60, 60, 160, 110);
+    typeDraft(h, "inside the scroller");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    // The box does not move when its content scrolls, so the offset has to
+    // carry scrollTop to keep naming the same content.
+    expect(h.saved[0]!.annotation).toMatchObject({
+      selector: "#scrollbox",
+      rect: { x: 60, y: 60, width: 100, height: 50 },
+      area: { x: 20, y: 120, width: 100, height: 50 },
+    });
+  });
+
+  it("moves the outline with the content when the anchor scrolls its content", async () => {
+    const h = harness();
+
+    document.body.innerHTML = '<div id="scrollbox"><p>x</p></div>';
+    const box = place(document.getElementById("scrollbox")!, 40, 40, 200, 200);
+    const scrollTop = vi.spyOn(box, "scrollTop", "get").mockReturnValue(100);
+
+    // area.y = 120 in content coords: 40 + 120 - 100 = 60 on screen.
+    h.overlay.syncAnnotations([
+      {
+        ...areaAnnotation("srv-a", 1, "#scrollbox"),
+        tag: "div",
+        rect: { x: 50, y: 60, width: 40, height: 20 },
+        area: { x: 10, y: 120, width: 40, height: 20 },
+      },
+    ]);
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    expect(outline.style.top).toBe("60px");
+
+    // The anchor's rect is unchanged but its content moved: a mark pinned
+    // to the box alone would slide over different content.
+    scrollTop.mockReturnValue(130);
+    window.dispatchEvent(new Event("scroll"));
+    await nextFrames();
+
+    expect(outline.style.top).toBe("30px");
+  });
+
+  it("lets a badge open after a drag's trailing click landed on it", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, button, "saved mark");
+    const badge = badges(h)[0]!;
+
+    // A drag released under the area threshold, with its trailing click
+    // landing on a saved badge: the badge swallows it — and the swallow
+    // clears the flag itself, so the next click is not eaten.
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+    pointer(button, "pointerup", 200, 52, { button: 0, buttons: 0 });
+    badge.click();
+
+    expect(editorAbsent(h)).toBe(true);
+
+    badge.click();
+
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("saved mark");
+  });
+
+  it("re-arms the click swallow on a pointerdown over overlay chrome", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, button, "saved mark");
+    const badge = badges(h)[0]!;
+
+    // Same dead drag, but the next gesture starts on the badge itself: a
+    // pointerdown over overlay chrome must still reset the swallow — the
+    // page-target early return cannot be where it is re-armed.
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+    pointer(button, "pointerup", 200, 52, { button: 0, buttons: 0 });
+    pointer(badge, "pointerdown", 0, 0, { button: 0, buttons: 1 });
+    badge.click();
+
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("saved mark");
+  });
 });

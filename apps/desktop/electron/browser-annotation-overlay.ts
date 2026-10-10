@@ -1,4 +1,5 @@
 import {
+  anchorScroll,
   describeAnnotatedArea,
   describeAnnotatedElement,
   maxCommentLength,
@@ -870,16 +871,19 @@ export function createAnnotationOverlay(options: {
    * The mark's viewport rect: the element's own box, or for an area the box
    * the saved offset lands at from wherever the anchor re-measures — what
    * keeps a region pinned to its place inside a scrolled or reflowed anchor.
+   * Offsets are stored in the anchor's scrolled-content coordinates, so its
+   * own scroll comes back out here.
    */
   function markedRect(
     element: Element,
     area: BrowserAnnotationElement["area"] | null,
   ): ViewportRect {
     const anchor = element.getBoundingClientRect();
+    const scroll = area ? anchorScroll(element) : { x: 0, y: 0 };
 
     return toViewportRect(
-      anchor.left + (area?.x ?? 0),
-      anchor.top + (area?.y ?? 0),
+      anchor.left + (area?.x ?? 0) - scroll.x,
+      anchor.top + (area?.y ?? 0) - scroll.y,
       area?.width ?? anchor.width,
       area?.height ?? anchor.height,
     );
@@ -1111,8 +1115,10 @@ export function createAnnotationOverlay(options: {
     styleBadge(badge);
     badge.addEventListener("click", () => {
       // A drag releasing over a badge fires this too — its click is
-      // swallowed like the one that lands on page elements.
+      // swallowed like the one that lands on page elements. The flag is
+      // consumed, not held: it guards only this one trailing click.
       if (suppressClick) {
+        suppressClick = false;
         return;
       }
       const entry = entries.get(annotation.id);
@@ -1651,6 +1657,13 @@ export function createAnnotationOverlay(options: {
       return;
     }
 
+    // A new press re-arms the trailing-click swallow even when it lands on
+    // our own chrome — the early return below must not leave a stale flag
+    // eating the badge's next click.
+    if (event.type === "pointerdown") {
+      suppressClick = false;
+    }
+
     const target = pageTarget(event);
 
     // Our own badges and editor have to keep working, so their events are
@@ -1665,8 +1678,7 @@ export function createAnnotationOverlay(options: {
 
     if (event.type === "pointerdown") {
       // A press on a page target arms the drag: whether it stays a click is
-      // the next pointermove's call. The trailing-click swallow re-arms too.
-      suppressClick = false;
+      // the next pointermove's call.
       const pointer = event as MouseEvent;
       if (pointer.button === 0) {
         dragStart = { x: pointer.clientX, y: pointer.clientY, target };
@@ -1730,10 +1742,13 @@ export function createAnnotationOverlay(options: {
 
     const anchor = resolveAreaAnchor(start.target, rect);
     const anchorRect = anchor.getBoundingClientRect();
+    // Scrolled-content coordinates, same rule as describeAnnotatedArea: the
+    // anchor's own scroll belongs to the offset, not the box position.
+    const scroll = anchorScroll(anchor);
 
     requestEditor(anchor, undefined, {
-      x: rect.left - anchorRect.left,
-      y: rect.top - anchorRect.top,
+      x: rect.left - anchorRect.left + scroll.x,
+      y: rect.top - anchorRect.top + scroll.y,
       width: rect.width,
       height: rect.height,
     });

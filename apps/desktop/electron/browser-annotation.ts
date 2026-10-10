@@ -307,11 +307,24 @@ export function describeAnnotatedElement(
 }
 
 /**
+ * How much of an anchor's scrolled content sits hidden above-left of its
+ * border box: its own scroll offsets — except for the document's scrolling
+ * element, whose box already rides the page scroll, so adding its scrollTop
+ * would count the same scroll twice.
+ */
+export function anchorScroll(anchor: Element) {
+  return anchor === anchor.ownerDocument.scrollingElement
+    ? { x: 0, y: 0 }
+    : { x: anchor.scrollLeft, y: anchor.scrollTop };
+}
+
+/**
  * An area comment: `selector`/`tag`/`source` describe the anchor — the
  * smallest element fully containing the dragged rect — while `rect` is the
- * area's own viewport box and `area` its offset from the anchor's, so a
- * restore can re-derive the rect from wherever the anchor re-measures. No
- * `text`: the anchor's content would describe the element, not the region.
+ * area's own viewport box and `area` its offset from the anchor's border
+ * box in scrolled-content coordinates (`anchorScroll`, so the mark tracks
+ * the content, not the box). No `text`: the anchor's content would describe
+ * the element, not the region.
  */
 export function describeAnnotatedArea(
   anchor: Element,
@@ -320,6 +333,7 @@ export function describeAnnotatedArea(
   id: string,
 ): BrowserAnnotationElement {
   const anchorRect = anchor.getBoundingClientRect();
+  const scroll = anchorScroll(anchor);
   const source = readSource(anchor);
 
   return {
@@ -334,8 +348,8 @@ export function describeAnnotatedArea(
       height: Math.round(areaRect.height),
     },
     area: {
-      x: Math.round(areaRect.left - anchorRect.left),
-      y: Math.round(areaRect.top - anchorRect.top),
+      x: Math.round(areaRect.left - anchorRect.left + scroll.x),
+      y: Math.round(areaRect.top - anchorRect.top + scroll.y),
       width: Math.round(areaRect.width),
       height: Math.round(areaRect.height),
     },

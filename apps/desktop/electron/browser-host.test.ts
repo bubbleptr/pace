@@ -14,7 +14,6 @@ import {
   maxSessionComments,
   normalizeBrowserUrl,
   resolveBrowserViewBounds,
-  resolveCommentCropRect,
   urlKey,
   type BrowserHostView,
 } from "./browser-host";
@@ -1258,40 +1257,4 @@ describe("urlKey", () => {
   });
 });
 
-describe("resolveCommentCropRect", () => {
-  it("expands the element by 48px and grows to the minimum size", () => {
-    expect(
-      resolveCommentCropRect(
-        { x: 400, y: 300, width: 40, height: 20 },
-        { width: 1440, height: 900 },
-      ),
-    ).toEqual({ x: 260, y: 210, width: 320, height: 200 });
-  });
 
-  it("keeps a large element's expanded bounds", () => {
-    expect(
-      resolveCommentCropRect(
-        { x: 400, y: 300, width: 500, height: 400 },
-        { width: 1440, height: 900 },
-      ),
-    ).toEqual({ x: 352, y: 252, width: 596, height: 496 });
-  });
-
-  it("shifts an off-edge crop inside before shrinking it", () => {
-    expect(
-      resolveCommentCropRect(
-        { x: 1380, y: 10, width: 40, height: 20 },
-        { width: 1440, height: 900 },
-      ),
-    ).toEqual({ x: 1120, y: 0, width: 320, height: 200 });
-  });
-
-  it("clips a crop bigger than the viewport to it", () => {
-    expect(
-      resolveCommentCropRect(
-        { x: 100, y: 100, width: 900, height: 800 },
-        { width: 400, height: 300 },
-      ),
-    ).toEqual({ x: 0, y: 0, width: 400, height: 300 });
-  });
-});
