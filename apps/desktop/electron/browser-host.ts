@@ -811,6 +811,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       tag: comment.tag,
       ...(comment.text ? { text: comment.text } : {}),
       rect: { ...comment.rect },
+      ...(comment.area ? { area: { ...comment.area } } : {}),
       ...(comment.source ? { source: comment.source } : {}),
       ...(comment.comment ? { comment: comment.comment } : {}),
     };
@@ -1211,6 +1212,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
         tag: annotation.tag,
         ...(annotation.text ? { text: annotation.text } : {}),
         rect: { ...annotation.rect },
+        ...(annotation.area ? { area: { ...annotation.area } } : {}),
         ...(annotation.source ? { source: annotation.source } : {}),
         comment: annotation.comment ?? "",
         tabId: target.tabId,

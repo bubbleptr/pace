@@ -104,9 +104,38 @@ function rectAt(x: number, y: number, width = 40, height = 20) {
  * jsdom measures nothing, and target resolution skips elements under 8px —
  * every click target needs a rect or the climb lands on `<body>`.
  */
-function place(element: Element, x = 40, y = 40) {
-  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(rectAt(x, y));
+function place(element: Element, x = 40, y = 40, width = 40, height = 20) {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
+    rectAt(x, y, width, height),
+  );
   return element;
+}
+
+function pointer(
+  target: EventTarget,
+  type: string,
+  x: number,
+  y: number,
+  init: MouseEventInit = {},
+) {
+  target.dispatchEvent(
+    new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: x,
+      clientY: y,
+      ...init,
+    }),
+  );
+}
+
+/** Press, drag and release on a page element — the click a real drag ends in. */
+function drag(element: Element, fromX: number, fromY: number, toX: number, toY: number) {
+  pointer(element, "pointerdown", fromX, fromY, { button: 0, buttons: 1 });
+  pointer(element, "pointermove", toX, toY, { buttons: 1 });
+  pointer(element, "pointerup", toX, toY, { button: 0, buttons: 0 });
+  clickPageElement(element);
 }
 
 function clip(element: Element, x: number, y: number, width: number, height: number) {
@@ -585,7 +614,7 @@ describe("annotation overlay", () => {
     h.overlay.setDesignMode(true);
 
     expect(frame().style.display).toBe("block");
-    expect(pill().textContent).toContain("Esc to exit");
+    expect(pill().textContent).toBe("Click or drag to annotate · Esc to exit");
 
     h.overlay.setDesignMode(false);
 
@@ -1239,5 +1268,360 @@ describe("annotation overlay — store sync", () => {
     clickPageElement(late);
     expect(editorVisible(h)).toBe(true);
     expect(editorInput(h).value).toBe("edited elsewhere");
+  });
+});
+
+describe("annotation overlay — area selection", () => {
+  function selectionBox(h: ReturnType<typeof harness>) {
+    return h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-selection"]')!;
+  }
+
+  function editorAbsent(h: ReturnType<typeof harness>) {
+    const box = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-editor"]');
+
+    // Either never built or hidden — what matters is nothing opens.
+    return box === null || box.style.display === "none";
+  }
+
+  function areaAnnotation(id: string, index: number, selector = "#cta") {
+    return {
+      id,
+      index,
+      selector,
+      tag: "button",
+      rect: { x: 50, y: 50, width: 20, height: 10 },
+      area: { x: 10, y: 10, width: 20, height: 10 },
+      comment: "area note",
+    };
+  }
+
+  it("keeps a press that stays within 4px a click, saving an element annotation", async () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 52, 52, { buttons: 1 });
+    pointer(button, "pointerup", 52, 52, { button: 0, buttons: 0 });
+    clickPageElement(button);
+
+    expect(editorVisible(h)).toBe(true);
+
+    typeDraft(h, "still a click");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]!.annotation).toMatchObject({
+      tag: "button",
+      comment: "still a click",
+    });
+    expect(h.saved[0]!.annotation).not.toHaveProperty("area");
+  });
+
+  it("draws a selection box past 4px, opens the area editor on release and swallows the trailing click", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    hoverPageElement(button);
+
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+
+    const box = selectionBox(h);
+    const highlight = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-highlight"]')!;
+    const label = h
+      .shadow()
+      .querySelector<HTMLElement>('[data-slot="annotation-highlight-label"]')!;
+
+    // The drag took over: the hover frame is gone, the box carries the size.
+    expect(box.hidden).toBe(false);
+    expect(box.style.left).toBe("50px");
+    expect(box.style.top).toBe("50px");
+    expect(box.style.width).toBe("150px");
+    expect(box.style.height).toBe("100px");
+    expect(highlight.hidden).toBe(true);
+    expect(label.hidden).toBe(false);
+    expect(label.textContent).toBe("150×100");
+
+    pointer(button, "pointerup", 200, 150, { button: 0, buttons: 0 });
+
+    expect(box.hidden).toBe(true);
+    expect(editorVisible(h)).toBe(true);
+    // The area editor anchors below the area's own rect, not an element's.
+    expect(editor(h).style.top).toBe("158px");
+
+    // The release's click belongs to the drag — re-targeting the editor to
+    // the element under it would silently drop the area the user drew.
+    clickPageElement(button);
+    expect(editorVisible(h)).toBe(true);
+    expect(editor(h).style.top).toBe("158px");
+
+    typeDraft(h, "widen this region");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]!.annotation).toMatchObject({
+      tag: "main",
+      rect: { x: 50, y: 50, width: 150, height: 100 },
+      // The anchor is <main> (0,0): the offsets equal the viewport coords.
+      area: { x: 50, y: 50, width: 150, height: 100 },
+      comment: "widen this region",
+    });
+    // The anchor's text would describe the element, not the marked region.
+    expect(h.saved[0]!.annotation).not.toHaveProperty("text");
+  });
+
+  it("anchors an area to the smallest element that fully contains it", async () => {
+    const h = harness();
+
+    document.body.innerHTML =
+      '<div id="outer"><div id="inner"><b id="start">x</b></div></div>';
+    place(document.getElementById("outer")!, 0, 0, 400, 400);
+    place(document.getElementById("inner")!, 100, 100, 200, 200);
+    const start = place(document.getElementById("start")!, 110, 110, 10, 10);
+
+    h.overlay.setDesignMode(true);
+    drag(start, 110, 110, 250, 250);
+    typeDraft(h, "inner region");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    // #inner (100..300) contains the 110..250 drag; #outer does too, later.
+    expect(h.saved[0]!.annotation).toMatchObject({
+      selector: "#inner",
+      tag: "div",
+      rect: { x: 110, y: 110, width: 140, height: 140 },
+      area: { x: 10, y: 10, width: 140, height: 140 },
+    });
+  });
+
+  it("anchors on body when nothing smaller contains the area", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 300, 300);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    drag(button, 50, 50, 400, 350);
+    typeDraft(h, "whole page");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    // jsdom's body measures empty, so the climb reaches it by exhaustion.
+    expect(h.saved[0]!.annotation.tag).toBe("body");
+    expect(h.saved[0]!.annotation).toMatchObject({
+      rect: { x: 50, y: 50, width: 350, height: 300 },
+      area: { x: 50, y: 50, width: 350, height: 300 },
+    });
+  });
+
+  it("skips SVG interiors while climbing for an anchor", async () => {
+    const h = harness();
+
+    document.body.innerHTML =
+      '<div id="panel"><svg id="icon" viewBox="0 0 10 10"><path id="stroke" d="M0 0h10"/></svg></div>';
+    place(document.getElementById("panel")!, 0, 0, 200, 200);
+    place(document.getElementById("icon")!, 40, 40, 100, 100);
+    const stroke = place(document.getElementById("stroke")!, 45, 45, 80, 80);
+
+    h.overlay.setDesignMode(true);
+    drag(stroke, 50, 50, 120, 120);
+    typeDraft(h, "icon area");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+
+    // The path's box contains the drag, but an SVG interior cannot anchor:
+    // the <svg> is the first containing ancestor that counts.
+    expect(h.saved[0]!.annotation).toMatchObject({
+      selector: "#icon",
+      tag: "svg",
+      area: { x: 10, y: 10, width: 70, height: 70 },
+    });
+  });
+
+  it("discards a drag released under 4px on either axis, swallowing the click", () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    // A wide but 3px-tall scratch: past the drag threshold, under the area one.
+    drag(button, 50, 50, 300, 53);
+
+    expect(editorAbsent(h)).toBe(true);
+    expect(selectionBox(h).hidden).toBe(true);
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it("cancels an in-flight drag on Escape, swallowing the release and its click", () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+    expect(selectionBox(h).hidden).toBe(false);
+
+    pressKey(window, "Escape");
+
+    // Escape killed the gesture, not the mode.
+    expect(selectionBox(h).hidden).toBe(true);
+    expect(h.designModeChanges).toEqual([]);
+
+    pointer(button, "pointerup", 200, 150, { button: 0, buttons: 0 });
+    clickPageElement(button);
+
+    expect(editorAbsent(h)).toBe(true);
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it("cancels an open area editor on Escape without a report", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    drag(button, 50, 50, 200, 150);
+    typeDraft(h, "half a note");
+    pressKey(editorInput(h), "Escape");
+
+    expect(editorVisible(h)).toBe(false);
+    expect(h.designModeChanges).toEqual([]);
+
+    await nextFrames();
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it("never cancels the page's wheel events mid-drag", () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+
+    // Marking a region must not trap scrolling — the box stays viewport-fixed.
+    const wheel = new MouseEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    button.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(selectionBox(h).hidden).toBe(false);
+  });
+
+  it("aborts an armed drag when the pointer returns with no buttons pressed", () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    // Released outside the window: the next move reports buttons: 0 and the
+    // gesture is dead whether or not a pointerup ever reaches the page.
+    pointer(button, "pointermove", 200, 150, { buttons: 0 });
+
+    expect(selectionBox(h).hidden).toBe(true);
+
+    pointer(button, "pointerup", 200, 150, { button: 0, buttons: 0 });
+    clickPageElement(button);
+
+    expect(editorAbsent(h)).toBe(true);
+    expect(h.saved).toHaveLength(0);
+  });
+
+  it("aborts an in-flight drag the same way", () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    pointer(button, "pointerdown", 50, 50, { button: 0, buttons: 1 });
+    pointer(button, "pointermove", 200, 150, { buttons: 1 });
+    expect(selectionBox(h).hidden).toBe(false);
+
+    pointer(button, "pointermove", 300, 200, { buttons: 0 });
+
+    expect(selectionBox(h).hidden).toBe(true);
+
+    pointer(button, "pointerup", 300, 200, { button: 0, buttons: 0 });
+    clickPageElement(button);
+
+    expect(editorAbsent(h)).toBe(true);
+  });
+
+  it("opens a fresh element draft when an area's anchor element is clicked", async () => {
+    const h = harness();
+    place(document.querySelector("main")!, 0, 0, 600, 400);
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    drag(button, 50, 50, 200, 150);
+    typeDraft(h, "the region");
+    pressKey(editorInput(h), "Enter");
+    await nextFrames();
+    expect(h.saved[0]!.annotation.area).toBeDefined();
+
+    clickPageElement(document.querySelector("main")!);
+
+    // An area mark never owns its anchor: this is a new element draft on
+    // <main>, not the saved area's editor (no Delete, empty text).
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("");
+    expect(editorButton(h, "delete").style.display).toBe("none");
+  });
+
+  it("restores an area at its anchor's rect plus the saved offset, and follows the anchor", async () => {
+    const h = harness();
+    const button = place(document.getElementById("cta")!);
+
+    h.overlay.syncAnnotations([areaAnnotation("srv-a", 1)]);
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+
+    expect(outline.style.left).toBe("50px");
+    expect(outline.style.top).toBe("50px");
+    expect(outline.style.width).toBe("20px");
+    expect(outline.style.height).toBe("10px");
+    // Dashed, unlike an element's solid frame — regions are not elements.
+    expect(outline.style.cssText).toContain("dashed");
+    expect(h.presence).toEqual([{ id: "srv-a", stale: false }]);
+
+    // The anchor moved: the mark re-derives its rect from the offset.
+    vi.mocked(button.getBoundingClientRect).mockReturnValue(rectAt(80, 90));
+    window.dispatchEvent(new Event("scroll"));
+    await nextFrames();
+
+    expect(outline.style.left).toBe("90px");
+    expect(outline.style.top).toBe("100px");
+  });
+
+  it("reports a missing area anchor stale after the restore wait", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+
+    try {
+      h.overlay.syncAnnotations([areaAnnotation("srv-a", 1, "#never")]);
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(h.presence).toEqual([{ id: "srv-a", stale: true }]);
+      expect(badges(h)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -105,6 +105,50 @@ describe("formatBrowserComments", () => {
     );
   });
 
+  it("prints an area comment with its bounds instead of an element rect", () => {
+    expect(
+      formatBrowserComments([
+        comment({
+          index: 1,
+          hasImage: true,
+          selector: "#panel",
+          tag: "section",
+          area: { x: 24, y: 12, width: 60, height: 30 },
+          rect: { x: 36, y: 352, width: 60, height: 30 },
+          comment: "move this down",
+          source: { file: "src/hero.tsx", line: 4 },
+        }),
+        comment({
+          id: "e2",
+          index: 2,
+          selector: "#panel",
+          tag: "section",
+          area: { x: 0, y: 0, width: 10, height: 10 },
+          rect: { x: 40, y: 40, width: 10, height: 10 },
+          comment: "no shot",
+        }),
+      ]),
+    ).toBe(
+      [
+        "Browser comments from the embedded preview. A comment marked [screenshot] has a cropped screenshot of its element attached; those screenshots are the last images in this message, in comment order.",
+        "",
+        "Page: Alpha — http://localhost:5173/a",
+        "Viewport: 684×820 @2x",
+        "",
+        "#1 [screenshot] area in `#panel` (section)",
+        "  move this down",
+        "  - source: `src/hero.tsx:4`",
+        // The crop has margins and no drawn box, so the bounds are always
+        // printed — screenshot or not — and never as an element `rect:`.
+        "  - area: 60×30 at (36, 352)",
+        "",
+        "#2 area in `#panel` (section)",
+        "  no shot",
+        "  - area: 10×10 at (40, 40)",
+      ].join("\n"),
+    );
+  });
+
   it("prints the page without a title and a comment without text", () => {
     expect(
       formatBrowserComments([

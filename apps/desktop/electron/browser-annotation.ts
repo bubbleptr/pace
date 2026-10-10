@@ -306,6 +306,43 @@ export function describeAnnotatedElement(
   };
 }
 
+/**
+ * An area comment: `selector`/`tag`/`source` describe the anchor — the
+ * smallest element fully containing the dragged rect — while `rect` is the
+ * area's own viewport box and `area` its offset from the anchor's, so a
+ * restore can re-derive the rect from wherever the anchor re-measures. No
+ * `text`: the anchor's content would describe the element, not the region.
+ */
+export function describeAnnotatedArea(
+  anchor: Element,
+  areaRect: { left: number; top: number; width: number; height: number },
+  index: number,
+  id: string,
+): BrowserAnnotationElement {
+  const anchorRect = anchor.getBoundingClientRect();
+  const source = readSource(anchor);
+
+  return {
+    id,
+    index,
+    selector: buildElementSelector(anchor),
+    tag: anchor.tagName.toLowerCase(),
+    rect: {
+      x: Math.round(areaRect.left),
+      y: Math.round(areaRect.top),
+      width: Math.round(areaRect.width),
+      height: Math.round(areaRect.height),
+    },
+    area: {
+      x: Math.round(areaRect.left - anchorRect.left),
+      y: Math.round(areaRect.top - anchorRect.top),
+      width: Math.round(areaRect.width),
+      height: Math.round(areaRect.height),
+    },
+    ...(source ? { source } : {}),
+  };
+}
+
 function finiteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -366,10 +403,11 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     return null;
   }
 
-  const { id, index, selector, tag, text, rect, source, comment } =
+  const { id, index, selector, tag, text, rect, source, comment, area } =
     value as Record<string, unknown>;
   const indexNumber = finiteNumber(index);
   const rectangle = readRect(rect);
+  const areaRect = readRect(area);
 
   if (
     typeof id !== "string" ||
@@ -377,7 +415,11 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     indexNumber === null ||
     typeof selector !== "string" ||
     typeof tag !== "string" ||
-    !rectangle
+    !rectangle ||
+    // A malformed area cannot ride through half-parsed: refuse the whole
+    // annotation rather than store it as an element comment.
+    (area !== undefined &&
+      (areaRect === null || areaRect.width <= 0 || areaRect.height <= 0))
   ) {
     return null;
   }
@@ -391,6 +433,7 @@ function readAnnotation(value: unknown): BrowserAnnotationElement | null {
     tag: clampText(tag, maxTagLength),
     ...(typeof text === "string" && text ? { text: clampText(text, maxTextLength) } : {}),
     rect: rectangle,
+    ...(areaRect ? { area: areaRect } : {}),
     ...(location ? { source: location } : {}),
     ...(typeof comment === "string" && comment
       ? { comment: clampComment(comment, maxCommentLength) }

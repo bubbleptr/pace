@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptBrowserAnnotationMessage,
   buildElementSelector,
+  describeAnnotatedArea,
   describeAnnotatedElement,
   readAnnotationPalette,
   resolveAnnotationTarget,
@@ -176,6 +177,51 @@ describe("describeAnnotatedElement", () => {
   });
 });
 
+describe("describeAnnotatedArea", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("describes the anchor and carries the rect's offset from it", () => {
+    mount(
+      '<main><section id="panel" data-source="src/panel.tsx:9"><p>inside</p></section></main>',
+    );
+    const anchor = document.getElementById("panel")!;
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({
+      x: 40,
+      y: 40,
+      left: 40,
+      top: 40,
+      width: 200,
+      height: 200,
+      right: 240,
+      bottom: 240,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const annotation = describeAnnotatedArea(
+      anchor,
+      { left: 60.4, top: 90.6, width: 50.2, height: 30.8 },
+      2,
+      "a1",
+    );
+
+    // `rect` is the area's own viewport box; `area` is its offset from the
+    // anchor, so a rebind re-derives the rect wherever the anchor lands.
+    expect(annotation).toEqual({
+      id: "a1",
+      index: 2,
+      selector: "#panel",
+      tag: "section",
+      rect: { x: 60, y: 91, width: 50, height: 31 },
+      area: { x: 20, y: 51, width: 50, height: 31 },
+      source: { file: "src/panel.tsx", line: 9 },
+    });
+    // The anchor's text would describe the element, not the marked region.
+    expect(annotation).not.toHaveProperty("text");
+  });
+});
+
 describe("acceptBrowserAnnotationMessage", () => {
   const trustedSender = { id: "view" };
   const annotation = {
@@ -275,6 +321,38 @@ describe("acceptBrowserAnnotationMessage", () => {
     expect(
       accept({ ...annotation, rect: { x: 0, y: 0, width: Number.NaN, height: 0 } }),
     ).toBeNull();
+  });
+
+  it("accepts a valid area and rejects one that is not a real rect", () => {
+    const accept = (candidate: unknown) =>
+      acceptBrowserAnnotationMessage({
+        sender: trustedSender,
+        trustedSender,
+        message: {
+          type: "annotation-saved",
+          annotation: candidate,
+          viewport,
+          documentUrl: "https://app.test/page",
+        },
+      });
+    const area = { x: 10, y: 12, width: 30, height: 20 };
+
+    expect(accept({ ...annotation, area })).toMatchObject({
+      annotation: { area },
+    });
+
+    // A malformed area cannot ride the wire half-parsed — the whole
+    // annotation is refused rather than stored as an element comment.
+    for (const bad of [
+      { area: null },
+      { area: "12x10" },
+      { area: { x: 1, y: 2, width: 3 } },
+      { area: { x: 1, y: 2, width: 0, height: 3 } },
+      { area: { x: 1, y: 2, width: 3, height: -4 } },
+      { area: { x: 1, y: 2, width: 3, height: Number.NaN } },
+    ]) {
+      expect(accept({ ...annotation, ...bad })).toBeNull();
+    }
   });
 
   it("rejects a saved annotation whose id is not a minted short string", () => {

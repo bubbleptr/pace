@@ -253,7 +253,15 @@ export function FullChatComposer({
           .find((part) => part.length > 0);
         return {
           id: comment.id,
-          label: line ? `#${comment.index} ${line}` : `#${comment.index}`,
+          // An area comment's first line still summarizes it; the kind word
+          // keeps "#n" from reading as an element mark.
+          label: comment.area
+            ? line
+              ? `#${comment.index} Area · ${line}`
+              : `#${comment.index} Area`
+            : line
+              ? `#${comment.index} ${line}`
+              : `#${comment.index}`,
           warning: comment.stale
             ? "No longer on the page — sent as it was when saved"
             : undefined,

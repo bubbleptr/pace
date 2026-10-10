@@ -853,6 +853,31 @@ describe("Session comment store", () => {
     );
   });
 
+  it("keeps an area comment's anchor offsets through the store and the tab sync", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    await host.saveComment(
+      first,
+      {
+        ...annotation("c1"),
+        // `rect` is the area's own viewport box; `area` the offset from the
+        // anchor both must survive the round trip unchanged.
+        rect: { x: 108, y: 106, width: 20, height: 10 },
+        area: { x: 8, y: 6, width: 20, height: 10 },
+      },
+      viewport,
+      "http://localhost:3000/",
+    );
+
+    expect(await list()).toMatchObject([
+      { id: "c1", area: { x: 8, y: 6, width: 20, height: 10 } },
+    ]);
+    expect(views[0]!.synced).toMatchObject([
+      { id: "c1", area: { x: 8, y: 6, width: 20, height: 10 } },
+    ]);
+  });
+
   it("updates only the comment text when the page edits its own annotation", async () => {
     const { host, views, list } = harness();
 
