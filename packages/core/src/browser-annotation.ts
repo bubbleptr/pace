@@ -36,6 +36,13 @@ export type BrowserAnnotationElement = {
   text?: string;
   /** Viewport-relative, as measured when the element was marked. */
   rect: { x: number; y: number; width: number; height: number };
+  /**
+   * Present only for an area comment: the dragged rectangle relative to the
+   * anchor element's border-box top-left, in CSS px. `selector`/`tag`/`source`
+   * then describe the anchor (smallest element fully containing the area);
+   * `rect` is the area's own viewport rect when saved.
+   */
+  area?: { x: number; y: number; width: number; height: number };
   source?: { file: string; line: number; column?: number };
   comment?: string;
 };
@@ -132,19 +139,28 @@ export function formatBrowserComments(comments: readonly BrowserComment[]) {
       );
     }
 
+    const marker = `#${comment.index}${comment.hasImage ? " [screenshot]" : ""}`;
+
     lines.push(
       "",
-      `#${comment.index}${comment.hasImage ? " [screenshot]" : ""} \`${oneLine(comment.selector)}\` (${oneLine(comment.tag)})`,
+      comment.area
+        ? `${marker} area in \`${oneLine(comment.selector)}\` (${oneLine(comment.tag)})`
+        : `${marker} \`${oneLine(comment.selector)}\` (${oneLine(comment.tag)})`,
       ...commentBodyLines(comment.comment),
     );
 
-    if (comment.text) {
+    // An area's anchor text would name the element, not the marked region.
+    if (!comment.area && comment.text) {
       lines.push(`  - text: "${oneLine(comment.text)}"`);
     }
     if (comment.source) {
       lines.push(`  - source: \`${formatSource(comment.source)}\``);
     }
-    if (!comment.hasImage) {
+    // An area always prints its bounds: its crop has margins and no drawn
+    // box, so even a screenshot cannot say where exactly the region was.
+    if (comment.area) {
+      lines.push(`  - area: ${formatRect(comment.rect)}`);
+    } else if (!comment.hasImage) {
       lines.push(`  - rect: ${formatRect(comment.rect)}`);
     }
     if (comment.stale) {

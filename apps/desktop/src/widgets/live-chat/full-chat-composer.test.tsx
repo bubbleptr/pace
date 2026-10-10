@@ -800,6 +800,23 @@ describe("FullChatComposer browser comments", () => {
     expect(group).toBeInTheDocument();
   });
 
+  it("labels an area comment's chip with its kind", async () => {
+    installPreload({
+      comments: [
+        comment("c1", 1, { area: { x: 4, y: 4, width: 20, height: 10 } }),
+        comment("c2", 2, {
+          area: { x: 0, y: 0, width: 8, height: 8 },
+          comment: "",
+        }),
+      ],
+    });
+    render(<FullChatComposer projection={liveProjection()} />);
+
+    await commentsGroup();
+    expect(screen.getByText("#1 Area · note c1")).toBeInTheDocument();
+    expect(screen.getByText("#2 Area")).toBeInTheDocument();
+  });
+
   it("removes a chip through the store", async () => {
     const preload = installPreload({ comments: [comment("c1", 1)] });
     const user = userEvent.setup();

@@ -1,4 +1,5 @@
 import {
+  describeAnnotatedArea,
   describeAnnotatedElement,
   maxCommentLength,
   readSource,
@@ -21,7 +22,9 @@ import type {
  *
  * Lifecycle (decision 1 of `.scratch/browser-annotation-v2/PRD.md`): a click
  * opens a focused *draft* editor — not yet an annotation, and main hears
- * nothing until Save/Enter commits it. Cancel/Esc discards without a trace.
+ * nothing until Save/Enter commits it. A press that drags past 4px marks an
+ * area instead (decision 6): the rect is anchored to the smallest element
+ * fully containing it. Cancel/Esc discards without a trace.
  * Clicking a saved element or its badge re-opens that annotation's editor
  * (with Delete); an empty comment can never be saved.
  *
@@ -48,10 +51,53 @@ type AnnotationEntry = {
 
 /** The one open editor: what it annotates, and what it started with. */
 type EditorState = {
+  /**
+   * The mark's element: the marked element itself, or for an area the anchor
+   * — the smallest element that fully contained the dragged rect.
+   */
   element: Element;
+  /**
+   * The dragged rectangle relative to `element`'s border box, or null for an
+   * element comment. An edit carries the saved annotation's own offsets so
+   * the editor sits against the region, not the whole anchor.
+   */
+  area: { x: number; y: number; width: number; height: number } | null;
   annotationId: string | null;
   savedText: string;
 };
+
+/**
+ * A viewport-space rectangle as the annotator and the clipper both read it:
+ * DOMRect's two naming conventions plus the size, in plain fields.
+ */
+type ViewportRect = {
+  x: number;
+  y: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+function toViewportRect(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): ViewportRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
 
 export type BrowserAnnotationOverlay = {
   setDesignMode(enabled: boolean, palette?: BrowserAnnotationPalette): void;
@@ -105,6 +151,10 @@ const pointerEvents = [
 ];
 
 const editorWidthPx = 280;
+/** A press whose pointer stays within this distance is a click, not a drag. */
+const dragThresholdPx = 4;
+/** A selection under this on either axis is a slip, not an area. */
+const minAreaSidePx = 4;
 
 function clampValue(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), Math.max(min, max));
@@ -191,6 +241,7 @@ export function createAnnotationOverlay(options: {
   let shadowRoot: ShadowRoot | null = null;
   let highlight: HTMLElement | null = null;
   let highlightLabel: HTMLElement | null = null;
+  let selectionBox: HTMLElement | null = null;
   let markerLayer: HTMLElement | null = null;
   let frame: HTMLElement | null = null;
   let pill: HTMLElement | null = null;
@@ -203,6 +254,18 @@ export function createAnnotationOverlay(options: {
   let resolvedTarget: Element | null = null;
   /** What is actually framed now: the resolved target, or an ancestor ↑ chose. */
   let hoverTarget: Element | null = null;
+  /**
+   * A pointerdown on a page target, remembered until the gesture proves
+   * itself a click or a drag — the threshold on pointermove decides.
+   */
+  let dragStart: { x: number; y: number; target: Element } | null = null;
+  let dragging = false;
+  /**
+   * The click that ends a finished or cancelled drag must not annotate —
+   * armed again on every pointerdown, since a swallowed click may be the
+   * last event the gesture ever produces.
+   */
+  let suppressClick = false;
   let markerSyncFrame = 0;
 
   function applyDesignMode(enabled: boolean) {
@@ -213,6 +276,7 @@ export function createAnnotationOverlay(options: {
       setModeAffordanceVisible(true);
     } else {
       hideHighlight();
+      abortDrag();
       closeEditor();
       resolvedTarget = null;
       hoverTarget = null;
@@ -265,8 +329,18 @@ export function createAnnotationOverlay(options: {
     });
   }
 
-  function styleOutline(outline: HTMLElement) {
-    applyStyles(outline, { border: `1.5px solid ${colors.accent}` });
+  function styleSelectionBox() {
+    applyStyles(selectionBox!, {
+      border: `1.5px dashed ${colors.accent}`,
+      background: `color-mix(in srgb, ${colors.accent} 12%, transparent)`,
+    });
+  }
+
+  function styleOutline(outline: HTMLElement, area = false) {
+    // A dashed frame marks a dragged region; a solid one, an element.
+    applyStyles(outline, {
+      border: `1.5px ${area ? "dashed" : "solid"} ${colors.accent}`,
+    });
   }
 
   function styleBadge(badge: HTMLButtonElement) {
@@ -301,11 +375,12 @@ export function createAnnotationOverlay(options: {
   function restyle() {
     if (highlight) styleHighlight();
     if (highlightLabel) styleHighlightLabel();
+    if (selectionBox) styleSelectionBox();
     if (frame) styleFrame();
     if (pill) stylePill();
     if (editorBox) styleEditor();
     for (const entry of entries.values()) {
-      styleOutline(entry.outline);
+      styleOutline(entry.outline, entry.annotation.area !== undefined);
       styleBadge(entry.badge);
     }
   }
@@ -353,7 +428,7 @@ export function createAnnotationOverlay(options: {
 
     pill = doc.createElement("div");
     pill.dataset.slot = "annotation-pill";
-    pill.textContent = "Annotating · Esc to exit";
+    pill.textContent = "Click or drag to annotate · Esc to exit";
     applyStyles(pill, {
       position: "fixed",
       top: "10px",
@@ -397,6 +472,18 @@ export function createAnnotationOverlay(options: {
     });
     styleHighlightLabel();
 
+    // The in-flight drag rectangle: drawn between pointerdown's arm and
+    // pointerup's commit, then gone — a saved area renders as a dashed mark.
+    selectionBox = doc.createElement("div");
+    selectionBox.dataset.slot = "annotation-selection";
+    selectionBox.hidden = true;
+    applyStyles(selectionBox, {
+      position: "fixed",
+      "box-sizing": "border-box",
+      "pointer-events": "none",
+    });
+    styleSelectionBox();
+
     markerLayer = doc.createElement("div");
     markerLayer.dataset.slot = "annotation-markers";
     applyStyles(markerLayer, {
@@ -409,7 +496,14 @@ export function createAnnotationOverlay(options: {
       "pointer-events": designMode ? "auto" : "none",
     });
 
-    root.append(frame, highlight, highlightLabel, markerLayer, pill);
+    root.append(
+      frame,
+      highlight,
+      highlightLabel,
+      selectionBox,
+      markerLayer,
+      pill,
+    );
     parent.append(host);
 
     return host;
@@ -534,6 +628,31 @@ export function createAnnotationOverlay(options: {
     );
   }
 
+  /**
+   * Above the box by default; when there is no room up there the label goes
+   * below rather than under the toolbar.
+   */
+  function positionHighlightLabel(rect: {
+    left: number;
+    top: number;
+    bottom: number;
+  }) {
+    const labelRect = highlightLabel!.getBoundingClientRect();
+    const labelHeight = labelRect.height || highlightLabel!.offsetHeight;
+    const labelWidth = labelRect.width || highlightLabel!.offsetWidth;
+    const viewport = readViewport();
+    const top =
+      rect.top - labelHeight - 4 >= 4
+        ? rect.top - labelHeight - 4
+        : rect.bottom + 4;
+
+    applyStyles(highlightLabel!, {
+      left: `${clampValue(rect.left, 4, Math.max(4, viewport.width - labelWidth - 4))}px`,
+      top: `${top}px`,
+    });
+    highlightLabel!.hidden = false;
+  }
+
   function showHighlight(element: Element) {
     if (!ensureHost() || !highlight || !highlightLabel) {
       return;
@@ -550,21 +669,96 @@ export function createAnnotationOverlay(options: {
     highlight.hidden = false;
 
     highlightLabel.textContent = describeHoverTarget(element);
+    positionHighlightLabel(rect);
+  }
 
-    // Above the box by default; when there is no room up there the label goes
-    // below rather than under the toolbar.
-    const labelRect = highlightLabel.getBoundingClientRect();
-    const labelHeight = labelRect.height || highlightLabel.offsetHeight;
-    const labelWidth = labelRect.width || highlightLabel.offsetWidth;
+  // -- Area drags ---------------------------------------------------------
+
+  /**
+   * The rect a press-and-drag has drawn so far: normalised (a drag may run
+   * up-left) and clamped to the viewport it lives in.
+   */
+  function dragRect(start: { x: number; y: number }, x: number, y: number) {
     const viewport = readViewport();
-    const top =
-      rect.top - labelHeight - 4 >= 4 ? rect.top - labelHeight - 4 : rect.bottom + 4;
+    const left = clampValue(Math.min(start.x, x), 0, viewport.width);
+    const top = clampValue(Math.min(start.y, y), 0, viewport.height);
+    const right = clampValue(Math.max(start.x, x), left, viewport.width);
+    const bottom = clampValue(Math.max(start.y, y), top, viewport.height);
 
-    applyStyles(highlightLabel, {
-      left: `${clampValue(rect.left, 4, Math.max(4, viewport.width - labelWidth - 4))}px`,
-      top: `${top}px`,
+    return toViewportRect(left, top, right - left, bottom - top);
+  }
+
+  function showSelectionBox(rect: ViewportRect) {
+    if (!ensureHost() || !selectionBox || !highlightLabel) {
+      return;
+    }
+
+    applyStyles(selectionBox, {
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
     });
-    highlightLabel.hidden = false;
+    selectionBox.hidden = false;
+
+    // The hover label doubles as the size readout while the drag runs.
+    highlightLabel.textContent = `${Math.round(rect.width)}×${Math.round(rect.height)}`;
+    positionHighlightLabel(rect);
+  }
+
+  function hideSelectionBox() {
+    if (selectionBox) {
+      selectionBox.hidden = true;
+    }
+    if (highlightLabel) {
+      highlightLabel.hidden = true;
+    }
+  }
+
+  /**
+   * End the gesture without an area — Esc, pointercancel, a release that
+   * happened outside the window. Whatever it still produces (a release, its
+   * click) is the dead drag's and may not open an editor.
+   */
+  function abortDrag() {
+    if (dragStart) {
+      suppressClick = true;
+    }
+    dragStart = null;
+    dragging = false;
+    hideSelectionBox();
+  }
+
+  /**
+   * The element an area hangs on: the smallest one along the pressed
+   * target's ancestor chain that fully contains the dragged rect — never an
+   * SVG interior (a path's box means nothing to a restore), never above
+   * body, which is the anchor of last resort.
+   */
+  function resolveAreaAnchor(deepest: Element, rect: ViewportRect) {
+    const body = doc.body;
+    let current: Element | null = deepest;
+
+    while (current && current !== body) {
+      const insideSvg =
+        current instanceof SVGElement && current.ownerSVGElement !== null;
+
+      if (!insideSvg) {
+        const bounds = current.getBoundingClientRect();
+
+        if (
+          bounds.left <= rect.left &&
+          bounds.top <= rect.top &&
+          bounds.right >= rect.right &&
+          bounds.bottom >= rect.bottom
+        ) {
+          return current;
+        }
+      }
+      current = current.parentElement;
+    }
+
+    return body;
   }
 
   // -- Saved marks: outline + badge ---------------------------------------
@@ -596,7 +790,12 @@ export function createAnnotationOverlay(options: {
         continue;
       }
 
-      const elementRects = visibleElementRect(entry.element, viewport);
+      const elementRects = visibleElementRect(
+        entry.element,
+        markedRect(entry.element, entry.annotation.area),
+        viewport,
+        entry.annotation.area !== undefined,
+      );
 
       if (!elementRects) {
         applyStyles(entry.outline, { display: "none" });
@@ -668,21 +867,44 @@ export function createAnnotationOverlay(options: {
   }
 
   /**
-   * The element's rect clipped to the viewport and every scroll container on
+   * The mark's viewport rect: the element's own box, or for an area the box
+   * the saved offset lands at from wherever the anchor re-measures — what
+   * keeps a region pinned to its place inside a scrolled or reflowed anchor.
+   */
+  function markedRect(
+    element: Element,
+    area: BrowserAnnotationElement["area"] | null,
+  ): ViewportRect {
+    const anchor = element.getBoundingClientRect();
+
+    return toViewportRect(
+      anchor.left + (area?.x ?? 0),
+      anchor.top + (area?.y ?? 0),
+      area?.width ?? anchor.width,
+      area?.height ?? anchor.height,
+    );
+  }
+
+  /**
+   * The mark's rect clipped to the viewport and every scroll container on
    * its ancestor chain — `visible` — plus the clipping bounds themselves, so
    * a badge can stay on the edge of a partially visible mark instead of
-   * dropping under it. An element re-rendering disconnected it measures as
-   * 0,0 or is clipped out entirely: null, and the mark comes off screen.
+   * dropping under it. `element` is the node the chain hangs from; for an
+   * area the walk starts at the anchor itself, because the region can poke
+   * out of it and the anchor's own overflow still clips it. An element
+   * re-rendering disconnected it measures as 0,0 or is clipped out entirely:
+   * null, and the mark comes off screen.
    */
   function visibleElementRect(
     element: Element,
+    rect: ViewportRect,
     viewport: BrowserAnnotationViewport,
+    clipFromElement = false,
   ) {
     if (!element.isConnected || element.ownerDocument !== doc) {
       return null;
     }
 
-    const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
       return null;
     }
@@ -694,7 +916,7 @@ export function createAnnotationOverlay(options: {
     const view = doc.defaultView;
 
     for (
-      let ancestor = element.parentElement;
+      let ancestor = clipFromElement ? element : element.parentElement;
       ancestor && clipLeft < clipRight && clipTop < clipBottom;
       ancestor = ancestor.parentElement
     ) {
@@ -739,10 +961,12 @@ export function createAnnotationOverlay(options: {
   /**
    * A mark may not steal another mark's element: two entries on one node is
    * exactly the duplicate a re-rendered replacement could otherwise create.
+   * Only element marks own — an area merely hangs its rect on the anchor,
+   * so the anchor stays free for an element comment and for other areas.
    */
   function elementOwned(element: Element) {
     for (const entry of entries.values()) {
-      if (entry.element === element) {
+      if (entry.annotation.area === undefined && entry.element === element) {
         return true;
       }
     }
@@ -770,17 +994,40 @@ export function createAnnotationOverlay(options: {
 
       const replacement = resolveBySelector(entry.annotation.selector);
 
-      if (!replacement || elementOwned(replacement)) {
+      // An area rebind never checks ownership: its anchor is shared ground —
+      // an element comment and other areas may all legitimately sit on it.
+      if (
+        !replacement ||
+        (entry.annotation.area === undefined && elementOwned(replacement))
+      ) {
         continue;
       }
 
-      const refreshed = describeAnnotatedElement(
-        replacement,
-        entry.annotation.index,
-        entry.annotation.id,
-      );
-      if (entry.annotation.comment) {
-        refreshed.comment = entry.annotation.comment;
+      let refreshed: BrowserAnnotationElement;
+      const area = entry.annotation.area;
+
+      if (area) {
+        // Same anchor identity, same offsets — only the viewport rect the
+        // pair produces is re-measured.
+        const rect = markedRect(replacement, area);
+        refreshed = {
+          ...entry.annotation,
+          rect: {
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      } else {
+        refreshed = describeAnnotatedElement(
+          replacement,
+          entry.annotation.index,
+          entry.annotation.id,
+        );
+        if (entry.annotation.comment) {
+          refreshed.comment = entry.annotation.comment;
+        }
       }
       const annotationIndex = annotations.indexOf(entry.annotation);
 
@@ -803,7 +1050,7 @@ export function createAnnotationOverlay(options: {
   function syncOverlayPositions() {
     positionEntries();
     if (editor) {
-      positionEditor(editor.element);
+      positionEditor(editor);
     }
     if (highlight && !highlight.hidden && hoverTarget) {
       showHighlight(hoverTarget);
@@ -840,7 +1087,7 @@ export function createAnnotationOverlay(options: {
       "border-radius": "2px",
       "pointer-events": "none",
     });
-    styleOutline(outline);
+    styleOutline(outline, annotation.area !== undefined);
 
     const badge = doc.createElement("button");
 
@@ -863,6 +1110,11 @@ export function createAnnotationOverlay(options: {
     });
     styleBadge(badge);
     badge.addEventListener("click", () => {
+      // A drag releasing over a badge fires this too — its click is
+      // swallowed like the one that lands on page elements.
+      if (suppressClick) {
+        return;
+      }
       const entry = entries.get(annotation.id);
 
       if (entry) {
@@ -881,10 +1133,12 @@ export function createAnnotationOverlay(options: {
     // reopen its editor instead of drafting a duplicate.
     positionEntries();
     if (editor) {
-      positionEditor(editor.element);
+      positionEditor(editor);
     }
     for (const entry of entries.values()) {
-      if (entry.element === element) {
+      // Areas do not own their anchor: clicking it drafts an element
+      // comment, never the area's editor.
+      if (entry.annotation.area === undefined && entry.element === element) {
         return entry;
       }
     }
@@ -948,7 +1202,7 @@ export function createAnnotationOverlay(options: {
 
     const found = resolveBySelector(annotation.selector);
 
-    if (found && !elementOwned(found)) {
+    if (found && (annotation.area !== undefined || !elementOwned(found))) {
       renderEntry(annotation, found);
       options.onAnnotationPresence(annotation.id, false);
       return;
@@ -967,7 +1221,7 @@ export function createAnnotationOverlay(options: {
 
       const element = resolveBySelector(current.selector);
 
-      if (element && !elementOwned(element)) {
+      if (element && (current.area !== undefined || !elementOwned(element))) {
         stopWatchingRestore(current.id);
         renderEntry(current, element);
         options.onAnnotationPresence(current.id, false);
@@ -1155,19 +1409,22 @@ export function createAnnotationOverlay(options: {
   }
 
   /**
-   * Below the element by default; if it would run off the viewport bottom it
+   * Below the mark by default; if it would run off the viewport bottom it
    * goes above, and if neither fits it clamps inside what room there is.
+   * The mark's rect is the element's own box or the area drawn inside it.
    */
-  function positionEditor(element: Element) {
+  function positionEditor(state: EditorState) {
     if (!editorBox) {
       return;
     }
 
-    const rect = element.getBoundingClientRect();
+    const rect = markedRect(state.element, state.area);
     const viewport = readViewport();
     // Anchor on the visible part: a mark clipped by a scroll container would
     // otherwise park the editor over whatever covers it.
-    const anchor = visibleElementRect(element, viewport)?.visible ?? rect;
+    const anchor =
+      visibleElementRect(state.element, rect, viewport, state.area !== null)
+        ?.visible ?? rect;
     const height =
       editorBox.getBoundingClientRect().height || editorBox.offsetHeight;
 
@@ -1183,7 +1440,11 @@ export function createAnnotationOverlay(options: {
     });
   }
 
-  function openEditor(element: Element, entry?: AnnotationEntry) {
+  function openEditor(
+    element: Element,
+    entry: AnnotationEntry | undefined,
+    area: EditorState["area"],
+  ) {
     ensureEditor();
 
     if (!editorBox || !editorText || !deleteButton) {
@@ -1192,6 +1453,7 @@ export function createAnnotationOverlay(options: {
 
     editor = {
       element,
+      area,
       annotationId: entry?.annotation.id ?? null,
       savedText: entry?.annotation.comment ?? "",
     };
@@ -1201,7 +1463,7 @@ export function createAnnotationOverlay(options: {
     // Shown before it is measured: a display:none box has no height, so the
     // flip-above check would always think there is room below.
     applyStyles(editorBox, { display: "flex" });
-    positionEditor(element);
+    positionEditor(editor);
     editorText.focus();
     editorText.setSelectionRange(editorText.value.length, editorText.value.length);
   }
@@ -1242,11 +1504,18 @@ export function createAnnotationOverlay(options: {
     } else {
       // The index is provisional: main numbers comments across the Session
       // and the sync that answers this save brings the real one.
-      const annotation = describeAnnotatedElement(
-        editor.element,
-        annotations.length + 1,
-        crypto.randomUUID(),
-      );
+      const annotation = editor.area
+        ? describeAnnotatedArea(
+            editor.element,
+            markedRect(editor.element, editor.area),
+            annotations.length + 1,
+            crypto.randomUUID(),
+          )
+        : describeAnnotatedElement(
+            editor.element,
+            annotations.length + 1,
+            crypto.randomUUID(),
+          );
       annotation.comment = comment;
       annotations.push(annotation);
       renderEntry(annotation, editor.element);
@@ -1284,15 +1553,22 @@ export function createAnnotationOverlay(options: {
   }
 
   /**
-   * Every request to open an editor — a page click or a badge. One editor at
-   * a time: a dirty unsaved draft holds its ground (with a shake); anything
-   * else is discarded in favour of the new target.
+   * Every request to open an editor — a page click, a drag release, or a
+   * badge. One editor at a time: a dirty unsaved draft holds its ground
+   * (with a shake); anything else is discarded in favour of the new target.
    */
-  function requestEditor(element: Element, entry?: AnnotationEntry) {
+  function requestEditor(
+    element: Element,
+    entry?: AnnotationEntry,
+    area?: EditorState["area"],
+  ) {
     if (editor && editorText) {
+      // "Same" means same annotation for a saved mark, and same kind on the
+      // same element for a draft — a fresh drag over an element draft is a
+      // new mark, not a refocus.
       const sameTarget = entry
         ? editor.annotationId === entry.annotation.id
-        : editor.element === element;
+        : editor.element === element && !editor.area && !area;
 
       if (sameTarget) {
         editorText.focus();
@@ -1307,7 +1583,7 @@ export function createAnnotationOverlay(options: {
       closeEditor();
     }
 
-    openEditor(element, entry);
+    openEditor(element, entry, entry?.annotation.area ?? area ?? null);
   }
 
   // -- Event handlers ------------------------------------------------------
@@ -1315,6 +1591,31 @@ export function createAnnotationOverlay(options: {
   function handlePointerMove(event: Event) {
     if (!designMode) {
       return;
+    }
+
+    // An armed press owns the move stream: under the threshold nothing
+    // changes (hover stays put), past it the drag draws its box.
+    if (dragStart) {
+      const pointer = event as MouseEvent;
+
+      if (pointer.buttons === 0) {
+        // The release happened outside the window; the gesture is over.
+        abortDrag();
+      } else {
+        const dx = pointer.clientX - dragStart.x;
+        const dy = pointer.clientY - dragStart.y;
+
+        if (dragging || Math.hypot(dx, dy) > dragThresholdPx) {
+          dragging = true;
+          hideHighlight();
+          resolvedTarget = null;
+          hoverTarget = null;
+          showSelectionBox(
+            dragRect(dragStart, pointer.clientX, pointer.clientY),
+          );
+        }
+        return;
+      }
     }
 
     const target = pageTarget(event);
@@ -1362,7 +1663,25 @@ export function createAnnotationOverlay(options: {
     event.stopPropagation();
     event.stopImmediatePropagation();
 
+    if (event.type === "pointerdown") {
+      // A press on a page target arms the drag: whether it stays a click is
+      // the next pointermove's call. The trailing-click swallow re-arms too.
+      suppressClick = false;
+      const pointer = event as MouseEvent;
+      if (pointer.button === 0) {
+        dragStart = { x: pointer.clientX, y: pointer.clientY, target };
+      }
+      return;
+    }
+
     if (event.type !== "click") {
+      return;
+    }
+
+    if (suppressClick) {
+      // The release of a finished or cancelled drag still fires a click —
+      // the gesture was the drag's, so it annotates nothing.
+      suppressClick = false;
       return;
     }
 
@@ -1375,6 +1694,53 @@ export function createAnnotationOverlay(options: {
     resolvedTarget = resolved;
     hoverTarget = targetElement;
     requestEditor(targetElement, entryForElement(targetElement) ?? undefined);
+  }
+
+  /**
+   * The release decides what the gesture was. An armed press that never
+   * crossed the threshold is simply disarmed — its click follows the
+   * element path as always. A finished drag commits its area, unless the
+   * rect came out too thin to have been meant.
+   */
+  function handlePointerUp(event: Event) {
+    if (!designMode || !dragStart) {
+      return;
+    }
+
+    const start = dragStart;
+    dragStart = null;
+
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    hideSelectionBox();
+
+    // The release and the click it fires belong to the drag, not the page.
+    event.preventDefault();
+    event.stopPropagation();
+    suppressClick = true;
+
+    const pointer = event as MouseEvent;
+    const rect = dragRect(start, pointer.clientX, pointer.clientY);
+
+    if (rect.width < minAreaSidePx || rect.height < minAreaSidePx) {
+      return;
+    }
+
+    const anchor = resolveAreaAnchor(start.target, rect);
+    const anchorRect = anchor.getBoundingClientRect();
+
+    requestEditor(anchor, undefined, {
+      x: rect.left - anchorRect.left,
+      y: rect.top - anchorRect.top,
+      width: rect.width,
+      height: rect.height,
+    });
+  }
+
+  function handlePointerCancel() {
+    abortDrag();
   }
 
   /** ↑ walks toward the root (never to `<html>`), ↓ back toward the pointer. */
@@ -1456,8 +1822,13 @@ export function createAnnotationOverlay(options: {
       event.preventDefault();
       event.stopPropagation();
 
-      // Two-stage: an open editor is cancelled first (draft discarded, saved
-      // text reverted); the next Escape leaves annotation mode entirely.
+      // Three-stage: a drag in flight dies first (its release and click are
+      // swallowed), an open editor is cancelled next (draft discarded, saved
+      // text reverted), and the last Escape leaves annotation mode entirely.
+      if (dragStart) {
+        abortDrag();
+        return;
+      }
       if (editor) {
         closeEditor();
         return;
@@ -1511,6 +1882,8 @@ export function createAnnotationOverlay(options: {
     listenerTarget.addEventListener(type, handlePointerEvent, true);
   }
   listenerTarget.addEventListener("pointermove", handlePointerMove, true);
+  listenerTarget.addEventListener("pointerup", handlePointerUp, true);
+  listenerTarget.addEventListener("pointercancel", handlePointerCancel, true);
   listenerTarget.addEventListener("mouseout", handlePointerOut, true);
   listenerTarget.addEventListener("keydown", handleKeyDown, true);
   // Scroll does not bubble, so the capture phase is the only way to hear one
@@ -1553,6 +1926,8 @@ export function createAnnotationOverlay(options: {
         listenerTarget.removeEventListener(type, handlePointerEvent, true);
       }
       listenerTarget.removeEventListener("pointermove", handlePointerMove, true);
+      listenerTarget.removeEventListener("pointerup", handlePointerUp, true);
+      listenerTarget.removeEventListener("pointercancel", handlePointerCancel, true);
       listenerTarget.removeEventListener("mouseout", handlePointerOut, true);
       listenerTarget.removeEventListener("keydown", handleKeyDown, true);
       listenerTarget.removeEventListener("scroll", scheduleMarkerSync, true);
@@ -1569,6 +1944,7 @@ export function createAnnotationOverlay(options: {
       shadowRoot = null;
       highlight = null;
       highlightLabel = null;
+      selectionBox = null;
       markerLayer = null;
       frame = null;
       pill = null;
@@ -1579,6 +1955,9 @@ export function createAnnotationOverlay(options: {
       editor = null;
       resolvedTarget = null;
       hoverTarget = null;
+      dragStart = null;
+      dragging = false;
+      suppressClick = false;
       entries.clear();
       annotations.length = 0;
     },
