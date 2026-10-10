@@ -47,7 +47,7 @@ jobs:
           DEBUG: pw:browser
         run: |
           system_profiler SPDisplaysDataType
-          bun run test:e2e:packaged:mac e2e/smoke/browser-surface.spec.ts --workers=1 --repeat-each=3 --reporter=line
+          bun run test:e2e:packaged:mac e2e/smoke/browser-surface.spec.ts --workers=1 --repeat-each=5 --reporter=line
       - name: Upload test diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
