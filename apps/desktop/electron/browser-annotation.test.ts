@@ -192,7 +192,12 @@ describe("acceptBrowserAnnotationMessage", () => {
       acceptBrowserAnnotationMessage({
         sender: { id: "renderer" },
         trustedSender,
-        message: { type: "annotation-saved", annotation, viewport },
+        message: {
+          type: "annotation-saved",
+          annotation,
+          viewport,
+          documentUrl: "https://app.test/page",
+        },
       }),
     ).toBeNull();
   });
@@ -219,6 +224,23 @@ describe("acceptBrowserAnnotationMessage", () => {
       { type: "annotation-saved" },
       { type: "annotation-saved", annotation },
       { type: "annotation-saved", annotation: {}, viewport },
+      {
+        type: "annotation-saved",
+        annotation,
+        viewport,
+      },
+      {
+        type: "annotation-saved",
+        annotation,
+        viewport,
+        documentUrl: 42,
+      },
+      {
+        type: "annotation-saved",
+        annotation,
+        viewport,
+        documentUrl: `https://app.test/${"x".repeat(2048)}`,
+      },
       { type: "annotation-deleted" },
       { type: "annotation-deleted", id: "has spaces/in it" },
       { type: "annotation-presence", id: "ann-1" },
@@ -235,13 +257,19 @@ describe("acceptBrowserAnnotationMessage", () => {
       acceptBrowserAnnotationMessage({
         sender: trustedSender,
         trustedSender,
-        message: { type: "annotation-saved", annotation: candidate, viewport },
+        message: {
+          type: "annotation-saved",
+          annotation: candidate,
+          viewport,
+          documentUrl: "https://app.test/page",
+        },
       });
 
     expect(accept(annotation)).toEqual({
       type: "annotation-saved",
       annotation,
       viewport,
+      documentUrl: "https://app.test/page",
     });
     expect(accept({ ...annotation, selector: 42 })).toBeNull();
     expect(
@@ -258,6 +286,7 @@ describe("acceptBrowserAnnotationMessage", () => {
           type: "annotation-saved",
           annotation: { ...annotation, id },
           viewport,
+          documentUrl: "https://app.test/page",
         },
       });
 
@@ -276,6 +305,7 @@ describe("acceptBrowserAnnotationMessage", () => {
       message: {
         type: "annotation-saved",
         viewport,
+        documentUrl: "https://app.test/page",
         annotation: {
           ...annotation,
           selector: '[data-testid="two\nlines"]',
@@ -299,6 +329,7 @@ describe("acceptBrowserAnnotationMessage", () => {
       message: {
         type: "annotation-saved",
         viewport,
+        documentUrl: "https://app.test/page",
         annotation: {
           ...annotation,
           text: "x".repeat(400),

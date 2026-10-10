@@ -734,6 +734,19 @@ export function createAnnotationOverlay(options: {
   }
 
   /**
+   * A mark may not steal another mark's element: two entries on one node is
+   * exactly the duplicate a re-rendered replacement could otherwise create.
+   */
+  function elementOwned(element: Element) {
+    for (const entry of entries.values()) {
+      if (entry.element === element) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * A re-rendered element leaves a rendered entry pointing at a disconnected
    * node. When its selector still resolves uniquely — and to a node no other
    * entry owns — the entry rebinds to the replacement, so clicking the new
@@ -742,14 +755,6 @@ export function createAnnotationOverlay(options: {
    * comment; the store already knows the rest.
    */
   function reconcileEntries() {
-    const owned = new Set<Element>();
-
-    for (const entry of entries.values()) {
-      if (entry.element.isConnected && entry.element.ownerDocument === doc) {
-        owned.add(entry.element);
-      }
-    }
-
     for (const annotation of annotations) {
       const entry = entries.get(annotation.id);
 
@@ -762,7 +767,7 @@ export function createAnnotationOverlay(options: {
 
       const replacement = resolveBySelector(entry.annotation.selector);
 
-      if (!replacement || owned.has(replacement)) {
+      if (!replacement || elementOwned(replacement)) {
         continue;
       }
 
@@ -784,7 +789,6 @@ export function createAnnotationOverlay(options: {
       if (editor?.annotationId === refreshed.id) {
         editor.element = replacement;
       }
-      owned.add(replacement);
     }
   }
 
@@ -941,24 +945,38 @@ export function createAnnotationOverlay(options: {
 
     const found = resolveBySelector(annotation.selector);
 
-    if (found) {
+    if (found && !elementOwned(found)) {
       renderEntry(annotation, found);
       options.onAnnotationPresence(annotation.id, false);
       return;
     }
 
     const observer = new MutationObserver(() => {
-      const element = resolveBySelector(annotation.selector);
+      // What the element gets is whatever the store last said for this id —
+      // the sync that started the watch may already be older than the one it
+      // answers, and a dropped id renders nothing.
+      const current = annotations.find((item) => item.id === annotation.id);
 
-      if (element) {
+      if (!current) {
         stopWatchingRestore(annotation.id);
-        renderEntry(annotation, element);
-        options.onAnnotationPresence(annotation.id, false);
+        return;
+      }
+
+      const element = resolveBySelector(current.selector);
+
+      if (element && !elementOwned(element)) {
+        stopWatchingRestore(current.id);
+        renderEntry(current, element);
+        options.onAnnotationPresence(current.id, false);
       }
     });
     const timer = setTimeout(() => {
       stopWatchingRestore(annotation.id);
-      options.onAnnotationPresence(annotation.id, true);
+      // Only report for an id the store still wants — its watcher should
+      // already be dead, but a missed sync must not become a stale report.
+      if (annotations.some((item) => item.id === annotation.id)) {
+        options.onAnnotationPresence(annotation.id, true);
+      }
     }, 5000);
 
     if (doc.documentElement) {
@@ -1003,6 +1021,16 @@ export function createAnnotationOverlay(options: {
       if (entry) {
         entry.annotation = copy;
         entry.badge.textContent = String(copy.index);
+
+        if (!entry.element.isConnected || entry.element.ownerDocument !== doc) {
+          // An SPA re-render can take a marked element between syncs — the
+          // store still wants the mark, so it rejoins the restore path:
+          // rebind now, or watch until it shows or the wait declares it stale.
+          entry.outline.remove();
+          entry.badge.remove();
+          entries.delete(copy.id);
+          restoreAnnotation(copy);
+        }
       } else {
         restoreAnnotation(copy);
       }

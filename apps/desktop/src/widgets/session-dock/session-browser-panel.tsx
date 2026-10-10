@@ -124,7 +124,18 @@ function BrowserSessionContent({
     const early = new Map<string, BrowserTabState>();
     const unsubscribe = subscribeBrowserEvents((event) => {
       // comments-changed is store news for the composer (S3) — the panel's
-      // state is only ever tab snapshots.
+      // state is only ever tab snapshots, plus the one notice that explains
+      // a comment main refused to keep.
+      if (event.type === "comment-rejected") {
+        if (event.sessionId === sessionId && alive.current) {
+          setNotices((current) => ({
+            ...current,
+            [event.tabId]:
+              "This Session already keeps 200 browser comments — send or remove some first.",
+          }));
+        }
+        return;
+      }
       if (event.type !== "state-changed") return;
       const { tab } = event;
       if (tab.sessionId !== sessionId || !alive.current) return;

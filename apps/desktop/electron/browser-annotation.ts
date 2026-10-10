@@ -40,6 +40,12 @@ export type BrowserAnnotationMessage =
       type: "annotation-saved";
       annotation: BrowserAnnotationElement;
       viewport: BrowserAnnotationViewport;
+      /**
+       * `location.href` of the document that saved. Navigation between the
+       * overlay's save and main's read would otherwise file the comment under
+       * whatever URL the tab happens to be on when the message lands.
+       */
+      documentUrl: string;
     }
   | { type: "annotation-deleted"; id: string }
   /**
@@ -472,9 +478,13 @@ export function acceptBrowserAnnotationMessage<Sender>(input: {
     case "annotation-saved": {
       const annotation = readAnnotation(message.annotation);
       const viewport = readViewportValue(message.viewport);
+      const documentUrl = message.documentUrl;
 
-      return annotation && viewport
-        ? { type: "annotation-saved", annotation, viewport }
+      return annotation &&
+        viewport &&
+        typeof documentUrl === "string" &&
+        documentUrl.length <= 2048
+        ? { type: "annotation-saved", annotation, viewport, documentUrl }
         : null;
     }
     case "annotation-deleted":

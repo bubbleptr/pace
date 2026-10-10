@@ -1143,4 +1143,103 @@ describe("annotation overlay — store sync", () => {
     // The comment this draft was writing to no longer exists.
     expect(editorVisible(h)).toBe(false);
   });
+
+  it("rebinds a mark whose element a re-render replaced, on the next position pass", async () => {
+    const h = harness();
+    const original = place(document.getElementById("cta")!, 40, 40);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, original, "Original comment");
+
+    original.remove();
+    const replacement = document.createElement("button");
+    replacement.id = "cta";
+    place(replacement, 120, 130);
+    document.querySelector("main")!.append(replacement);
+
+    // The next layout sync — scroll, resize, a sibling render — reconciles
+    // before hiding: the mark follows its selector to the replacement node.
+    window.dispatchEvent(new Event("scroll"));
+    await nextFrames();
+
+    const outline = h.shadow().querySelector<HTMLElement>(
+      '[data-slot="annotation-outline"]',
+    )!;
+    expect(outline.style.display).toBe("block");
+    expect(outline.style.left).toBe("120px");
+    expect(outline.style.top).toBe("130px");
+    expect(badges(h)).toHaveLength(1);
+  });
+
+  it("sends a disconnected mark back through the restore watch on a later sync", async () => {
+    const h = harness();
+    const original = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, original, "Original comment");
+    const annotation = h.saved[0]!.annotation;
+
+    original.remove();
+
+    // Still wanted by the store: the dead entry is dropped and the restore
+    // watch takes over — not stale until the wait itself runs out.
+    h.overlay.syncAnnotations([annotation]);
+    expect(badges(h)).toHaveLength(0);
+
+    const replacement = document.createElement("button");
+    replacement.id = "cta";
+    place(replacement, 120, 130);
+    document.querySelector("main")!.append(replacement);
+    await nextFrames();
+
+    expect(badges(h)).toHaveLength(1);
+    expect(h.presence).toEqual([{ id: annotation.id, stale: false }]);
+  });
+
+  it("reports a disconnected mark stale when its replacement never arrives", async () => {
+    const h = harness();
+    const original = place(document.getElementById("cta")!);
+
+    h.overlay.setDesignMode(true);
+    await annotate(h, original, "Original comment");
+    const annotation = h.saved[0]!.annotation;
+    original.remove();
+
+    vi.useFakeTimers();
+    try {
+      h.overlay.syncAnnotations([annotation]);
+      await vi.advanceTimersByTimeAsync(5000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(h.presence).toEqual([{ id: annotation.id, stale: true }]);
+    expect(badges(h)).toHaveLength(0);
+  });
+
+  it("renders the store's latest annotation when a delayed element finally appears", async () => {
+    const h = harness();
+    const delayed = serverAnnotation("srv-1", 2, "#late", "original");
+
+    h.overlay.setDesignMode(true);
+    h.overlay.syncAnnotations([delayed]);
+    expect(badges(h)).toHaveLength(0);
+
+    // Renumbered and re-edited while the element was still missing — what
+    // arrives must draw the newest shape, not the snapshot that watched for it.
+    h.overlay.syncAnnotations([
+      { ...delayed, index: 1, comment: "edited elsewhere" },
+    ]);
+
+    const late = document.createElement("button");
+    late.id = "late";
+    place(late, 120, 130);
+    document.body.append(late);
+    await nextFrames();
+
+    expect(badges(h)[0]?.textContent).toBe("1");
+    clickPageElement(late);
+    expect(editorVisible(h)).toBe(true);
+    expect(editorInput(h).value).toBe("edited elsewhere");
+  });
 });

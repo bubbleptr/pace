@@ -126,6 +126,17 @@ export type BrowserEvent =
       type: "comments-changed";
       sessionId: string;
       comments: BrowserComment[];
+    }
+  /**
+   * A page-committed comment could not be stored — today only because the
+   * Session is already at its limit. The tab gets its store truth back, so
+   * its local mark is already gone; the notice explains why it vanished.
+   */
+  | {
+      type: "comment-rejected";
+      sessionId: string;
+      tabId: string;
+      reason: "limit";
     };
 
 export const browserEventChannel = "pigui:browser-event";

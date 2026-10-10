@@ -112,6 +112,9 @@ function installPreload(
   return {
     host,
     invocations,
+    publish(event: BrowserEvent) {
+      listeners.forEach((listener) => listener(event));
+    },
     async target(index = 0, sessionId = "s") {
       const group = (await host.invoke("browser_list", {
         sessionId,
@@ -120,7 +123,12 @@ function installPreload(
     },
     async mark(target: BrowserTabTarget) {
       await act(async () => {
-        await host.saveComment(target, marks[0]!, viewport);
+        await host.saveComment(
+          target,
+          marks[0]!,
+          viewport,
+          host.readTab(target).url,
+        );
       });
     },
   };
@@ -570,6 +578,54 @@ describe("SessionBrowserPanel multi-instance", () => {
       border: expect.any(String),
       muted: expect.any(String),
     });
+  });
+
+  it("tells the tab its comment was refused when the Session is full", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.publish({
+        type: "comment-rejected",
+        sessionId: "s",
+        tabId: target.tabId,
+        reason: "limit",
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        "This Session already keeps 200 browser comments — send or remove some first.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("ignores browser events that are not about this Session", async () => {
+    const preload = installPreload();
+    mount();
+    await restored();
+    const target = await preload.target();
+
+    act(() => {
+      preload.publish({
+        type: "comment-rejected",
+        sessionId: "other-session",
+        tabId: target.tabId,
+        reason: "limit",
+      });
+      preload.publish({
+        type: "comments-changed",
+        sessionId: "s",
+        comments: [],
+      });
+    });
+
+    await act(async () => {});
+    expect(
+      screen.queryByText(/This Session already keeps/),
+    ).not.toBeInTheDocument();
   });
 
   it("sends a palette-only update for page-origin activation without echoing mode", async () => {

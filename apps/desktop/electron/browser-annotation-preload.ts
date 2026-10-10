@@ -30,6 +30,9 @@ const overlay = createAnnotationOverlay({
       type: "annotation-saved",
       annotation,
       viewport,
+      // Filed against the document that saved — the tab may have navigated
+      // by the time main reads this.
+      documentUrl: location.href,
     });
   },
   onAnnotationDeleted(id) {

@@ -804,6 +804,7 @@ describe("Browser multi-instance host", () => {
       first,
       { id: "a1", index: 1, selector: "#a", tag: "p", rect },
       { width: 600, height: 700, dpr: 1 },
+      "http://localhost:3000/",
     );
     const capture = host.invoke("browser_capture_annotation", first);
     await host.invoke("browser_open", second);
@@ -922,7 +923,7 @@ describe("Session comment store", () => {
     const { host, views, events, list } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
 
     const comments = await list();
 
@@ -956,8 +957,8 @@ describe("Session comment store", () => {
     const { host, views, list } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
-    await host.saveComment(first, annotation("c1", "edited"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c1", "edited"), viewport, "http://localhost:3000/");
 
     const comments = await list();
 
@@ -974,9 +975,9 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     await openOn(host, second, "localhost:4000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
     // Tab b cannot edit a comment that belongs to tab a.
-    await host.saveComment(second, annotation("c1", "hijacked"), viewport);
+    await host.saveComment(second, annotation("c1", "hijacked"), viewport, "http://localhost:4000/");
 
     const comments = await list();
 
@@ -990,10 +991,55 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     for (let i = 0; i < maxSessionComments + 3; i += 1) {
-      await host.saveComment(first, annotation(`c${i}`), viewport);
+      await host.saveComment(first, annotation(`c${i}`), viewport, "http://localhost:3000/");
     }
 
     expect(await list()).toHaveLength(maxSessionComments);
+  });
+
+  it("releases the overlay, resyncs and reports when a save hits the Session cap", async () => {
+    const { host, views, events, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+    for (let i = 0; i < maxSessionComments; i += 1) {
+      await host.saveComment(first, annotation(`c${i}`), viewport, "http://localhost:3000/");
+    }
+    views[0]!.calls.length = 0;
+
+    await host.saveComment(first, annotation("over"), viewport, "http://localhost:3000/");
+
+    expect(await list()).toHaveLength(maxSessionComments);
+    // The overlay hid itself for the save's crop: it must come back, and the
+    // store's truth pushed back removes the phantom mark it drew locally.
+    expect(views[0]!.calls).toContain("finishCapture");
+    expect(views[0]!.calls.filter((call) => call.startsWith("captureRect"))).toHaveLength(0);
+    expect(views[0]!.synced).toHaveLength(maxSessionComments);
+    expect(events[events.length - 1]).toMatchObject({
+      type: "comment-rejected",
+      sessionId: "s",
+      tabId: "a",
+      reason: "limit",
+    });
+  });
+
+  it("drops a save filed from a document that already navigated away", async () => {
+    const { host, views, list } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    // The page said where it was when it saved; the tab has since moved.
+    await host.saveComment(
+      first,
+      annotation("c1"),
+      viewport,
+      "http://localhost:3000/older",
+    );
+
+    expect(await list()).toHaveLength(0);
+    // The overlay is still released — but no sync is owed: the document it
+    // hid itself on is gone, its own ready/navigation sync reconciles.
+    expect(views[0]!.calls).toContain("finishCapture");
+    expect(views[0]!.calls.filter((call) => call.startsWith("captureRect"))).toHaveLength(0);
   });
 
   it("still finishes the capture handshake when the crop cannot be read", async () => {
@@ -1001,7 +1047,7 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     views[0]!.cropResult = null;
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
 
     expect((await list())?.[0]?.hasImage).toBe(false);
     expect(views[0]!.calls).toContain("finishCapture");
@@ -1011,9 +1057,9 @@ describe("Session comment store", () => {
     const { host, views } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
     views[0]!.cropResult = null;
-    await host.saveComment(first, annotation("c2"), viewport);
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
 
     const images = await host.invoke("browser_comment_images", {
       sessionId: "s",
@@ -1027,11 +1073,32 @@ describe("Session comment store", () => {
     });
   });
 
+  it("answers image ids that collide with an object key", async () => {
+    const { host } = harness();
+
+    await openOn(host, first, "localhost:3000");
+
+    const images = (await host.invoke("browser_comment_images", {
+      sessionId: "s",
+      ids: ["__proto__"],
+    })) as Record<string, string | null>;
+
+    // "__proto__" must be an own data property — writing into a plain object
+    // literal would mutate its prototype instead of answering the id.
+    expect(Object.keys(images)).toContain("__proto__");
+    expect(Object.getOwnPropertyDescriptor(images, "__proto__")).toEqual({
+      value: null,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
   it("keeps comments through navigation and scopes a tab's marks by urlKey", async () => {
     const { host, views } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
 
     // Another document: the comment stays in the store but leaves the page.
     await host.invoke("browser_navigate", {
@@ -1054,7 +1121,7 @@ describe("Session comment store", () => {
     const { host, list } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
     await host.invoke("browser_close", first);
 
     // Closing removes the view and its markers — never the comment.
@@ -1066,8 +1133,8 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     await openOn(host, second, "localhost:4000");
-    await host.saveComment(first, annotation("c1"), viewport);
-    await host.saveComment(second, annotation("c2"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(second, annotation("c2"), viewport, "http://localhost:4000/");
     await host.invoke("browser_clear_annotations", first);
 
     expect(await list()).toMatchObject([{ id: "c2", tabId: "b" }]);
@@ -1077,8 +1144,8 @@ describe("Session comment store", () => {
     const { host, list } = harness();
 
     await openOn(host, first, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
-    await host.saveComment(first, annotation("c2"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(first, annotation("c2"), viewport, "http://localhost:3000/");
     await host.invoke("browser_delete_comment", { sessionId: "s", id: "gone" });
     expect(await list()).toHaveLength(2);
 
@@ -1087,7 +1154,7 @@ describe("Session comment store", () => {
 
     // Consume removes only what it names — a comment saved since the
     // composer's snapshot was taken survives.
-    await host.saveComment(first, annotation("c3"), viewport);
+    await host.saveComment(first, annotation("c3"), viewport, "http://localhost:3000/");
     await host.invoke("browser_consume_comments", {
       sessionId: "s",
       ids: ["c2", "unknown"],
@@ -1100,8 +1167,8 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     await openOn(host, second, "localhost:3000");
-    await host.saveComment(first, annotation("c1"), viewport);
-    await host.saveComment(second, annotation("c2"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
+    await host.saveComment(second, annotation("c2"), viewport, "http://localhost:3000/");
     await host.invoke("browser_delete_comment", { sessionId: "s", id: "c1" });
 
     // The deleted comment's successor moves up — the store's numbering is
@@ -1115,7 +1182,7 @@ describe("Session comment store", () => {
 
     await openOn(host, first, "localhost:3000");
     await openOn(host, second, "localhost:4000");
-    await host.saveComment(first, annotation("c1"), viewport);
+    await host.saveComment(first, annotation("c1"), viewport, "http://localhost:3000/");
 
     host.markStale(second, "c1", true);
     expect((await list())?.[0]?.stale).toBe(false);

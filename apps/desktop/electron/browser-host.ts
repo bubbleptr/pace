@@ -378,6 +378,11 @@ type BrowserTabHost = {
    * page (`capture-done`), however the shot ended.
    */
   captureCommentCrop(rect: BrowserViewRect): Promise<string | null>;
+  /**
+   * The overlay hid itself for a save main is not going to crop — the page
+   * must still be released (`capture-done`).
+   */
+  releaseAnnotationCapture(): void;
   /** The page is out of shot: whatever capture is waiting can go ahead. */
   recordCaptureReady(
     annotations: BrowserAnnotationElement[],
@@ -761,6 +766,10 @@ export function createBrowserTabHost(
       }
     },
 
+    releaseAnnotationCapture() {
+      view?.finishCapture();
+    },
+
     recordCaptureReady(annotations, viewport) {
       pendingCaptureAck?.({ annotations, viewport });
     },
@@ -1114,12 +1123,11 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       case "browser_comment_images": {
         const group = sessions.get(sessionId);
         const ids = readStringList(args?.ids);
-        const images: Record<string, string | null> = {};
-
-        for (const id of ids) {
-          images[id] = group?.images.get(id) ?? null;
-        }
-        return images;
+        // fromEntries makes every id an own data property — assigning into
+        // `{}` would let "__proto__" reach the prototype instead.
+        return Object.fromEntries(
+          ids.map((id) => [id, group?.images.get(id) ?? null]),
+        );
       }
       case "browser_delete_comment": {
         const group = sessions.get(sessionId);
@@ -1223,6 +1231,7 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       target: BrowserTabTarget,
       annotation: BrowserAnnotationElement,
       viewport: BrowserAnnotationViewport,
+      documentUrl: string,
     ) {
       const group = sessions.get(target.sessionId);
       const controller = group?.tabs.get(target.tabId);
@@ -1245,6 +1254,28 @@ export function createBrowserHost(deps: BrowserHostDependencies) {
       }
 
       if (group.comments.length >= maxSessionComments) {
+        // The overlay hid itself for a crop that will never come: release it
+        // and push the store's truth back so the phantom mark disappears —
+        // then tell the surface why nothing was kept.
+        controller.releaseAnnotationCapture();
+        controller.syncAnnotations(
+          commentsForTab(group, target.tabId, controller.currentUrl())
+            .annotations,
+        );
+        deps.emit?.({
+          type: "comment-rejected",
+          sessionId: target.sessionId,
+          tabId: target.tabId,
+          reason: "limit",
+        });
+        return;
+      }
+
+      // The sender told us where it was when it saved. A navigation in
+      // between would file the comment — title and url taken from the tab —
+      // against the wrong document.
+      if (urlKey(documentUrl) !== urlKey(controller.currentUrl())) {
+        controller.releaseAnnotationCapture();
         return;
       }
 

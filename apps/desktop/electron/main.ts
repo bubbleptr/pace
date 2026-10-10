@@ -627,6 +627,12 @@ function sendAnnotationCommand(
  * one), and the message must be one of the shapes the protocol knows.
  */
 ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
+  // The annotation preload only runs in the main frame today; pinning the
+  // channel to it keeps subframe preloads from reaching the store if they
+  // are ever enabled.
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) {
+    return;
+  }
   const target = browserAnnotationSenders.get(event.sender);
   if (!target) return;
   const message = acceptBrowserAnnotationMessage({
@@ -663,6 +669,7 @@ ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
         target,
         message.annotation,
         message.viewport,
+        message.documentUrl,
       );
       break;
     case "annotation-deleted":
