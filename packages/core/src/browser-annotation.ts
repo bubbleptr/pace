@@ -38,9 +38,12 @@ export type BrowserAnnotationElement = {
   rect: { x: number; y: number; width: number; height: number };
   /**
    * Present only for an area comment: the dragged rectangle relative to the
-   * anchor element's border-box top-left, in CSS px. `selector`/`tag`/`source`
-   * then describe the anchor (smallest element fully containing the area);
-   * `rect` is the area's own viewport rect when saved.
+   * anchor element's border-box top-left in its scrolled content — i.e. plus
+   * the anchor's `scrollLeft`/`scrollTop` at save time, except when the
+   * anchor is the document's scrolling element (its rect already rides the
+   * page scroll). `selector`/`tag`/`source` then describe the anchor
+   * (smallest element fully containing the area); `rect` is the area's own
+   * viewport rect when saved.
    */
   area?: { x: number; y: number; width: number; height: number };
   source?: { file: string; line: number; column?: number };
@@ -72,6 +75,59 @@ export type BrowserComment = BrowserAnnotationElement & {
   hasImage: boolean;
   createdAt: string;
 };
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+/**
+ * The crop saved with a comment: the element plus enough surroundings to
+ * read, grown to a useful minimum, kept inside the viewport it was measured
+ * in. Shifted before clipped — a crop near an edge keeps its full size if it
+ * can be moved inside rather than shrunk.
+ *
+ * Lives in core because both ends of the crop need it: main to take the shot,
+ * the formatter to name an area's bounds in the shot's own coordinates.
+ */
+export function resolveCommentCropRect(
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const margin = 48;
+  let x = rect.x - margin;
+  let y = rect.y - margin;
+  let width = rect.width + margin * 2;
+  let height = rect.height + margin * 2;
+
+  if (width < 320) {
+    x -= (320 - width) / 2;
+    width = 320;
+  }
+  if (height < 200) {
+    y -= (200 - height) / 2;
+    height = 200;
+  }
+
+  if (width <= viewport.width) {
+    x = clamp(x, 0, viewport.width - width);
+  } else {
+    x = 0;
+    width = viewport.width;
+  }
+  if (height <= viewport.height) {
+    y = clamp(y, 0, viewport.height - height);
+  } else {
+    y = 0;
+    height = viewport.height;
+  }
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
 
 /**
  * One line of it. Main folds the same fields on the way in, but the template's
@@ -158,8 +214,24 @@ export function formatBrowserComments(comments: readonly BrowserComment[]) {
     }
     // An area always prints its bounds: its crop has margins and no drawn
     // box, so even a screenshot cannot say where exactly the region was.
+    // With a screenshot the bounds come twice — in the shot's own
+    // coordinates (1 image px is 1 CSS px after the CSS-width downsample,
+    // and the crop may have been shifted by a viewport edge) and in the
+    // viewport's.
     if (comment.area) {
-      lines.push(`  - area: ${formatRect(comment.rect)}`);
+      if (comment.hasImage) {
+        const crop = resolveCommentCropRect(comment.rect, comment.viewport);
+        const inCrop = {
+          ...comment.rect,
+          x: comment.rect.x - crop.x,
+          y: comment.rect.y - crop.y,
+        };
+        lines.push(
+          `  - area: ${formatRect(inCrop)} in its screenshot; (${comment.rect.x}, ${comment.rect.y}) in the viewport`,
+        );
+      } else {
+        lines.push(`  - area: ${formatRect(comment.rect)}`);
+      }
     } else if (!comment.hasImage) {
       lines.push(`  - rect: ${formatRect(comment.rect)}`);
     }

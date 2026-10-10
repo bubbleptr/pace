@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatBrowserComments,
+  resolveCommentCropRect,
   type BrowserComment,
 } from "./browser-annotation";
 
@@ -138,13 +139,42 @@ describe("formatBrowserComments", () => {
         "#1 [screenshot] area in `#panel` (section)",
         "  move this down",
         "  - source: `src/hero.tsx:4`",
-        // The crop has margins and no drawn box, so the bounds are always
-        // printed — screenshot or not — and never as an element `rect:`.
-        "  - area: 60×30 at (36, 352)",
+        // The crop has margins and no drawn box, so the bounds are printed
+        // in the screenshot's own coordinates as well as the viewport's —
+        // the crop here was shifted by the left edge to (0, 267, 320, 200).
+        "  - area: 60×30 at (36, 85) in its screenshot; (36, 352) in the viewport",
         "",
         "#2 area in `#panel` (section)",
         "  no shot",
         "  - area: 10×10 at (40, 40)",
+      ].join("\n"),
+    );
+  });
+
+  it("subtracts a crop the viewport edge shifted, not the margin it asked for", () => {
+    expect(
+      formatBrowserComments([
+        comment({
+          index: 1,
+          hasImage: true,
+          viewport: { width: 400, height: 600, dpr: 1 },
+          area: { x: 4, y: 300, width: 40, height: 30 },
+          rect: { x: 10, y: 400, width: 40, height: 30 },
+          comment: "edge",
+        }),
+      ]),
+    ).toBe(
+      [
+        "Browser comments from the embedded preview. A comment marked [screenshot] has a cropped screenshot of its element attached; those screenshots are the last images in this message, in comment order.",
+        "",
+        "Page: Alpha — http://localhost:5173/a",
+        "Viewport: 400×600 @1x",
+        "",
+        "#1 [screenshot] area in `#cta` (button)",
+        "  edge",
+        // The crop wanted (-130, 315) but the edge pushed it to (0, 315):
+        // in-screenshot is the rect minus what was actually captured.
+        "  - area: 40×30 at (10, 85) in its screenshot; (10, 400) in the viewport",
       ].join("\n"),
     );
   });
@@ -166,5 +196,43 @@ describe("formatBrowserComments", () => {
         "  - rect: 120×40 at (12, 340)",
       ].join("\n"),
     );
+  });
+});
+
+describe("resolveCommentCropRect", () => {
+  it("expands the element by 48px and grows to the minimum size", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 400, y: 300, width: 40, height: 20 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 260, y: 210, width: 320, height: 200 });
+  });
+
+  it("keeps a large element's expanded bounds", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 400, y: 300, width: 500, height: 400 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 352, y: 252, width: 596, height: 496 });
+  });
+
+  it("shifts an off-edge crop inside before shrinking it", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 1380, y: 10, width: 40, height: 20 },
+        { width: 1440, height: 900 },
+      ),
+    ).toEqual({ x: 1120, y: 0, width: 320, height: 200 });
+  });
+
+  it("clips a crop bigger than the viewport to it", () => {
+    expect(
+      resolveCommentCropRect(
+        { x: 100, y: 100, width: 900, height: 800 },
+        { width: 400, height: 300 },
+      ),
+    ).toEqual({ x: 0, y: 0, width: 400, height: 300 });
   });
 });

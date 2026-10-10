@@ -171,6 +171,7 @@ export {
 
 export {
   formatBrowserComments,
+  resolveCommentCropRect,
   type BrowserAnnotationElement,
   type BrowserAnnotationViewport,
   type BrowserComment,

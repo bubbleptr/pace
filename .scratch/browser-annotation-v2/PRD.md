@@ -92,6 +92,7 @@ Codex 默认是 Enter 直发、`Cmd+Enter` 攒（#22719 下大量反对）；Pac
 - 区域不「占有」锚点：点击锚点元素仍新建元素评论，多个区域可共享同一锚点。
 - 拖动中 Esc / `pointercancel` / 松开在窗口外（`buttons === 0`）都取消框选，随后的 click 被吞；任一边小于 4px 视为误触。已保存区域用虚线轮廓，元素用实线。模式标签改为「Click or drag to annotate · Esc to exit」。
 - 格式化：区域条目标题为 `#n [screenshot] area in \`selector\` (tag)`，**总是**输出 `- area: W×H at (x, y)`（截图有外扩边距、无框线，模型需要确切边界）；composer chip 为 `#n Area · 摘要`。
+- （#455 review 修订）`area` 的偏移按锚点滚动内容计：保存时加上锚点 `scrollLeft`/`scrollTop`（锚点为文档滚动元素时除外，其 rect 已随页面滚动），否则锚点自身滚动内容时轮廓会漂。带截图的区域条目同时给出截图内坐标与视口坐标（`- area: W×H at (sx, sy) in its screenshot; (x, y) in the viewport`），截图按 `resolveCommentCropRect`（已移入 `packages/core`）的同样规则裁出。
 
 ## 切片
 

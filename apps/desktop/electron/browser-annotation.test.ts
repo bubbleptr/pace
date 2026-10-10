@@ -220,6 +220,78 @@ describe("describeAnnotatedArea", () => {
     // The anchor's text would describe the element, not the marked region.
     expect(annotation).not.toHaveProperty("text");
   });
+
+  it("counts the anchor's own scroll in the offset — the mark tracks content, not the box", () => {
+    mount(
+      '<div id="scrollbox" style="overflow:auto"><p>inside</p></div>',
+    );
+    const anchor = document.getElementById("scrollbox")!;
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({
+      x: 40,
+      y: 40,
+      left: 40,
+      top: 40,
+      width: 200,
+      height: 200,
+      right: 240,
+      bottom: 240,
+      toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(anchor, "scrollTop", "get").mockReturnValue(120);
+    vi.spyOn(anchor, "scrollLeft", "get").mockReturnValue(10);
+
+    // A scrolled anchor's border box does not move — without the scroll
+    // term the offset would point at different content after every scroll.
+    const annotation = describeAnnotatedArea(
+      anchor,
+      { left: 60, top: 90, width: 50, height: 30 },
+      1,
+      "a1",
+    );
+
+    expect(annotation.area).toEqual({ x: 30, y: 170, width: 50, height: 30 });
+  });
+
+  it("skips the scroll term when the anchor is the document's scrolling element", () => {
+    // The scrolling element's rect already moves with the page scroll, so
+    // adding scrollTop would count it twice. jsdom leaves
+    // document.scrollingElement unimplemented — it is mocked directly.
+    const anchor = document.documentElement;
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: -100,
+      left: 0,
+      top: -100,
+      width: 800,
+      height: 800,
+      right: 800,
+      bottom: 700,
+      toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(anchor, "scrollTop", "get").mockReturnValue(100);
+    const own = Object.getOwnPropertyDescriptor(document, "scrollingElement");
+    Object.defineProperty(document, "scrollingElement", {
+      configurable: true,
+      value: anchor,
+    });
+
+    try {
+      const annotation = describeAnnotatedArea(
+        anchor,
+        { left: 10, top: 20, width: 50, height: 30 },
+        1,
+        "a1",
+      );
+
+      expect(annotation.area).toEqual({ x: 10, y: 120, width: 50, height: 30 });
+    } finally {
+      if (own) {
+        Object.defineProperty(document, "scrollingElement", own);
+      } else {
+        Reflect.deleteProperty(document, "scrollingElement");
+      }
+    }
+  });
 });
 
 describe("acceptBrowserAnnotationMessage", () => {

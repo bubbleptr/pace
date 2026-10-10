@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveCommentCropRect } from "@pace/core";
 import type {
   BrowserAnnotationElement,
   BrowserAnnotationPalette,
@@ -191,52 +192,6 @@ export function urlKey(url: string) {
 
 /** Comments a Session may keep at once — beyond it, saves are ignored. */
 export const maxSessionComments = 200;
-
-/**
- * The crop saved with a comment: the element plus enough surroundings to
- * read, grown to a useful minimum, kept inside the viewport it was measured
- * in. Shifted before clipped — a crop near an edge keeps its full size if it
- * can be moved inside rather than shrunk.
- */
-export function resolveCommentCropRect(
-  rect: { x: number; y: number; width: number; height: number },
-  viewport: { width: number; height: number },
-): BrowserViewRect {
-  const margin = 48;
-  let x = rect.x - margin;
-  let y = rect.y - margin;
-  let width = rect.width + margin * 2;
-  let height = rect.height + margin * 2;
-
-  if (width < 320) {
-    x -= (320 - width) / 2;
-    width = 320;
-  }
-  if (height < 200) {
-    y -= (200 - height) / 2;
-    height = 200;
-  }
-
-  if (width <= viewport.width) {
-    x = clamp(x, 0, viewport.width - width);
-  } else {
-    x = 0;
-    width = viewport.width;
-  }
-  if (height <= viewport.height) {
-    y = clamp(y, 0, viewport.height - height);
-  } else {
-    y = 0;
-    height = viewport.height;
-  }
-
-  return {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
-}
 
 export type BrowserHostSession = {
   setPermissionRequestHandler(handler: (permission: string) => boolean): void;
