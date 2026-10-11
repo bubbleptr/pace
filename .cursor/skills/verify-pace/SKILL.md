@@ -11,7 +11,7 @@ Read `features/README.md` before driving. One feature file is the recipe. A proo
 
 ## Launch
 
-Human quickstart (hot reload, writes `~/.pace-dev` and a `Pace-dev` userData profile) is `bun install` then `bun run dev`. See README "Quick start" and `docs/dogfooding.md`. Do not use that process for a scripted proof.
+Human quickstart (hot reload, writes `~/.pace-dev` and a `Pace-dev` userData profile) is `bun install` then `bun run dev`. See "Setup" in `CONTRIBUTING.md` and `docs/dogfooding.md`. Do not use that process for a scripted proof.
 
 Verification launch:
 

@@ -6,7 +6,7 @@ Pace is the desktop workbench for the [Pi coding agent](https://pi.dev). Pi is t
 
 ## Orientation
 
-The "Architecture" section of `README.md` is the canonical map: the event-pipeline diagram, the "Where things live" table (which file to edit for which concern), and the step-by-step prompt flow. Consult it before searching the codebase. Backend modules mirror that map: `packages/backend/src/{drivers,gateway,persistence,workspace}` with `service.ts` as the composition root.
+`docs/architecture.md` is the canonical map: the event-pipeline diagram, the "代码在哪里" (Where things live) table (which file to edit for which concern), and the step-by-step prompt flow. Consult it before searching the codebase. Backend modules mirror that map: `packages/backend/src/{drivers,gateway,persistence,workspace}` with `service.ts` as the composition root.
 
 Process conventions, each documented in its own file:
 
@@ -17,7 +17,7 @@ Process conventions, each documented in its own file:
 
 ## Verification
 
-Before opening a PR, `bun run typecheck`, `bun run lint`, `bun run test` and `bun run build` must be green (see "Development and verification" in `README.md` for the full command list, including E2E and packaging).
+Before opening a PR, `bun run typecheck`, `bun run lint`, `bun run test` and `bun run build` must be green (see `CONTRIBUTING.md` for the full command list, including E2E and packaging).
 
 ## Design system discipline
 
