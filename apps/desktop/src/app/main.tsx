@@ -21,6 +21,7 @@ import { TrajectoryIndexPage, TrajectorySessionPage } from "@/pages/trajectory";
 import { UsagePage } from "@/pages/usage";
 import type { EnvironmentPreflightStatus } from "@pace/core";
 import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
+import { SessionNotifications } from "@/features/session-notifications";
 import { startModelCatalogInvalidationBridge } from "@/entities/model/use-model-catalog";
 import { invoke, isElectronRuntime, onNavigateRequest } from "@/shared/runtime";
 import { Theme } from "@astryxdesign/core";
@@ -295,6 +296,15 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <Theme theme={neutralTheme}>
       <QueryClientProvider client={queryClient}>
         <SessionProjectionsProvider>
+          <SessionNotifications
+            onOpen={({ id, projectId }) =>
+              void router.navigate({
+                to: "/projects/$projectId/sessions",
+                params: { projectId },
+                search: { session: id },
+              } as never)
+            }
+          />
           <RouterProvider router={router} />
           {DevUiIntentPicker ? (
             <React.Suspense fallback={null}>

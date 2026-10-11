@@ -116,6 +116,10 @@ _Avoid_: Delete, completed, cleanup
 Session 列表中的轻量消息提示，表示该 Session 有用户尚未看过的新消息、run 结果或失败说明。它不是 Session Status，也不区分失败和完成。只有用户打开该 Session，且 Live Chat 渲染到最新消息位置后才清除；hover 列表项或切换 Project 不清除。
 _Avoid_: Error badge, completed badge, runtime status
 
+**Session Notification**:
+窗口不在前台时，Session 的一次 run 结束（转为完成或空闲，或者失败）弹出的系统通知。按 Session Status 的变化触发，不按快照触发：应用启动和首次读到 Session 列表只记基线。标题是侧栏中的 Session 名，正文为 `Finished` 或 `Failed`；同一 Session 的新通知替换旧通知；点击后聚焦窗口并打开该 Session。
+_Avoid_: toast, alert, push notification
+
 **Session List Ordering**:
 Project 与 Chats 下 Session 列表按用户最后一次成功发送消息的时间倒序，包括普通发送、Queue 和 Steer；尚无发送记录的新 Session 按创建时间排序。运行状态、助手输出、未读结果、打开会话和草稿编辑不改变顺序，提醒与导航顺序分离。
 _Avoid_: Runtime activity ordering, unread-first ordering, last-opened ordering, draft ordering

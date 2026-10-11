@@ -1558,6 +1558,9 @@ export function AppFrame({
     }));
     void router.navigate({
       to: projectRoute(projectId) as never,
+      // Pages that own their own selection state (the Sessions page) read the
+      // intent from the URL; local selection alone would be lost on navigate.
+      search: { session: sessionId } as never,
     });
   };
 

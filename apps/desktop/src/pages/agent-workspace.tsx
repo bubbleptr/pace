@@ -404,6 +404,13 @@ export function AgentWorkspaceSessionsPage() {
       return search.view === "draft";
     },
   });
+  const requestedSessionId = useRouterState({
+    select: (state) => {
+      const value = (state.location.search as { session?: unknown }).session;
+
+      return typeof value === "string" ? value : null;
+    },
+  });
   const [browserDevelopmentData] = useState(() =>
     shouldUseBrowserDevelopmentData(),
   );
@@ -543,7 +550,10 @@ export function AgentWorkspaceSessionsPage() {
 
   // After hydrate (or when project sessions appear), select the first valid session.
   useEffect(() => {
-    if (selectedSessionId) {
+    // A pending ?session= request must also hold the fallback back: this effect
+    // runs in the same commit while selectedSessionId is still stale null, and
+    // its selection would win over the requested one.
+    if (selectedSessionId || requestedSessionId) {
       return;
     }
 
@@ -551,7 +561,29 @@ export function AgentWorkspaceSessionsPage() {
     if (nextSessionId) {
       setSelectedSessionId(nextSessionId);
     }
-  }, [projectId, selectedSessionId, sessionProjections]);
+  }, [projectId, requestedSessionId, selectedSessionId, sessionProjections]);
+
+  // Cross-page opens (sidebar click from a non-Sessions page, a Session
+  // Notification) carry the target in ?session=; consume it once, like
+  // enterLiveSession strips view=draft.
+  useEffect(() => {
+    if (!requestedSessionId) {
+      return;
+    }
+
+    setSelectedSessionId(requestedSessionId);
+    void navigate({
+      to: "/projects/$projectId/sessions",
+      params: { projectId },
+      search: ((previous: Record<string, unknown>) => {
+        const { session: _session, ...search } = previous;
+        return search;
+      }) as never,
+      hash: true,
+      replace: true,
+      resetScroll: false,
+    });
+  }, [navigate, projectId, requestedSessionId]);
 
   useEffect(() => {
     if (!selectedSessionProjection) {
