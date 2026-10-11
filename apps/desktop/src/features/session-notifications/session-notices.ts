@@ -14,11 +14,11 @@ export type SessionNotice = {
 
 export type SessionStatusBaseline = ReadonlyMap<string, SessionStatus>;
 
-// A run "was going" for exactly the statuses isSessionProjectionActive reports.
-const ACTIVE_STATUSES: ReadonlySet<SessionStatus> = new Set([
-  "creating",
-  "running",
-]);
+// Only "running" counts as a run in flight. A "creating" Session may never
+// start one: a fork lands as creating and then resyncs to the source's end
+// status, which must not read as a finished run. The trade-off — a creation
+// that fails before its first run no longer notifies — is accepted.
+const RUNNING_STATUSES: ReadonlySet<SessionStatus> = new Set(["running"]);
 
 // Notices fire on status *transitions*, not snapshots: a Session is only
 // newsworthy when a run we already saw in flight ends. The first list ever
@@ -39,7 +39,7 @@ export function diffSessionNotices(
       continue;
     }
     const previousStatus = previous.get(session.id);
-    if (previousStatus === undefined || !ACTIVE_STATUSES.has(previousStatus)) {
+    if (previousStatus === undefined || !RUNNING_STATUSES.has(previousStatus)) {
       continue;
     }
     if (session.status === "completed" || session.status === "waiting") {

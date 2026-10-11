@@ -68,15 +68,13 @@ describe("diffSessionNotices", () => {
     ]);
   });
 
-  it("notifies Failed when a creating session fails", () => {
-    const { notices } = diffSessionNotices(
-      baselineOf([["a", "creating"]]),
-      [source("a", "failed")],
-    );
-
-    expect(notices).toEqual([
-      { sessionId: "a", title: "Session a", body: "Failed" },
-    ]);
+  it("never notifies out of creating: a fork/creation may never have run", () => {
+    for (const current of ["waiting", "completed", "failed"] as const) {
+      const { notices } = diffSessionNotices(baselineOf([["a", "creating"]]), [
+        source("a", current),
+      ]);
+      expect(notices).toEqual([]);
+    }
   });
 
   it("stays silent while a run continues or stays ended", () => {

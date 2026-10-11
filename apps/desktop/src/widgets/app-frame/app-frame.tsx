@@ -74,7 +74,6 @@ import { useSessionProjectionsOptional } from "@/entities/session/use-session-pr
 import { useUpdateStatus } from "@/entities/update/use-update-status";
 import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
 import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
-import { useSessionNotifications } from "@/features/session-notifications";
 import {
   hostWindowChrome,
   readHostPlatform,
@@ -1559,24 +1558,11 @@ export function AppFrame({
     }));
     void router.navigate({
       to: projectRoute(projectId) as never,
+      // Pages that own their own selection state (the Sessions page) read the
+      // intent from the URL; local selection alone would be lost on navigate.
+      search: { session: sessionId } as never,
     });
   };
-
-  const notificationSources = useMemo(
-    () =>
-      sessions.map((session) => ({
-        id: session.id,
-        title: session.title,
-        status: session.projection.status,
-      })),
-    [sessions],
-  );
-  useSessionNotifications(notificationSources, (sessionId) => {
-    const session = sessions.find((candidate) => candidate.id === sessionId);
-    if (session) {
-      handleOpenSession(session.id, session.projection.projectId);
-    }
-  });
 
   const frameContent = (
     <>

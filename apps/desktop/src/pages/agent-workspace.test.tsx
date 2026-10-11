@@ -2374,6 +2374,25 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
+  it("selects the Session named by the session search param, then strips it", async () => {
+    // "Usage evidence review" sorts behind the running "Agent Workspace
+    // shell", so a first-session fallback would pick the wrong row.
+    const { router } = renderProjectSessions(
+      "/projects/pig/sessions?session=session-usage-review",
+    );
+
+    expect(
+      await findSidebarSessionRow("Usage evidence review"),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      await findSidebarSessionRow("Agent Workspace shell"),
+    ).not.toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    expect(router.state.location.pathname).toBe(
+      `/projects/${encodeURIComponent(pigProjectPath)}/sessions`,
+    );
+  });
+
   it("shows a failed Session Creation in the Live Session and reopens the kept draft", async () => {
     const user = userEvent.setup();
     addProjectToRegistry(pigProjectPath);

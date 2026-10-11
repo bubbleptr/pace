@@ -81,7 +81,7 @@ flowchart TB
 | --- | --- |
 | 界面、页面、交互 | [`apps/desktop/src/`](../apps/desktop/src/)，FSD 分层 `pages` → `widgets` → `features` → `entities` → `shared`（[ADR-0016](adr/0016-fsd-layers-in-apps-desktop.md)、[ADR-0045](adr/0045-slice-agent-workspace-into-fsd.md)）；`bun run lint` 强制约束依赖方向 |
 | Live Session View / Session Draft / Session Dock | [`apps/desktop/src/widgets/live-chat/`](../apps/desktop/src/widgets/live-chat/)、[`features/session-draft/`](../apps/desktop/src/features/session-draft/)、[`widgets/session-dock/`](../apps/desktop/src/widgets/session-dock/) |
-| 桌面通知（窗口不在前台时 run 结束提醒） | [`apps/desktop/src/features/session-notifications/`](../apps/desktop/src/features/session-notifications/)，由 [`widgets/app-frame/`](../apps/desktop/src/widgets/app-frame/) 挂载 |
+| 桌面通知（窗口不在前台时 run 结束提醒） | [`apps/desktop/src/features/session-notifications/`](../apps/desktop/src/features/session-notifications/)，由 [`app/main.tsx`](../apps/desktop/src/app/main.tsx) 在应用级挂载（跨页面保持基线） |
 | 事件语义（什么算 message / run / turn） | [`packages/backend/src/gateway/agent-runtime-event-normalizer.ts`](../packages/backend/src/gateway/) 及其基于录制数据的测试 |
 | Gateway 协议（命令、事件契约、身份） | [`packages/core/src/`](../packages/core/src/)：`runtime-gateway.ts`、`agent-runtime-event.ts` |
 | 怎么驱动 Pi | [`packages/backend/src/drivers/`](../packages/backend/src/drivers/) |
