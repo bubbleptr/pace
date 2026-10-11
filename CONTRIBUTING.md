@@ -61,9 +61,45 @@ All four must be green. Also:
 
 UI work has extra rules in [`docs/design/`](docs/design/). Discover Astryx components before writing new ones; reusable pieces live only in `shared/ui/`.
 
+## Testing, packaging and dev tools
+
+The four commands above are the PR gate. Two more suites cover the edges:
+
+```bash
+bun run test:e2e         # Playwright smoke tests against the dev Electron build
+bun run test:release     # release script and publish behavior tests
+```
+
+The manual `Validate macOS ARM64` workflow runs packaging and the packaged-app E2E on demand.
+
+Packaging:
+
+```bash
+bun run package:mac:unsigned   # unsigned .app + zip, for local testing
+bun run dist:mac               # signed + notarized DMG (needs Apple credentials)
+bun run dist:linux             # AppImage + deb (x64)
+```
+
+The signing, notarization and release pipeline is documented in [`docs/release/macos.md`](docs/release/macos.md). Linux AppImage and deb builds ship on the same tag: [`docs/release/linux.md`](docs/release/linux.md).
+
+Two dev-only tools help when working on the UI locally:
+
+- The `/design` route: a live gallery of the design system, showing every base component under `shared/ui/` with all of its states and variants.
+- The **UI Intent Picker**: press `Cmd/Ctrl+Shift+X` to activate a crosshair, then click any element to copy its CONTEXT.md term, its component stack with file and line, and the nearest `data-testid` (see [`docs/ui-intent-picker.md`](docs/ui-intent-picker.md)).
+
 ## A good first PR
 
 Add a new fixture stream to the event normalizer (`packages/backend/src/gateway/agent-runtime-event-normalizer.test.ts`): record a Pi session, add the raw events, and assert the normalized `AgentRuntimeEvent` sequence. That exercises the protocol without touching UI.
+
+## Documentation map
+
+- [`docs/architecture.md`](docs/architecture.md): the canonical code map — the event pipeline, which file owns which concern, and the step-by-step prompt flow.
+- [`CONTEXT.md`](CONTEXT.md): domain glossary. The terms here are the names used in code, tests and issues.
+- [`docs/adr/`](docs/adr/): architecture decision records, from the control-plane pivot ([ADR-0001](docs/adr/0001-agent-workspace-control-plane.md)) to the current surfaces.
+- [`docs/design/`](docs/design/): which tokens, which Astryx variants, which self-built components.
+- [`docs/release/macos.md`](docs/release/macos.md), [`docs/release/linux.md`](docs/release/linux.md), [`docs/dogfooding.md`](docs/dogfooding.md): shipping and daily-driving Pace.
+- [`docs/agents/`](docs/agents/): how issues, triage labels and domain docs are organized for both human and agent contributors.
+- [`.scratch/<feature>/PRD.md`](.scratch/): point-in-time product requirement records.
 
 ## License
 
