@@ -74,6 +74,7 @@ import { useSessionProjectionsOptional } from "@/entities/session/use-session-pr
 import { useUpdateStatus } from "@/entities/update/use-update-status";
 import { shouldUseBrowserDevelopmentData } from "@/dev/browser-development-data";
 import { defaultSidebarProjectSessionProjections } from "@/dev/fixtures/agent-workspace";
+import { useSessionNotifications } from "@/features/session-notifications";
 import {
   hostWindowChrome,
   readHostPlatform,
@@ -1560,6 +1561,22 @@ export function AppFrame({
       to: projectRoute(projectId) as never,
     });
   };
+
+  const notificationSources = useMemo(
+    () =>
+      sessions.map((session) => ({
+        id: session.id,
+        title: session.title,
+        status: session.projection.status,
+      })),
+    [sessions],
+  );
+  useSessionNotifications(notificationSources, (sessionId) => {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (session) {
+      handleOpenSession(session.id, session.projection.projectId);
+    }
+  });
 
   const frameContent = (
     <>
