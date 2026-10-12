@@ -254,16 +254,24 @@ function settleOrAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
  * against it and rejects the login without one. Pi keeps it in the global
  * settings file, so reading it through the same settings manager registers the
  * Pi TUI and Pace as one installation rather than two.
+ *
+ * The ID is saved before the login starts, not when the flow asks for it: Pi's
+ * setters only queue their write, and the Pi TUI reads that file from another
+ * process. A save that fails would hand OpenAI an ID no later process knows.
  */
-function createDeviceIdReader(agentDir: string): () => string {
-  let deviceId: string | undefined;
+async function resolveDeviceId(agentDir: string): Promise<string> {
+  const settings = SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
+  const deviceId = settings.getOrCreateDeviceId();
+  await settings.flush();
+  const [failure] = settings.drainErrors();
 
-  return () => {
-    deviceId ??= SettingsManager.create(agentDir, agentDir, {
-      projectTrusted: false,
-    }).getOrCreateDeviceId();
-    return deviceId;
-  };
+  if (failure) {
+    throw new Error(
+      `Could not save this installation's ID to ${failure.path ?? failure.scope}: ${failure.error.message}`,
+    );
+  }
+
+  return deviceId;
 }
 
 export function createProviderAuthService(
@@ -272,7 +280,6 @@ export function createProviderAuthService(
   const authPath = join(options.agentDir, "auth.json");
   const openExternal = options.openExternalUrl ?? openUrlInBrowser;
   const getRuntime = options.runtime;
-  const getDeviceId = createDeviceIdReader(options.agentDir);
 
   const listStatus = async (): Promise<ProviderAuthStatusReport> => {
     const runtime = await getRuntime();
@@ -346,6 +353,7 @@ export function createProviderAuthService(
       if (!provider.auth.oauth) {
         throw new Error(`Provider "${providerId}" does not support subscription login.`);
       }
+      const deviceId = await resolveDeviceId(options.agentDir);
       await runtime.login(
         providerId,
         "oauth",
@@ -369,7 +377,7 @@ export function createProviderAuthService(
             }
           },
         },
-        { getDeviceId },
+        { getDeviceId: () => deviceId },
       );
 
       return listStatus();
