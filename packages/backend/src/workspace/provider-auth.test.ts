@@ -23,6 +23,54 @@ function realRuntimeService(agentDir: string) {
   });
 }
 
+/** Stub runtime that records the LoginOptions Pace hands to an OAuth login. */
+function deviceIdCapturingRuntime(
+  onDeviceId: (value: string | undefined) => void,
+): ProviderAuthRuntime {
+  return {
+    getProviderAuthStatus: () => ({ configured: false }),
+    getProviders: () => [{ id: "openai", name: "OpenAI", auth: { oauth: {} } }],
+    async login(_providerId, _type, _interaction, options) {
+      onDeviceId(options?.getDeviceId?.());
+      return { type: "oauth", access: "a", refresh: "r", expires: 0 };
+    },
+    getAvailableSnapshot: () => [],
+    getModel: () => undefined,
+    async completeSimple() {
+      throw new Error("not used");
+    },
+    async logout() {},
+    async refresh() {
+      return { aborted: false, errors: new Map() };
+    },
+  };
+}
+
+async function storedDeviceId(agentDir: string) {
+  try {
+    const raw = JSON.parse(
+      await readFile(join(agentDir, "settings.json"), "utf8"),
+    ) as { deviceId?: string };
+    return raw.deviceId;
+  } catch {
+    return undefined;
+  }
+}
+
+async function deviceIdFromLogin(agentDir: string) {
+  let deviceId: string | undefined;
+  const service = createProviderAuthService({
+    agentDir,
+    runtime: async () =>
+      deviceIdCapturingRuntime((value) => {
+        deviceId = value;
+      }),
+  });
+
+  await service.loginOAuth("openai");
+  return deviceId;
+}
+
 // Pi counts a provider as configured when the ambient environment carries its
 // credentials (API-key env vars, the AWS chain, gcloud ADC under $HOME), and it
 // reads process.env live. Strip the host environment so these tests only see
@@ -182,6 +230,36 @@ describe("provider auth service", () => {
     await service.loginOAuth("openai-codex");
 
     expect(selected).toBe("browser");
+  });
+
+  // OpenAI registers a ChatGPT subscription login against this installation's
+  // agent host ID and rejects the login when it is missing, so every login must
+  // send one and every later login must send the same one.
+  it("keeps one ChatGPT device ID for the installation", async () => {
+    const agentDir = await tempAgentDir();
+
+    const first = await deviceIdFromLogin(agentDir);
+
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // Pi writes settings asynchronously; until it lands, a later login would
+    // register a second agent host with OpenAI.
+    await vi.waitFor(async () => {
+      expect(await storedDeviceId(agentDir)).toBe(first);
+    });
+    await expect(deviceIdFromLogin(agentDir)).resolves.toBe(first);
+  });
+
+  it("reuses the device ID the Pi TUI stored for this installation", async () => {
+    const agentDir = await tempAgentDir();
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ deviceId: "3f2a6c1e-0b47-4d9a-8e11-5c6d7f8a9b0c" }),
+      "utf8",
+    );
+
+    await expect(deviceIdFromLogin(agentDir)).resolves.toBe(
+      "3f2a6c1e-0b47-4d9a-8e11-5c6d7f8a9b0c",
+    );
   });
 
   it("reuses xai OAuth already stored in Pi auth.json", async () => {

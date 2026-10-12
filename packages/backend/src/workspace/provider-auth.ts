@@ -4,7 +4,7 @@
 // persist to auth.json and the runtime snapshot stays in sync.
 
 import { join } from "node:path";
-import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SettingsManager, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { openUrlInBrowser } from "./open-url";
 import { readSettingsPreferredModel } from "./pi-settings";
 import {
@@ -249,12 +249,30 @@ function settleOrAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * Stable ID of this installation. OpenAI registers a ChatGPT subscription login
+ * against it and rejects the login without one. Pi keeps it in the global
+ * settings file, so reading it through the same settings manager registers the
+ * Pi TUI and Pace as one installation rather than two.
+ */
+function createDeviceIdReader(agentDir: string): () => string {
+  let deviceId: string | undefined;
+
+  return () => {
+    deviceId ??= SettingsManager.create(agentDir, agentDir, {
+      projectTrusted: false,
+    }).getOrCreateDeviceId();
+    return deviceId;
+  };
+}
+
 export function createProviderAuthService(
   options: ProviderAuthServiceOptions,
 ): ProviderAuthService {
   const authPath = join(options.agentDir, "auth.json");
   const openExternal = options.openExternalUrl ?? openUrlInBrowser;
   const getRuntime = options.runtime;
+  const getDeviceId = createDeviceIdReader(options.agentDir);
 
   const listStatus = async (): Promise<ProviderAuthStatusReport> => {
     const runtime = await getRuntime();
@@ -328,26 +346,31 @@ export function createProviderAuthService(
       if (!provider.auth.oauth) {
         throw new Error(`Provider "${providerId}" does not support subscription login.`);
       }
-      await runtime.login(providerId, "oauth", {
-        prompt: (prompt: AuthPrompt) => {
-          // Codex asks browser vs device-code; GUI always takes the browser flow.
-          if (prompt.type === "select") {
-            const browser = prompt.options.find((option) => option.id === "browser");
-            if (browser) {
-              return Promise.resolve(browser.id);
+      await runtime.login(
+        providerId,
+        "oauth",
+        {
+          prompt: (prompt: AuthPrompt) => {
+            // Codex asks browser vs device-code; GUI always takes the browser flow.
+            if (prompt.type === "select") {
+              const browser = prompt.options.find((option) => option.id === "browser");
+              if (browser) {
+                return Promise.resolve(browser.id);
+              }
             }
-          }
 
-          return pendPrompt();
+            return pendPrompt();
+          },
+          notify: (event: AuthEvent) => {
+            if (event.type === "auth_url") {
+              void openExternal(event.url);
+            } else if (event.type === "device_code") {
+              void openExternal(event.verificationUri);
+            }
+          },
         },
-        notify: (event: AuthEvent) => {
-          if (event.type === "auth_url") {
-            void openExternal(event.url);
-          } else if (event.type === "device_code") {
-            void openExternal(event.verificationUri);
-          }
-        },
-      });
+        { getDeviceId },
+      );
 
       return listStatus();
     },
