@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -21,6 +22,58 @@ function realRuntimeService(agentDir: string) {
     agentDir,
     runtime: () => (runtime ??= createPaceModelRuntime({ agentDir, dataDir: agentDir })),
   });
+}
+
+function readSettingsFile(agentDir: string) {
+  try {
+    return JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as {
+      deviceId?: string;
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Stub runtime that records the LoginOptions Pace hands to an OAuth login,
+ * together with the settings file as another process would read it at that
+ * moment.
+ */
+function deviceIdCapturingRuntime(
+  agentDir: string,
+  onLogin: (deviceId: string | undefined, onDisk: { deviceId?: string } | undefined) => void,
+): ProviderAuthRuntime {
+  return {
+    getProviderAuthStatus: () => ({ configured: false }),
+    getProviders: () => [{ id: "openai", name: "OpenAI", auth: { oauth: {} } }],
+    async login(_providerId, _type, _interaction, options) {
+      onLogin(options?.getDeviceId?.(), readSettingsFile(agentDir));
+      return { type: "oauth", access: "a", refresh: "r", expires: 0 };
+    },
+    getAvailableSnapshot: () => [],
+    getModel: () => undefined,
+    async completeSimple() {
+      throw new Error("not used");
+    },
+    async logout() {},
+    async refresh() {
+      return { aborted: false, errors: new Map() };
+    },
+  };
+}
+
+async function deviceIdFromLogin(agentDir: string) {
+  let seen: { deviceId?: string; onDisk?: { deviceId?: string } } = {};
+  const service = createProviderAuthService({
+    agentDir,
+    runtime: async () =>
+      deviceIdCapturingRuntime(agentDir, (deviceId, onDisk) => {
+        seen = { deviceId, onDisk };
+      }),
+  });
+
+  await service.loginOAuth("openai");
+  return seen;
 }
 
 // Pi counts a provider as configured when the ambient environment carries its
@@ -182,6 +235,53 @@ describe("provider auth service", () => {
     await service.loginOAuth("openai-codex");
 
     expect(selected).toBe("browser");
+  });
+
+  // OpenAI registers a ChatGPT subscription login against this installation's
+  // agent host ID and rejects the login when it is missing, so every login must
+  // send one and every later login must send the same one.
+  it("keeps one ChatGPT device ID for the installation", async () => {
+    const agentDir = await tempAgentDir();
+
+    const first = await deviceIdFromLogin(agentDir);
+
+    expect(first.deviceId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    // The login asks for the ID before it opens a browser, and the Pi TUI reads
+    // the same file from another process: it has to be saved by then.
+    expect(first.onDisk?.deviceId).toBe(first.deviceId);
+    await expect(deviceIdFromLogin(agentDir)).resolves.toEqual({
+      deviceId: first.deviceId,
+      onDisk: { deviceId: first.deviceId },
+    });
+  });
+
+  it("refuses the login when the installation ID cannot be saved", async () => {
+    const agentDir = await tempAgentDir();
+    await writeFile(join(agentDir, "settings.json"), "{ not json", "utf8");
+    const login = vi.fn(deviceIdCapturingRuntime(agentDir, () => {}).login);
+    const service = createProviderAuthService({
+      agentDir,
+      runtime: async () => ({ ...deviceIdCapturingRuntime(agentDir, () => {}), login }),
+    });
+
+    await expect(service.loginOAuth("openai")).rejects.toThrow(/settings\.json/);
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it("reuses the device ID the Pi TUI stored for this installation", async () => {
+    const agentDir = await tempAgentDir();
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ deviceId: "3f2a6c1e-0b47-4d9a-8e11-5c6d7f8a9b0c" }),
+      "utf8",
+    );
+
+    await expect(deviceIdFromLogin(agentDir)).resolves.toEqual({
+      deviceId: "3f2a6c1e-0b47-4d9a-8e11-5c6d7f8a9b0c",
+      onDisk: { deviceId: "3f2a6c1e-0b47-4d9a-8e11-5c6d7f8a9b0c" },
+    });
   });
 
   it("reuses xai OAuth already stored in Pi auth.json", async () => {
