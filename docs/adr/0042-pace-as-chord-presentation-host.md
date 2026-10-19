@@ -21,6 +21,8 @@
 
 第一个 spike（`packages/backend/src/drivers/chord-plugin-spike.ts`）只用 chord 公开的 wire API，在每条消息都经 JSON 序列化的管道上跑通了 session facet 与 presentation facet 之间的状态 hydrate、delta 推送与 RPC，未引入 pi-server / pi-client / pi-protocol。
 
+2026-10-19 现状更新：Pi 1.2.0 移除了 chord 依赖，也删掉了未发布的 pi-server / pi-client / pi-protocol 包；chord 1.3.0 已不再是引擎的依赖（仍单独发布，目前只被 `@earendil-works/pi-durable` 依赖），并在同一版里做了协议与术语层面的大改（引用、host placement、`lifetime` 等），本地存储与输出流从 pi-durable 反向移入 chord。也就是说，本文「chord 随引擎一起装到 Pace 的会话进程里」的前提已不成立：Pace 今天要用 chord，得自己声明 `@earendil-works/chord` 或经 pi-durable 取得。本文状态尚未重定（废弃或改写），其前置假设已失效。
+
 ## 决策
 
 > Pace 不再自研 Extension Surface 协议，而是把自己实现为 chord 的 presentation host。插件与 Pace 之间的契约层、状态同步、RPC 与热重载全部由 chord 提供；Pace 只负责 transport 适配、presentation 服务与 slot 挂载。

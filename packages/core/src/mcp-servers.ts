@@ -44,8 +44,7 @@ export type McpServerProbe = {
   state: McpServerState;
   tools: string[];
   toolExposure?: Record<string, McpExposure>;
-  resources?: number;
-  resourceTemplates?: number;
+  resources?: boolean;
   error?: string;
 };
 

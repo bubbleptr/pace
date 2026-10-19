@@ -68,6 +68,10 @@ ADR-0021 中“不导入 CLI/TUI 会话”保留为当前实现范围，不作�
 
 ## 后续实现与验收方向
 
+2026-10-19 升级：Pi SDK 固定版本从 `1.0.4` 升至 `1.3.0`（跨 `1.1.0`、`1.2.0`、`1.3.0`）。Pace 只使用 `pi-coding-agent` 根入口与 `pi-ai/bun-oauth`，两者未变；`createCodemodeExtension` / `createToolSearchExtension` / `createMcpExtension` 仍在根入口导出，`builtInExtensions` 清单（含 Pace 刻意不加载的 `llama.cpp`）形状不变。1.2.0 起 `pi-coding-agent` 不再依赖 `@earendil-works/chord`，并移除了未发布的 pi-server / pi-client / pi-protocol 包；chord 仍是独立发布的包，但不再是引擎的依赖，目前只有 `@earendil-works/pi-durable` 依赖它。Pace 未直接依赖 chord，产物无变化，受影响的是 [ADR-0042](0042-pace-as-chord-presentation-host.md) 的前置假设。1.3.0 把 Pi 内部包依赖从 `^` 改为精确版本，与本 ADR 的固定版本策略一致。
+
+本次唯一的代码适配：`pi mcp list --json` 自 1.2.0 起把 `resources` 从计数改为布尔 `true`，并去掉 `resourceTemplates`；`packages/core` 的 `McpServerProbe` 与 `mcp-servers.ts` 的透传已同步（该字段无界面消费者）。验证：类型检查、lint、单元与 contract 测试（2123 项）、构建、独立产物冒烟均通过，其中冒烟覆盖无 node_modules 与空 PATH 下的 codemode → MCP 端到端；打包预检 E2E、Tintinweb E2E、真实 OAuth 与含 compaction 的分叉仍需在发布前人工验收。
+
 2026-09-17 升级：Pi SDK 固定版本从 `0.84.3` 升至 `0.85.1`（跳过 SDK 发布损坏的 `0.85.0`）。Pace 只使用 `pi-coding-agent` 根入口与 `pi-ai/bun-oauth`，两者未变；新增传递依赖 `@earendil-works/chord` 仅被 Pi CLI bundle 引用，未进入后端产物。类型检查、单元与 contract 测试、独立产物冒烟均通过；打包预检 E2E、Tintinweb E2E、真实 OAuth 与含 compaction 的分叉需在发布前人工验收。
 
 2026-09-13 调整：撤销 #294 的独立 Node runner 打包兼容安排。Pace 恢复普通后端入口与进程内 SDK 虚拟 peer；不分发真实 SDK/peer 包，不探测系统 Node。Tintinweb 的普通子代理通过进程内 SDK 运行，生命周期与观测按正式宿主接口接入。此调整不自动修改用户插件配置或已有会话历史；旧 nicobailon 独立后台 runner 不再由 Pace 自动兼容。具体边界与验证入口见[扩展运行与打包边界](../extension-runtime.md)。
