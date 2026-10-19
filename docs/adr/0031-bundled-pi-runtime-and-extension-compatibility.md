@@ -68,7 +68,7 @@ ADR-0021 中“不导入 CLI/TUI 会话”保留为当前实现范围，不作�
 
 ## 后续实现与验收方向
 
-2026-10-19 升级：Pi SDK 固定版本从 `1.0.4` 升至 `1.3.0`（跨 `1.1.0`、`1.2.0`、`1.3.0`）。Pace 只使用 `pi-coding-agent` 根入口与 `pi-ai/bun-oauth`，两者未变；`createCodemodeExtension` / `createToolSearchExtension` / `createMcpExtension` 仍在根入口导出，`builtInExtensions` 清单（含 Pace 刻意不加载的 `llama.cpp`）形状不变。1.2.0 起 `pi-coding-agent` 不再依赖 `@earendil-works/chord`，并移除了未发布的 pi-server / pi-client / pi-protocol 包；chord 仍是独立发布的包，但不再是引擎的依赖，目前只有 `@earendil-works/pi-durable` 依赖它。Pace 未直接依赖 chord，产物无变化，受影响的是 [ADR-0042](0042-pace-as-chord-presentation-host.md) 的前置假设。1.3.0 把 Pi 内部包依赖从 `^` 改为精确版本，与本 ADR 的固定版本策略一致。
+2026-10-19 升级：Pi SDK 固定版本从 `1.0.4` 升至 `1.3.0`（跨 `1.1.0`、`1.2.0`、`1.3.0`）。Pace 对引擎的直接依赖面是 `pi-coding-agent` 根入口、`pi-ai/bun-oauth`，以及 `@pace/pi-mcp` 别名指向的引擎内 `dist/extensions/mcp/{cli,config,oauth}.js`（2026-10-01 起，MCP 设置直接复用 Pi 的实现）；三者在 1.3.0 里导出与类型均未变。`createCodemodeExtension` / `createToolSearchExtension` / `createMcpExtension` 仍在根入口导出，`builtInExtensions` 清单（含 Pace 刻意不加载的 `llama.cpp`）形状不变。1.2.0 起 `pi-coding-agent` 不再依赖 `@earendil-works/chord`，并移除了未发布的 pi-server / pi-client / pi-protocol 包；chord 仍是独立发布的包，但不再是引擎的依赖，目前只有 `@earendil-works/pi-durable` 依赖它。Pace 未直接依赖 chord，产物无变化，受影响的是 [ADR-0042](0042-pace-as-chord-presentation-host.md) 的前置假设。1.3.0 把 Pi 内部包依赖从 `^` 改为精确版本，与本 ADR 的固定版本策略一致。
 
 本次唯一的代码适配：`pi mcp list --json` 自 1.2.0 起把 `resources` 从计数改为布尔 `true`，并去掉 `resourceTemplates`；`packages/core` 的 `McpServerProbe` 与 `mcp-servers.ts` 的透传已同步（该字段无界面消费者）。验证：类型检查、lint、单元与 contract 测试（2123 项）、构建、独立产物冒烟均通过，其中冒烟覆盖无 node_modules 与空 PATH 下的 codemode → MCP 端到端；打包预检 E2E、Tintinweb E2E、真实 OAuth 与含 compaction 的分叉仍需在发布前人工验收。
 
