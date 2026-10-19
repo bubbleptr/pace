@@ -1,9 +1,22 @@
 # ADR-0042：Pace 作为 Pi chord 插件架构的 presentation host
 
-- 状态：草案（待讨论；第二个 spike 完成后再定稿）
+- 状态：已废弃（2026-10-19；前置假设失效，见「废弃说明」）
 - 日期：2026-09-21
 - 来源：`.scratch/chord-plugin-gui/SPIKE.md` 的调研与 spike；`.scratch/extension-host-contract/HANDOFF.md` 的遗留问题
 - 关联：[ADR-0018](0018-runtime-gateway-api-and-pi-drivers.md)、[ADR-0031](0031-bundled-pi-runtime-and-extension-compatibility.md)、[ADR-0032](0032-session-dock-and-trajectory-vocabulary.md)、[ADR-0040](0040-root-session-process-isolation.md)、[ADR-0041](0041-remove-pi-rpc-driver.md)
+
+## 废弃说明
+
+本 ADR 的前提是「chord 随 `pi-coding-agent` 一起装进 Pace 的会话进程，Pace 把自己做成它的 presentation host」。Pi 1.2.0 起该前提不再成立：引擎移除了 `@earendil-works/chord` 依赖，也删掉了未发布的 pi-server / pi-client / pi-protocol 包；chord 1.3.0 仍是独立发布的包，但不再是引擎的依赖，目前只被 `@earendil-works/pi-durable` 依赖，并在同一版里重写了协议与术语（引用模型、host placement、`lifetime`、协议版本 4），存储与输出流从 pi-durable 反向移入 chord。要继续走这条路，Pace 得自己声明 `@earendil-works/chord` 或经 pi-durable 取得，等于绑定一个仍在快速变化的实验 API，已不是本 ADR 决策时的成本形态。
+
+因此：
+
+- 决策、阶段计划（B0 / B / C）、开放问题与「与已有文档的冲突」全部作废，不再推进。
+- 没有替代 ADR。「扩展贡献 GUI 面板」回到 [ADR-0018](0018-runtime-gateway-api-and-pi-drivers.md) 预留的 extension UI 槽位，等有真实扩展需求时重新决策；`README.md` 路线图第 1 条保持原样（本 ADR 定稿时才打算改写它）。
+- 相关 spike 代码从未进入主线（`chord-plugin-spike.ts` 只在 `chore/chord-plugin-gui-spike` 分支），主线无需回滚。
+- 仍然有效的：[ADR-0031](0031-bundled-pi-runtime-and-extension-compatibility.md) 的「同一个扩展包在不同宿主提供不同呈现」、ADR-0040 的进程模型、ADR-0018 的 Gateway / Driver 分层。
+
+以下为废弃前的原始内容，保留作背景。
 
 ## 背景
 

@@ -65,8 +65,7 @@ type PiMcpListOutput = {
     state?: McpServerState;
     tools?: string[];
     toolExposure?: Record<string, McpExposure>;
-    resources?: number;
-    resourceTemplates?: number;
+    resources?: boolean;
     error?: string;
   }>;
   errors?: string[];
@@ -190,12 +189,7 @@ export function createMcpServersService(
           state: server.state ?? "failed",
           tools: server.tools ?? [],
           ...(server.toolExposure ? { toolExposure: server.toolExposure } : {}),
-          ...(server.resources !== undefined
-            ? { resources: server.resources }
-            : {}),
-          ...(server.resourceTemplates !== undefined
-            ? { resourceTemplates: server.resourceTemplates }
-            : {}),
+          ...(server.resources ? { resources: true } : {}),
           ...(server.error ? { error: server.error } : {}),
         }));
       return { servers, errors: parsed.errors ?? [] };
